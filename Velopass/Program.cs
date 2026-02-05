@@ -1,5 +1,8 @@
 using Database;
 using Microsoft.EntityFrameworkCore;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using VelopassShowcaseTodo.Middlewares;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -21,6 +24,18 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader()
               .AllowAnyMethod());
 });
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(builder.Environment.ApplicationName))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddOtlpExporter(ops => { ops.Endpoint = new Uri("http://localhost:4317"); }))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddOtlpExporter(ops => { ops.Endpoint = new Uri("http://localhost:4317"); }));
 
 var app = builder.Build();
 

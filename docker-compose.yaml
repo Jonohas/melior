@@ -1,0 +1,33 @@
+﻿services:
+  postgres:
+    image: postgres:17
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: velopass_rewrite
+      POSTGRES_USER: pg
+      POSTGRES_PASSWORD: mypassword
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pg -d velopass_rewrite"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.14.0
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC receiver
+      - "4318:4318"    # OTLP HTTP receiver
+      - "5778:5778"    # Zipkin compact thrift
+      - "9411:9411"    # Zipkin HTTP
+    restart: unless-stopped
+
+
+volumes:
+  postgres_data:
