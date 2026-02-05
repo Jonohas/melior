@@ -30,6 +30,7 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
+        .AddEntityFrameworkCoreInstrumentation()
         .AddOtlpExporter(ops => { ops.Endpoint = new Uri("http://localhost:4317"); }))
     .WithMetrics(metrics => metrics
         .AddAspNetCoreInstrumentation()
@@ -48,7 +49,7 @@ if (app.Environment.IsDevelopment())
     await using (var serviceScope = app.Services.CreateAsyncScope())
     await using (var dbContext = serviceScope.ServiceProvider.GetRequiredService<TodoDbContext>())
     {
-        await dbContext.Database.EnsureDeletedAsync();
+        // await dbContext.Database.EnsureDeletedAsync();
         await dbContext.Database.MigrateAsync();
     }
 }
