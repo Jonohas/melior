@@ -4,47 +4,47 @@ namespace Domain.Services;
 
 public class ChannelService : IChannelService
 {
-    private readonly ITodoRepository _repo;
+    private readonly IChannelRepository _repo;
 
-    public ChannelService(ITodoRepository repo)
+    public ChannelService(IChannelRepository repo)
     {
         _repo = repo;
     }
 
-    public Task<List<Todo>> GetAllAsync(CancellationToken cancellationToken = default)
+    public Task<List<Channel>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         return _repo.GetAllAsync(cancellationToken);
     }
 
-    public Task<Todo?> Get(Guid id, CancellationToken cancellationToken = default)
+    public Task<Channel?> Get(Guid id, CancellationToken cancellationToken = default)
     {
         return _repo.Get(id, cancellationToken);
     }
 
-    public async Task<Todo> CreateAsync(string name, CancellationToken cancellationToken = default)
+    public async Task<Channel> CreateAsync(string name, CancellationToken cancellationToken = default)
     {
-        var todo = Todo.Create(name, false);
-        await _repo.SaveAsync(todo, cancellationToken);
-        return todo;
+        var channel = Channel.Create(name);
+        await _repo.SaveAsync(channel, cancellationToken);
+        return channel;
     }
 
-    public async Task<bool> UpdateAsync(Guid id, string? name, bool? done, CancellationToken cancellationToken = default)
+    public async Task<bool> UpdateAsync(Guid id, string? name, CancellationToken cancellationToken = default)
     {
-        var todo = await _repo.Get(id, cancellationToken);
-        if (todo == null) return false;
-        var updated = todo.Update(name, done);
+        var channel = await _repo.Get(id, cancellationToken);
+        if (channel == null) return false;
+        var updated = channel.Update(name);
         if (updated)
         {
-            await _repo.SaveAsync(todo, cancellationToken);
+            await _repo.SaveAsync(channel, cancellationToken);
         }
         return updated;
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var todo = await _repo.Get(id, cancellationToken);
-        if (todo == null) return false;
-        _repo.Delete(todo);
+        var Channel = await _repo.Get(id, cancellationToken);
+        if (Channel == null) return false;
+        _repo.Delete(Channel);
         return true;
     }
 }

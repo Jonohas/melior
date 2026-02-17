@@ -13,6 +13,8 @@ public class MeliorDbContext : DbContext
     }
     
     public DbSet<Todo> TodoItems { get; set; }
+    public DbSet<Channel> Channels { get; set; }
+    public DbSet<Session> Sessions { get; set; }
     
     /// <summary>
     /// Configure the model that was discovered by convention from the entity types exposed in <see cref="DbSet{TEntity}"/> properties on this context.
@@ -22,6 +24,23 @@ public class MeliorDbContext : DbContext
     {
         modelBuilder.HasDefaultSchema(DefaultSchema);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(MeliorDbContext).Assembly);
+        
+        modelBuilder.Entity<Channel>(channelBuilder =>
+        {
+            channelBuilder
+                .HasMany(c => c.Sessions)
+                .WithOne(s => s.Channel)
+                .HasForeignKey(s => s.ChannelId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Session>(sessionBuilder =>
+        {
+            sessionBuilder
+                .HasOne(session => session.Channel)
+                .WithMany()
+                .HasForeignKey(session => session.ChannelId);
+        });
     }
 
 }

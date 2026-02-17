@@ -51,6 +51,9 @@ public static class MeliorDatabaseInstaller
     public static IServiceCollection AddTodoRepositories(this IServiceCollection services)
     {
         services.AddScoped<ITodoRepository, TodoRepository>();
+        services.AddScoped<IChannelRepository, ChannelRepository>();
+        services.AddScoped<ISessionRepository, SessionRepository>();
+        
 
         return services;
     }
@@ -58,6 +61,8 @@ public static class MeliorDatabaseInstaller
     public static IServiceCollection AddTodoInfrastructure(this IServiceCollection services)
     {
         services.AddScoped<ITodoService, TodoService>();
+        services.AddScoped<IChannelService, ChannelService>();
+        services.AddScoped<ISessionService, SessionService>();
 
         return services;
     }
