@@ -1,7 +1,7 @@
 using Database;
 using Microsoft.EntityFrameworkCore;
 
-namespace VelopassShowcaseTodo.Middlewares;
+namespace MeliorApi.Middlewares;
 
 public static class TransactionMiddlewareExtensions
 {

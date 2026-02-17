@@ -1,9 +1,9 @@
 using Database;
+using MeliorApi.Middlewares;
 using Microsoft.EntityFrameworkCore;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using VelopassShowcaseTodo.Middlewares;
 
 var builder = WebApplication.CreateBuilder(args);
 

@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Database;
 
-public interface IVelopassDbContextFactory<TDbContext> : IDisposable
+public interface IMeliorDbContextFactory<TDbContext> : IDisposable
     where TDbContext : DbContext
 {
     /// <summary>

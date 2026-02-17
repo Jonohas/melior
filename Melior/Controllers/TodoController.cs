@@ -1,8 +1,7 @@
-using Domain;
 using Domain.Services;
 using Microsoft.AspNetCore.Mvc;
 
-namespace VelopassShowcaseTodo.Controllers;
+namespace MeliorApi.Controllers;
 
 [ApiController]
 [Route("/todos")]
