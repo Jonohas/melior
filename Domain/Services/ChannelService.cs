@@ -5,10 +5,12 @@ namespace Domain.Services;
 public class ChannelService : IChannelService
 {
     private readonly IChannelRepository _repo;
+    private readonly ISessionRepository _sessionRepository;
 
-    public ChannelService(IChannelRepository repo)
+    public ChannelService(IChannelRepository repo, ISessionRepository sessionRepository)
     {
         _repo = repo;
+        _sessionRepository = sessionRepository;
     }
 
     public Task<List<Channel>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -26,6 +28,24 @@ public class ChannelService : IChannelService
         var channel = Channel.Create(name);
         await _repo.SaveAsync(channel, cancellationToken);
         return channel;
+    }
+
+    public async Task<bool> ConnectAsync(Guid id, string displayName, CancellationToken cancellationToken)
+    {
+        var channel = await _repo.Get(id, cancellationToken);
+        if (channel == null) return false;
+        var session = Session.Create(displayName, id);
+        await _sessionRepository.SaveAsync(session, cancellationToken);
+        return true;
+    }
+
+    public async Task<bool> DisconnectAsync(Guid id, Guid sessionId, CancellationToken cancellationToken)
+    {
+        var session = await _sessionRepository.GetWithIncludesAsync(sessionId, cancellationToken);
+        if (session == null) return false;
+        if (session.Channel.Id != id) return false;
+
+        return true;
     }
 
     public async Task<bool> UpdateAsync(Guid id, string? name, CancellationToken cancellationToken = default)

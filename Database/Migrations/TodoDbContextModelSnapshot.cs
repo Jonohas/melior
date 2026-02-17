@@ -56,10 +56,6 @@ namespace Database.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("channel_id");
 
-                    b.Property<Guid?>("ChannelId1")
-                        .HasColumnType("uuid")
-                        .HasColumnName("channel_id1");
-
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -99,9 +95,6 @@ namespace Database.Migrations
                     b.HasIndex("ChannelId")
                         .HasDatabaseName("ix_sessions_channel_id");
 
-                    b.HasIndex("ChannelId1")
-                        .HasDatabaseName("ix_sessions_channel_id1");
-
                     b.ToTable("sessions", "melior");
                 });
 
@@ -134,16 +127,11 @@ namespace Database.Migrations
             modelBuilder.Entity("Domain.Session", b =>
                 {
                     b.HasOne("Domain.Channel", "Channel")
-                        .WithMany()
+                        .WithMany("Sessions")
                         .HasForeignKey("ChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_sessions_channels_channel_id");
-
-                    b.HasOne("Domain.Channel", null)
-                        .WithMany("Sessions")
-                        .HasForeignKey("ChannelId1")
-                        .HasConstraintName("fk_sessions_channels_channel_id1");
 
                     b.Navigation("Channel");
                 });

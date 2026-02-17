@@ -11,4 +11,9 @@ public class SessionRepository(MeliorDbContext dbContextFactory) : EFRepository<
     {
         return Set.ToListAsync(cancellationToken);
     }
+
+    public Task<Session?> GetWithIncludesAsync(Guid id, CancellationToken cancellationToken)
+    {
+        return Set.Include(s => s.Channel).FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+    }
 }

@@ -33,14 +33,6 @@ public class MeliorDbContext : DbContext
                 .HasForeignKey(s => s.ChannelId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
-
-        modelBuilder.Entity<Session>(sessionBuilder =>
-        {
-            sessionBuilder
-                .HasOne(session => session.Channel)
-                .WithMany()
-                .HasForeignKey(session => session.ChannelId);
-        });
     }
 
 }

@@ -5,7 +5,7 @@ namespace MeliorApi.Controllers;
 
 [ApiController]
 [Route("/channels")]
-public class ChannelController(IChannelService service) : ControllerBase
+public class ChannelController(IChannelService service, ISessionService sessionService) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
@@ -32,6 +32,25 @@ public class ChannelController(IChannelService service) : ControllerBase
         return CreatedAtRoute(nameof(GetChannelsById), new { id = created.Id }, created);
     }
 
+    public record ConnectSessionRequest(string DisplayName);
+    public record DisconnectSessionRequest(Guid SessionId);
+    
+    [HttpPost("{id:guid}/connect")]
+    public async Task<IActionResult> Connect([FromRoute] Guid id, [FromBody] ConnectSessionRequest request, CancellationToken cancellationToken)
+    {
+        var success = await service.ConnectAsync(id, request.DisplayName, cancellationToken);
+        if (!success) return NotFound();
+        return NoContent();
+    }
+    
+    [HttpPost("{id:guid}/disconnect")]
+    public async Task<IActionResult> Disconnect([FromRoute] Guid id, [FromBody] DisconnectSessionRequest request, CancellationToken cancellationToken)
+    {
+        var success = await service.DisconnectAsync(id, request.SessionId, cancellationToken);
+        if (!success) return NotFound();
+        return NoContent();
+    }
+    
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update([FromRoute] Guid id, [FromBody] ChannelUpdateRequest request, CancellationToken cancellationToken)
     {
