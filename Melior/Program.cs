@@ -47,7 +47,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
     
     await using (var serviceScope = app.Services.CreateAsyncScope())
-    await using (var dbContext = serviceScope.ServiceProvider.GetRequiredService<TodoDbContext>())
+    await using (var dbContext = serviceScope.ServiceProvider.GetRequiredService<MeliorDbContext>())
     {
         // await dbContext.Database.EnsureDeletedAsync();
         await dbContext.Database.MigrateAsync();

@@ -7,13 +7,13 @@ using Shared;
 
 namespace Database;
 
-public class TodoDbContextFactory : ICustomDbContextFactory<TodoDbContext>
+public class MeliorDbContextFactory : ICustomDbContextFactory<MeliorDbContext>
 {
   private readonly string _connectionString;
   private readonly bool _enableSensitiveDataLogging;
-  private TodoDbContext? _dbContext;
+  private MeliorDbContext? _dbContext;
 
-  public TodoDbContextFactory(string connectionString, IConfiguration configuration)
+  public MeliorDbContextFactory(string connectionString, IConfiguration configuration)
   {
     _connectionString = connectionString;
     var enableQueryLoggingString = configuration["Debugging:EnableQueryLogging"];
@@ -25,7 +25,7 @@ public class TodoDbContextFactory : ICustomDbContextFactory<TodoDbContext>
     _dbContext = CreateDbContext();
   }
 
-  public TodoDbContext CreateDbContext()
+  public MeliorDbContext CreateDbContext()
   {
     if (_dbContext is null)
       _dbContext = CreateNew();
@@ -33,14 +33,14 @@ public class TodoDbContextFactory : ICustomDbContextFactory<TodoDbContext>
     return _dbContext;
   }
 
-  public TodoDbContext CreateNew()
+  public MeliorDbContext CreateNew()
   {
-    var dbOptions = new DbContextOptionsBuilder<TodoDbContext>()
+    var dbOptions = new DbContextOptionsBuilder<MeliorDbContext>()
       .UseNpgsql(_connectionString,
         options =>
         {
-          options.MigrationsAssembly(typeof(TodoDbContextFactory).Assembly.FullName);
-          options.MigrationsHistoryTable(TodoDbContext.MigrationsSchema, TodoDbContext.MigrationsSchema);
+          options.MigrationsAssembly(typeof(MeliorDbContextFactory).Assembly.FullName);
+          options.MigrationsHistoryTable(MeliorDbContext.MigrationsSchema, MeliorDbContext.MigrationsSchema);
         })
       .UseSnakeCaseNamingConvention();
 
@@ -52,7 +52,7 @@ public class TodoDbContextFactory : ICustomDbContextFactory<TodoDbContext>
                                                          || eventId == RelationalEventId.DataReaderDisposing);
     }
 
-    _dbContext = new TodoDbContext(dbOptions.Options);
+    _dbContext = new MeliorDbContext(dbOptions.Options);
 
     return _dbContext;
   }

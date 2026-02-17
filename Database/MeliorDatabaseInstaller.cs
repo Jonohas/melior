@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Database;
 
-public static class TodoDatabaseInstaller
+public static class MeliorDatabaseInstaller
 {
     public static IServiceCollection AddTodoDatabase(this IServiceCollection services, IConfiguration configuration)
     {
@@ -18,7 +18,7 @@ public static class TodoDatabaseInstaller
             throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
         // Register the TodoDbContext
-        services.AddDbContext<TodoDbContext>(options =>
+        services.AddDbContext<MeliorDbContext>(options =>
         {
             options
                 .UseNpgsql(connectionString, builder =>
@@ -26,8 +26,8 @@ public static class TodoDatabaseInstaller
                     // Configure database-specific behavior
                     builder.SetPostgresVersion(17, 0);
                     builder.ConfigureDataSource(dataSourceBuilder => dataSourceBuilder.EnableDynamicJson());
-                    builder.MigrationsAssembly(typeof(TodoDbContext).Assembly.FullName);
-                    builder.MigrationsHistoryTable(TodoDbContext.MigrationsSchema, TodoDbContext.MigrationsSchema);
+                    builder.MigrationsAssembly(typeof(MeliorDbContext).Assembly.FullName);
+                    builder.MigrationsHistoryTable(MeliorDbContext.MigrationsSchema, MeliorDbContext.MigrationsSchema);
                 })
                 .UseSnakeCaseNamingConvention();
 

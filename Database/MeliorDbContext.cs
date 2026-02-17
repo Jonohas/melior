@@ -3,11 +3,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Database;
 
-public class TodoDbContext : DbContext
+public class MeliorDbContext : DbContext
 {
-    public const string DefaultSchema = "todos";
+    public const string DefaultSchema = "melior";
     public const string MigrationsSchema = "migrations";
-    public TodoDbContext(DbContextOptions<TodoDbContext> options)
+    public MeliorDbContext(DbContextOptions<MeliorDbContext> options)
         : base(options)
     {
     }
@@ -21,7 +21,7 @@ public class TodoDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(DefaultSchema);
-        modelBuilder.ApplyConfigurationsFromAssembly(typeof(TodoDbContext).Assembly);
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(MeliorDbContext).Assembly);
     }
 
 }

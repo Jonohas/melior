@@ -23,9 +23,9 @@ public sealed class TransactionMiddleware
   }
 
   public async Task InvokeAsync(HttpContext context,
-    TodoDbContext todoDbContext)
+    MeliorDbContext meliorDbContext)
   {
-    await AddTransactionAsync(context, todoDbContext);
+    await AddTransactionAsync(context, meliorDbContext);
   }
 
   private async Task AddTransactionAsync(HttpContext context, DbContext dbContext)

@@ -11,7 +11,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 namespace Database.Migrations
 {
-    [DbContext(typeof(TodoDbContext))]
+    [DbContext(typeof(MeliorDbContext))]
     [Migration("20250903213212_AddCreatedAtTimestamp")]
     partial class AddCreatedAtTimestamp
     {
