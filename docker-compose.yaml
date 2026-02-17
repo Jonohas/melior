@@ -27,7 +27,13 @@
       - "5778:5778"    # Zipkin compact thrift
       - "9411:9411"    # Zipkin HTTP
     restart: unless-stopped
-
+    
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
 
 volumes:
   postgres_data:
