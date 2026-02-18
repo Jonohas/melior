@@ -1,16 +1,22 @@
+using Database.Redis.Messages;
+using Domain;
 using Domain.Repositories;
+using Domain.Services;
+using Shared.Redis;
 
-namespace Domain.Services;
+namespace Database;
 
 public class ChannelService : IChannelService
 {
     private readonly IChannelRepository _repo;
     private readonly ISessionRepository _sessionRepository;
+    private readonly IPublishingService _publishingService;
 
-    public ChannelService(IChannelRepository repo, ISessionRepository sessionRepository)
+    public ChannelService(IChannelRepository repo, ISessionRepository sessionRepository, IPublishingService publishingService)
     {
         _repo = repo;
         _sessionRepository = sessionRepository;
+        _publishingService = publishingService;
     }
 
     public Task<List<Channel>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -36,6 +42,12 @@ public class ChannelService : IChannelService
         if (channel == null) return false;
         var session = Session.Create(displayName, id);
         await _sessionRepository.SaveAsync(session, cancellationToken);
+
+        await _publishingService.PublishAsync(new ChannelMessage
+        {
+            ChannelId = id,
+            SessionId = session.Id,
+        });
         return true;
     }
 
@@ -57,6 +69,7 @@ public class ChannelService : IChannelService
         {
             await _repo.SaveAsync(channel, cancellationToken);
         }
+
         return updated;
     }
 

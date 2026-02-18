@@ -1,9 +1,11 @@
 using Database;
+using Database.Redis;
 using MeliorApi.Middlewares;
 using Microsoft.EntityFrameworkCore;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Shared.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,6 +39,8 @@ builder.Services.AddOpenTelemetry()
         .AddHttpClientInstrumentation()
         .AddRuntimeInstrumentation()
         .AddOtlpExporter(ops => { ops.Endpoint = new Uri("http://localhost:4317"); }));
+
+builder.Services.AddRedisInfrastructure(builder.Configuration);
 
 var app = builder.Build();
 

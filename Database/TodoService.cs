@@ -1,6 +1,8 @@
+using Domain;
 using Domain.Repositories;
+using Domain.Services;
 
-namespace Domain.Services;
+namespace Database;
 
 public class TodoService : ITodoService
 {

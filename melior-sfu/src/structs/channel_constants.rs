@@ -1,0 +1,1 @@
+pub const CHANNEL_CONNECTION_CHANNEL: &str = "ChannelConnectionChannel";

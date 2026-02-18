@@ -15,6 +15,7 @@ type SharedState = Arc<RwLock<SFUManager>>;
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let manager = RedisManager::new("127.0.0.1", 6379);
+    manager.init().await?;
     manager.connect().await?;
 
     println!("Application running...");
@@ -24,7 +25,7 @@ async fn main() -> Result<(), Error> {
 
     println!("Shutting down...");
     // Graceful shutdown
-    manager.client().quit().await?;
+    manager.disconnect().await?;
 
     Ok(())
 }
