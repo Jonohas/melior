@@ -1,5 +1,7 @@
 mod structs;
 mod redis_manager;
+mod shared;
+mod strategies;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -8,9 +10,6 @@ use fred::prelude::ClientLike;
 use tokio::signal;
 use tokio::sync::RwLock;
 use crate::redis_manager::RedisManager;
-use crate::structs::sfu_manager::SFUManager;
-
-type SharedState = Arc<RwLock<SFUManager>>;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

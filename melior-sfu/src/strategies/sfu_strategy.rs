@@ -1,6 +1,5 @@
-use fred::types::Message;
 use serde::{Deserialize, Serialize};
-use crate::structs::redis_strategy::RedisStrategy;
+use crate::shared::redis_strategy::RedisStrategy;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChannelMessage {
