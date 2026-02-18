@@ -1,9 +1,11 @@
+use std::sync::Arc;
 use fred::prelude::*;
 use fred::clients::SubscriberClient;
 use serde::Serialize;
 use serde_json;
 use crate::shared::channel_constants::{CHANNEL_CONNECTION_CHANNEL, WEBRTC_CHANNEL};
 use crate::structs::channel_handler::ChannelHandler;
+
 
 pub struct RedisManager {
     client: Client,
@@ -27,13 +29,16 @@ impl RedisManager {
         Self { client, subscriber_client }
     }
 
-    pub async fn init(&self) -> Result<(), Error> {
+    pub async fn init(&self, shared_self: Arc<Self>) -> Result<(), Error> {
         self.subscriber_client.init().await?;
 
         let mut message_rx = self.subscriber_client.message_rx();
+
+        let self_clone = Arc::clone(&shared_self);
+
         tokio::spawn(async move {
             while let Ok(message) = message_rx.recv().await {
-                ChannelHandler::handle(message);
+                ChannelHandler::handle(message, self_clone.clone());
             }
         });
 

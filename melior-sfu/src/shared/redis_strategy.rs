@@ -1,5 +1,7 @@
+use std::sync::Arc;
 use fred::types::Message;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use crate::redis_manager::RedisManager;
 
 pub struct HandleMessage<T: RedisStrategy> {
     strategy: T,
@@ -9,12 +11,12 @@ pub trait RedisStrategy {
     // 1. Define the type this strategy expects
     type Message: for<'a> Deserialize<'a>;
 
-    fn handle_message(&self, message: Self::Message);
+    fn handle_message(&self, message: Self::Message, redis_manager: Arc<RedisManager>);
 
-    fn check_format(&self, message: Message) {
+    fn check_format(&self, message: Message, redis_manager: Arc<RedisManager>) {
         if let Some(payload) = message.value.as_string() {
             match serde_json::from_str::<Self::Message>(&payload) {
-                Ok(parsed) => self.handle_message(parsed),
+                Ok(parsed) => self.handle_message(parsed, redis_manager),
                 Err(_) => eprintln!("[Redis] Schema mismatch on {}", message.channel),
             }
         }
@@ -26,8 +28,8 @@ impl<T: RedisStrategy> HandleMessage<T> {
         Self { strategy }
     }
 
-    pub fn process(&self, message: Message) {
+    pub fn process(&self, message: Message, _redis_manager: Arc<RedisManager>) {
         // Use the strategy's checking logic
-        self.strategy.check_format(message);
+        self.strategy.check_format(message, _redis_manager);
     }
 }

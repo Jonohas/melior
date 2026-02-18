@@ -36,17 +36,19 @@ public class ChannelService : IChannelService
         return channel;
     }
 
-    public async Task<bool> ConnectAsync(Guid id, string displayName, CancellationToken cancellationToken)
+    public async Task<bool> ConnectAsync(Guid id, string displayName, string sdpType, string sdp, CancellationToken cancellationToken)
     {
         var channel = await _repo.Get(id, cancellationToken);
         if (channel == null) return false;
         var session = Session.Create(displayName, id);
         await _sessionRepository.SaveAsync(session, cancellationToken);
 
-        await _publishingService.PublishAsync(new ChannelMessage
+        await _publishingService.PublishAsync(new SdpOffer
         {
             ChannelId = id,
             SessionId = session.Id,
+            Sdp = sdp,
+            SdpType = sdpType,
         });
         return true;
     }

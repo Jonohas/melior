@@ -23,6 +23,7 @@ public class ChannelController(IChannelService service, ISessionService sessionS
     }
 
     public record ChannelCreateRequest(string Name);
+
     public record ChannelUpdateRequest(string? Name);
 
     [HttpPost]
@@ -32,13 +33,14 @@ public class ChannelController(IChannelService service, ISessionService sessionS
         return CreatedAtRoute(nameof(GetChannelsById), new { id = created.Id }, created);
     }
 
-    public record ConnectSessionRequest(string DisplayName);
+    public record ConnectSessionRequest(string DisplayName, string SdpType, string Sdp);
+
     public record DisconnectSessionRequest(Guid SessionId);
     
     [HttpPost("{id:guid}/connect")]
     public async Task<IActionResult> Connect([FromRoute] Guid id, [FromBody] ConnectSessionRequest request, CancellationToken cancellationToken)
     {
-        var success = await service.ConnectAsync(id, request.DisplayName, cancellationToken);
+        var success = await service.ConnectAsync(id, request.DisplayName, request.SdpType, request.Sdp, cancellationToken);
         if (!success) return NotFound();
         return NoContent();
     }

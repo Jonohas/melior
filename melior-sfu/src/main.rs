@@ -8,13 +8,12 @@ use std::sync::Arc;
 use fred::error::{Error};
 use fred::prelude::ClientLike;
 use tokio::signal;
-use tokio::sync::RwLock;
 use crate::redis_manager::RedisManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let manager = RedisManager::new("127.0.0.1", 6379);
-    manager.init().await?;
+    let manager = Arc::new(RedisManager::new("127.0.0.1", 6379));
+    manager.init(manager.clone()).await?;
     manager.connect().await?;
 
     println!("Application running...");
