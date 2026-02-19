@@ -43,6 +43,6 @@ impl RedisStrategy for WebrtcStrategy {
         };
 
         let _ = self.app_state.redis_manager.publish(&channel, &response).await;
-        println!("Received WebRTC SDP offer: {} {} {} {}", message.sdp_type, message.session_id, message.channel_id, r);
+        println!("Received WebRTC SDP offer");
     }
 }
