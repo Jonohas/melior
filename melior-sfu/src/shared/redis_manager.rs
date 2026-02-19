@@ -4,8 +4,8 @@ use fred::clients::SubscriberClient;
 use serde::Serialize;
 use serde_json;
 use crate::shared::channel_constants::{CHANNEL_CONNECTION_CHANNEL, WEBRTC_CHANNEL};
-use crate::structs::channel_handler::ChannelHandler;
-
+use crate::shared::channel_handler::ChannelHandler;
+use crate::structs::app_state::AppState;
 
 pub struct RedisManager {
     client: Client,
@@ -29,21 +29,15 @@ impl RedisManager {
         Self { client, subscriber_client }
     }
 
-    pub async fn init(&self, shared_self: Arc<Self>) -> Result<(), Error> {
+    pub fn hello(&self) {
+        println!("Hello from RedisManager!");
+    }
+
+    pub async fn init(&self) -> Result<(), Error> {
         self.subscriber_client.init().await?;
 
-        let mut message_rx = self.subscriber_client.message_rx();
-
-        let self_clone = Arc::clone(&shared_self);
-
-        tokio::spawn(async move {
-            while let Ok(message) = message_rx.recv().await {
-                ChannelHandler::handle(message, self_clone.clone());
-            }
-        });
-
-        let _ = self.subscriber_client.subscribe(CHANNEL_CONNECTION_CHANNEL).await?;
-        let _ = self.subscriber_client.subscribe(WEBRTC_CHANNEL).await?;
+        self.connect().await?;
+        self.subscribe_to_channels().await;
 
         Ok(())
     }
@@ -89,5 +83,20 @@ impl RedisManager {
 
     pub fn subscriber_client(&self) -> &SubscriberClient {
         &self.subscriber_client
+    }
+
+    pub async fn subscribe_to_channels(&self) {
+        let _ = self.subscriber_client.subscribe(CHANNEL_CONNECTION_CHANNEL).await;
+        let _ = self.subscriber_client.subscribe(WEBRTC_CHANNEL).await;
+    }
+
+    pub async fn register_handlers(&self, app_state: Arc<AppState>) {
+        let mut message_rx = self.subscriber_client.message_rx();
+
+        tokio::spawn(async move {
+            while let Ok(message) = message_rx.recv().await {
+                ChannelHandler::handle(message, app_state.clone()).await;
+            }
+        });
     }
 }

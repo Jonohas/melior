@@ -1,10 +1,11 @@
 using Domain.Services;
+using JV.ResultUtilities.Extensions;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MeliorApi.Controllers;
 
 [ApiController]
-[Route("/channels")]
+[Route("/api/channels")]
 public class ChannelController(IChannelService service, ISessionService sessionService) : ControllerBase
 {
     [HttpGet]
@@ -40,9 +41,10 @@ public class ChannelController(IChannelService service, ISessionService sessionS
     [HttpPost("{id:guid}/connect")]
     public async Task<IActionResult> Connect([FromRoute] Guid id, [FromBody] ConnectSessionRequest request, CancellationToken cancellationToken)
     {
-        var success = await service.ConnectAsync(id, request.DisplayName, request.SdpType, request.Sdp, cancellationToken);
-        if (!success) return NotFound();
-        return NoContent();
+        var connectionResult = await service.ConnectAsync(id, request.DisplayName, request.SdpType, request.Sdp, cancellationToken);
+        connectionResult.ThrowIfFailure();
+
+        return Ok(connectionResult.Value);
     }
     
     [HttpPost("{id:guid}/disconnect")]

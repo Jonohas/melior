@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace MeliorApi.Controllers;
 
 [ApiController]
-[Route("/todos")]
+[Route("/api/todos")]
 public class TodoController(ITodoService service) : ControllerBase
 {
     [HttpGet]

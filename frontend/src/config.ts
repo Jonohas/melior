@@ -1,1 +1,0 @@
-export const API_URL = process.env.NODE_ENV === "production" ? 'https://api-velopass-todo.faber.zip' : 'https://localhost:7115';

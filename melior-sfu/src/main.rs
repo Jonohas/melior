@@ -1,5 +1,4 @@
 mod structs;
-mod redis_manager;
 mod shared;
 mod strategies;
 
@@ -8,13 +7,22 @@ use std::sync::Arc;
 use fred::error::{Error};
 use fred::prelude::ClientLike;
 use tokio::signal;
-use crate::redis_manager::RedisManager;
+use crate::shared::redis_manager::RedisManager;
+use crate::shared::webrtc_manager::WebRtcManager;
+use crate::structs::app_state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let manager = Arc::new(RedisManager::new("127.0.0.1", 6379));
-    manager.init(manager.clone()).await?;
-    manager.connect().await?;
+    let web_rtc_manager = Arc::new(WebRtcManager::new());
+
+    let app_state = Arc::new(AppState {
+        redis_manager: manager.clone(),
+        web_rtc_manager: web_rtc_manager.clone(),
+    });
+
+    manager.init().await?;
+    manager.register_handlers(app_state).await;
 
     println!("Application running...");
 
