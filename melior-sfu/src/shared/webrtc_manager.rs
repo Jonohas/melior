@@ -3,15 +3,11 @@ use webrtc::api::{APIBuilder, API};
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::track::track_remote::TrackRemote;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
-
-pub struct Track {
-
-}
+use crate::tracks::camera_track::CameraTrack;
+use crate::tracks::track::{create_track, Track};
 
 pub struct WebRtcManager {
     api: API,
@@ -32,20 +28,11 @@ impl WebRtcManager {
         offer_sdp: String,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let pc = Arc::new(self.api.new_peer_connection(RTCConfiguration::default()).await?);
-
+        let track: CameraTrack = create_track(pc.clone());
         // Create outgoing video track
-        let video_track = Arc::new(TrackLocalStaticRTP::new(
-            RTCRtpCodecCapability {
-                mime_type: "video/VP8".to_string(),
-                ..Default::default()
-            },
-            "video".to_string(),
-            "echo-stream".to_string(),
-        ));
+        track.register_track().await?;
 
-        pc.add_track(video_track.clone()).await?;
-
-        let video_track_clone = video_track.clone();
+        let video_track_clone = track.track.clone();
         pc.on_track(Box::new(move |track: Arc<TrackRemote>, _: Arc<RTCRtpReceiver>, _| {
             let outgoing = video_track_clone.clone();
 
