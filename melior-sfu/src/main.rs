@@ -1,7 +1,7 @@
 mod structs;
 mod shared;
 mod strategies;
-mod tracks;
+mod streaming;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

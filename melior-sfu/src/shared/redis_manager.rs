@@ -43,7 +43,7 @@ impl RedisManager {
     }
 
     pub async fn connect(&self) -> Result<(), Error> {
-        // fred clients are handles to a background task.
+        // fred peer are handles to a background task.
         // connect() returns a future that resolves when the connection is established.
         self.client.connect();
         self.client.wait_for_connect().await?;

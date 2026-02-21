@@ -15,7 +15,3 @@ pub trait Track {
     async fn register_track(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     fn get_track(&self) -> Arc<TrackLocalStaticRTP>;
 }
-
-pub fn create_track<T: Track>(peer_connection: Arc<RTCPeerConnection>) -> T {
-    T::new(peer_connection)
-}

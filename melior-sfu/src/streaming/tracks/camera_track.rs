@@ -2,7 +2,7 @@ use std::sync::Arc;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
-use crate::tracks::track::Track;
+use crate::streaming::tracks::track::Track;
 
 pub struct CameraTrack {
     peer_connection: Arc<RTCPeerConnection>,

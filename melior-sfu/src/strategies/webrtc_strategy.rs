@@ -33,7 +33,7 @@ impl RedisStrategy for WebrtcStrategy {
 
     async fn handle_message(&self, message: Self::Message) {
         let channel = format!("{}:{}", WEBRTC_CHANNEL, message.session_id);
-        let r = self.app_state.web_rtc_manager.create_response_to_offer(message.sdp.clone()).await.unwrap();
+        let r = self.app_state.web_rtc_manager.create_response_to_offer(message.sdp.clone(), message.session_id.clone()).await.unwrap();
 
         let response = WebrtcResponse {
             sdp_type: message.sdp_type.clone(),
