@@ -2,6 +2,8 @@ mod structs;
 mod shared;
 mod strategies;
 mod streaming;
+mod prelude;
+mod error;
 
 use std::sync::Arc;
 use fred::error::{Error};

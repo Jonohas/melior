@@ -1064,6 +1064,7 @@ dependencies = [
  "fred",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "uuid",
  "webrtc",

@@ -103,7 +103,7 @@ export function App() {
                     className="form w-full flex"
                     onSubmit={(event) => {
                         event.preventDefault();
-                        connectToStream("33846b5c-e01b-41fe-9042-54a84dd96993");
+                        connectToStream("8fc5eba8-28cb-470b-ab4b-7e554b09a09c");
                     }}
                 >
                     <input type="submit" className="submit" value="Connect" />
