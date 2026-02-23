@@ -43,6 +43,12 @@ const server = serve({
         // Echo console logs from the browser to the server
         console: true,
     },
+
+    hostname: "0.0.0.0", // Allow access from other devices on the network
+    tls: {
+        cert: Bun.file("localhost+3.pem"),
+        key: Bun.file("localhost+3-key.pem"),
+    },
 });
 
 console.log(`🚀 Server running at ${server.url}`);

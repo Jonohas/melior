@@ -49,14 +49,6 @@ public class ChannelService : IChannelService
         var session = Session.Create(displayName, id);
         await _sessionRepository.SaveAsync(session, cancellationToken);
 
-        await _publishingService.PublishAsync(new SdpOffer
-        {
-            ChannelId = id,
-            SessionId = session.Id,
-            Sdp = sdp,
-            SdpType = sdpType,
-        });
-
         var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // 2. Subscribe to the unique response channel first

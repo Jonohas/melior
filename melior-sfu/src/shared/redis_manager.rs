@@ -29,10 +29,6 @@ impl RedisManager {
         Self { client, subscriber_client }
     }
 
-    pub fn hello(&self) {
-        println!("Hello from RedisManager!");
-    }
-
     pub async fn init(&self) -> Result<(), Error> {
         self.subscriber_client.init().await?;
 

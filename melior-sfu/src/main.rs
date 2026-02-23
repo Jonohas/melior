@@ -3,11 +3,10 @@ mod shared;
 mod strategies;
 mod streaming;
 
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use fred::error::{Error};
-use fred::prelude::ClientLike;
 use tokio::signal;
+use tokio::sync::Mutex;
 use crate::shared::redis_manager::RedisManager;
 use crate::shared::webrtc_manager::WebRtcManager;
 use crate::structs::app_state::AppState;
@@ -15,7 +14,7 @@ use crate::structs::app_state::AppState;
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let manager = Arc::new(RedisManager::new("127.0.0.1", 6379));
-    let web_rtc_manager = Arc::new(WebRtcManager::new());
+    let web_rtc_manager = Arc::new(Mutex::new(WebRtcManager::new()));
 
     let app_state = Arc::new(AppState {
         redis_manager: manager.clone(),

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use crate::shared::redis_manager::RedisManager;
 use crate::shared::redis_strategy::RedisStrategy;
 use crate::structs::app_state::AppState;
 
@@ -15,7 +14,7 @@ pub struct SFUStrategy {
 impl RedisStrategy for SFUStrategy {
     type Message = ChannelMessage;
 
-    fn new(redis_manager: Arc<AppState>) -> Self {
+    fn new(_: Arc<AppState>) -> Self {
         Self {  }
     }
 

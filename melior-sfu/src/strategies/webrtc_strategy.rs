@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use crate::shared::channel_constants::WEBRTC_CHANNEL;
-use crate::shared::redis_manager::RedisManager;
 use crate::shared::redis_strategy::RedisStrategy;
 use crate::structs::app_state::AppState;
 
@@ -33,16 +32,18 @@ impl RedisStrategy for WebrtcStrategy {
 
     async fn handle_message(&self, message: Self::Message) {
         let channel = format!("{}:{}", WEBRTC_CHANNEL, message.session_id);
-        let r = self.app_state.web_rtc_manager.create_response_to_offer(message.sdp.clone(), message.session_id.clone()).await.unwrap();
+        let r = self.app_state.web_rtc_manager.lock().await.create_response_to_offer(message.sdp.clone(), message.session_id.clone(), message.channel_id.clone()).await;
 
-        let response = WebrtcResponse {
-            sdp_type: message.sdp_type.clone(),
-            response: r.clone(),
-            session_id: message.session_id.clone(),
-            channel_id: message.channel_id.clone(),
-        };
+        if r.is_ok() {
+            let response = WebrtcResponse {
+                sdp_type: message.sdp_type.clone(),
+                response: r.unwrap(),
+                session_id: message.session_id,
+                channel_id: message.channel_id,
+            };
 
-        let _ = self.app_state.redis_manager.publish(&channel, &response).await;
-        println!("Received WebRTC SDP offer");
+            let _ = self.app_state.redis_manager.publish(&channel, &response).await;
+        }
+
     }
 }
