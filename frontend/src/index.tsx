@@ -1,7 +1,7 @@
 import { serve } from "bun";
 import index from "./index.html";
 
-const TARGET_API_URL = "http://localhost:5238";
+const TARGET_API_URL = "https://localhost:7115";
 
 const server = serve({
     routes: {
@@ -11,6 +11,8 @@ const server = serve({
 
     async fetch(req, server) {
         const url = new URL(req.url);
+        
+        console.log(req.method, url.pathname);
 
         // 1. Check for /api prefix first to forward
         if (url.pathname.startsWith("/api")) {
@@ -20,15 +22,22 @@ const server = serve({
             // Create a new headers object to avoid mutation issues
             const headers = new Headers(req.headers);
             headers.set("host", proxyUrl.host);
+            
+            console.log(proxyUrl.toString(), req.method, headers, req.body);
 
             try {
+                console.log("Sending request...");
                 return await fetch(proxyUrl.toString(), {
                     method: req.method,
                     headers: headers,
                     body: req.body,
                     redirect: "manual",
+                    tls: {
+                        rejectUnauthorized: false,
+                    },
                 });
             } catch (e) {
+                console.error("Proxy error:", e);
                 return new Response("Bad Gateway", { status: 502 });
             }
         }
@@ -46,8 +55,8 @@ const server = serve({
 
     hostname: "0.0.0.0", // Allow access from other devices on the network
     tls: {
-        cert: Bun.file("localhost+3.pem"),
-        key: Bun.file("localhost+3-key.pem"),
+        cert: Bun.file("localhost.pem"),
+        key: Bun.file("localhost-key.pem"),
     },
 });
 

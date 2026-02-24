@@ -3,11 +3,19 @@ import "./index.css";
 
 export function App() {
     const localVideoRef = useRef<HTMLVideoElement>(null);
-    const remoteVideoRef = useRef<HTMLVideoElement>(null);
+    // const remoteVideoRef = useRef<HTMLVideoElement>(null);
 
     const connectToStream = async (channelId: string) => {
+        console.log("Connecting to stream...");
         const pc = new RTCPeerConnection({
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+            iceServers: [
+                {
+                    urls: "turn:127.0.0.1:5349",
+                    username: "username",
+                    credential: "password",
+                },
+            ],
+            iceTransportPolicy: "relay" // or "relay" to force TURN
         });
 
         // 1. Get local camera/mic
@@ -28,27 +36,34 @@ export function App() {
 
         // 4. Handle incoming tracks (the echo from server)
         pc.ontrack = (event) => {
-            console.log("Received remote track:", event.track.kind);
-            if (remoteVideoRef.current && event.streams[0]) {
-                remoteVideoRef.current.srcObject = event.streams[0];
-            }
+            console.group("Received remote track");
+            console.log(event.streams);
+            console.groupEnd();
         };
 
         // 5. Create Offer
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        
+        console.log("Ice gathering...");
 
-        // 6. Wait for ICE gathering to complete
         await new Promise<void>((resolve) => {
-            if (pc.iceGatheringState === "complete") {
+            const timeout = setTimeout(() => {
+                console.log("ICE Gathering timed out, proceeding with what we have.");
                 resolve();
-            } else {
-                pc.onicegatheringstatechange = () => {
-                    if (pc.iceGatheringState === "complete") {
-                        resolve();
-                    }
-                };
-            }
+            }, 1000); // 1 second max wait
+
+            pc.onicecandidate = (event) => {
+                if (!event.candidate) {
+                    console.log("Gathering finished naturally.");
+                    clearTimeout(timeout);
+                    resolve();
+                } else if (event.candidate.type === "relay") {
+                    console.log("Relay candidate found, proceeding immediately!");
+                    clearTimeout(timeout);
+                    resolve();
+                }
+            };
         });
 
         // 7. Send to server
@@ -88,22 +103,13 @@ export function App() {
                         style={{ transform: "scaleX(-1)" }}
                     />
                 </div>
-                <div>
-                    <p>Remote (echo from server)</p>
-                    <video
-                        ref={remoteVideoRef}
-                        autoPlay
-                        playsInline
-                        className="w-[640px] h-[480px] bg-black"
-                    />
-                </div>
             </div>
-            <div className="card">
+            <div className="">
                 <form
                     className="form w-full flex"
                     onSubmit={(event) => {
                         event.preventDefault();
-                        connectToStream("8fc5eba8-28cb-470b-ab4b-7e554b09a09c");
+                        connectToStream("33846b5c-e01b-41fe-9042-54a84dd96993");
                     }}
                 >
                     <input type="submit" className="submit" value="Connect" />

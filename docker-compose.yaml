@@ -35,5 +35,20 @@
       - "6379:6379"
     restart: unless-stopped
 
+  coturn:
+    image: coturn/coturn:4.6.2
+    container_name: coturn
+    restart: unless-stopped
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "49152-49160:49152-49160/udp" # Small range for Mac testing
+    volumes:
+        - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+        - ./cert.pem:/etc/coturn/certs/cert.pem:ro
+        - ./privkey.pem:/etc/coturn/certs/privkey.pem:ro
+
 volumes:
   postgres_data:
