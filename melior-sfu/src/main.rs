@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 use crate::shared::redis_manager::RedisManager;
 use crate::shared::webrtc_manager::WebRtcManager;
 use crate::structs::app_state::AppState;
+use color_eyre::Result;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -26,8 +27,6 @@ async fn main() -> Result<(), Error> {
     manager.init().await?;
     manager.register_handlers(app_state).await;
 
-    println!("Application running...");
-
     // Wait for Ctrl+C
     signal::ctrl_c().await.expect("Failed to listen for event");
 
@@ -37,5 +36,3 @@ async fn main() -> Result<(), Error> {
 
     Ok(())
 }
-
-// add more sfu logic here

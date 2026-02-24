@@ -1,12 +1,15 @@
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
+use webrtc::rtp::packet::Packet;
+use webrtc::track::track_remote::TrackRemote;
 
-pub trait Track<'a> {
-    fn new(peer_connection: &'a RTCPeerConnection, session_id: String) -> Self
+
+pub trait Track {
+    fn new(stream: Arc<TrackRemote>, session_id: String) -> Self
     where
         Self: Sized;
-    async fn register_track(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    fn get_track(&self) -> Arc<TrackLocalStaticRTP>;
+
     fn set_session_id(&self) -> String;
+    fn get_sender(&self) -> broadcast::Sender<Packet>;
 }

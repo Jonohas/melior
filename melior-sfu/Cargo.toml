@@ -11,3 +11,6 @@ webrtc = "0.17.1"
 fred = { version = "10.1.0", features = ["subscriber-client", "i-pubsub", "serde-json"] }
 uuid = { version = "1.21.0", features = ["v4"] }
 thiserror = "1.0.69"
+ratatui = "0.30.0"
+color-eyre = "0.6.5"
+crossterm = "0.29.0"
