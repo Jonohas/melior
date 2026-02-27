@@ -11,22 +11,16 @@ const server = serve({
 
     async fetch(req, server) {
         const url = new URL(req.url);
-        
-        console.log(req.method, url.pathname);
 
         // 1. Check for /api prefix first to forward
         if (url.pathname.startsWith("/api")) {
-            console.log(`Forwarding request to ${TARGET_API_URL}${url.pathname}`);
             const proxyUrl = new URL(url.pathname + url.search, TARGET_API_URL);
 
             // Create a new headers object to avoid mutation issues
             const headers = new Headers(req.headers);
             headers.set("host", proxyUrl.host);
-            
-            console.log(proxyUrl.toString(), req.method, headers, req.body);
 
             try {
-                console.log("Sending request...");
                 return await fetch(proxyUrl.toString(), {
                     method: req.method,
                     headers: headers,

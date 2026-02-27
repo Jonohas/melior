@@ -21,6 +21,7 @@ use crate::structs::channel::Channel;
 pub struct WebRtcManager {
     api: Arc<API>,
     channels: HashMap<String, Arc<Mutex<Channel>>>,
+    peers: HashMap<String, Arc<webrtc::peer_connection::RTCPeerConnection>>,
 }
 
 impl<'a> WebRtcManager {
@@ -30,7 +31,9 @@ impl<'a> WebRtcManager {
         let api = Arc::new(APIBuilder::new()
             .with_media_engine(media_engine)
             .build());
-        Self { api, channels: HashMap::new() }
+
+        let peers = HashMap::new();
+        Self { api, channels: HashMap::new(), peers }
     }
 
     pub async fn create_response_to_offer(
@@ -42,17 +45,20 @@ impl<'a> WebRtcManager {
         let config = RTCConfiguration {
             ice_servers: vec![
                 RTCIceServer {
-                    urls: vec!["turns:127.0.0.1:5349".to_string()],
+                    urls: vec!["turn:127.0.0.1:3478?transport=udp".to_string()],
                     username: "username".to_string(),
                     credential: "password".to_string(),
-                    ..Default::default()
                 },
             ],
-            ice_transport_policy: RTCIceTransportPolicy::Relay,
             ..Default::default()
         };
-        let pc = self.api.new_peer_connection(config).await?;
+        let pc = Arc::new(self.api.new_peer_connection(config).await?);
         let orig_session_id = session_id.clone();
+
+        pc.on_ice_connection_state_change(Box::new(move |state| {
+            println!("ICE state: {:?}", state);
+            Box::pin(async {})
+        }));
 
         if self.channels.get(&channel_id).is_none() {
             println!("Creating new channel {}", channel_id);
@@ -63,17 +69,23 @@ impl<'a> WebRtcManager {
         }
 
         let channel = self.channels.get(&channel_id).unwrap().clone();
+        let channel_id_copy = channel_id.clone();
 
-        // add all tracks from channel to the new peer.
+        println!("here");
 
         pc.on_track(Box::new(move |track: Arc<TrackRemote>, _, _| {
+            println!("Handling track on channel: {}", channel_id);
+
             let session_id = session_id.clone();
+            let channel_id = channel_id.clone();
             let channel = channel.clone();
             Box::pin(async move {
                 let camera_track =
                     Arc::new(CameraTrack::new(track, session_id));
                 let tx = camera_track.sender.clone();
                 channel.lock().await.add_track(camera_track.clone());
+
+                println!("Added track to channel {}", channel_id.clone());
                 tokio::spawn(async move {
                     while let Ok((packet, _)) =
                         camera_track.stream.read_rtp().await
@@ -82,14 +94,15 @@ impl<'a> WebRtcManager {
                             eprintln!("Error writing to track: {}", e);
                             break;
                         }
-                        // println!("Sent packet to track");
                     }
                 });
             })
         }));
 
-        let channel = self.channels.get(&channel_id).unwrap().clone();
+        println!("here 1");
 
+
+        let channel = self.channels.get(&channel_id_copy).unwrap().clone();
         let channel_lock = channel.lock().await;
 
         // 3. Iterate and filter over the `tracks` HashMap
@@ -103,10 +116,11 @@ impl<'a> WebRtcManager {
             })
             .collect();
 
+
+        println!("here 2");
+
         // Now you can do something with the filtered tracks
-        for (track_id, sender) in filtered_tracks {
-
-
+        for (track_id, sender) in filtered_tracks.clone() {
             let mut track = sender.subscribe();
 
             let created_response_track = Arc::new(TrackLocalStaticRTP::new(
@@ -127,8 +141,14 @@ impl<'a> WebRtcManager {
                     }
                 }
             });
-            // println!("Found filtered track: {}", track_id);
         }
+
+        println!(
+            "Connecting peer to {}, current connected peer count: {}",
+            filtered_tracks.len(),
+            channel_lock.tracks.len()
+        );
+        drop(channel_lock);
 
         pc.set_remote_description(RTCSessionDescription::offer(offer_sdp)?)
             .await?;
@@ -138,6 +158,12 @@ impl<'a> WebRtcManager {
         pc.set_local_description(answer).await?;
         let _ = gatherer.recv().await;
 
+
+        println!("here 3");
+
+        self.peers.insert(orig_session_id.clone(), pc.clone());
+
+        println!("here 4");
         Ok(pc.local_description().await.unwrap().sdp)
     }
 }

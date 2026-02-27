@@ -73,7 +73,7 @@ public class ChannelService : IChannelService
             });
 
             // 5. Wait for the Rust server to send the Answer (with a timeout)
-            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
             var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
 
             if (completedTask == timeoutTask)

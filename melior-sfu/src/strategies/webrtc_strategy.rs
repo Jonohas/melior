@@ -34,6 +34,7 @@ impl RedisStrategy for WebrtcStrategy {
         let channel = format!("{}:{}", WEBRTC_CHANNEL, message.session_id);
         let r = self.app_state.web_rtc_manager.lock().await.create_response_to_offer(message.sdp.clone(), message.session_id.clone(), message.channel_id.clone()).await;
 
+        println!("Sending response to offer");
         if r.is_ok() {
             let response = WebrtcResponse {
                 sdp_type: message.sdp_type.clone(),
@@ -43,6 +44,7 @@ impl RedisStrategy for WebrtcStrategy {
             };
 
             let _ = self.app_state.redis_manager.publish(&channel, &response).await;
+            println!("Sent response to offer");
         }
 
     }
