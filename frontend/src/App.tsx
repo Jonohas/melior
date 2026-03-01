@@ -4,9 +4,32 @@ import {VideoPlayer} from "@/features/streaming/components/VideoPlayer.tsx";
 import {useStreamStore} from "@/features/streaming/store/streamingStore.ts";
 
 export function App() {
-    // const localVideoRef = useRef<HTMLVideoElement>(null);
     const {localStream, initialize, peerConnection, setStream, disconnect, streams} = useStreamStore();
     const [loading, setLoading] = useState(true);
+    const [messages, setMessages] = useState<string[]>([]);
+    const [input, setInput] = useState('');
+    const [ws, setWs] = useState<WebSocket | null>(null);
+
+    useEffect(() => {
+        const websocket = new WebSocket('ws://localhost:5000');
+        setWs(websocket);
+
+        websocket.onopen = () => console.log('Connected to WebSocket server');
+        websocket.onmessage = (event) => {
+            setMessages((prevMessages) => [...prevMessages, event.data]);
+        };
+        websocket.onclose = () => console.log('Disconnected from WebSocket server');
+
+        // Cleanup on unmount
+        return () => websocket.close();
+    }, []);
+
+    const sendMessage = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(input);
+            setInput('');
+        }
+    };
     
     useEffect(() => {
         const init = async () => {
@@ -90,6 +113,22 @@ export function App() {
                             connectToStream("33846b5c-e01b-41fe-9042-54a84dd96993");
                         }}>Connect</button>
                         <button className="submit" onClick={disconnect}>Disconnect</button>
+                    </div>
+
+                    <div className="notification-center">
+                        <h2>Real-Time Notifications</h2>
+                        <div className="messages">
+                            {messages.map((message, index) => (
+                                <p key={index}>{message}</p>
+                            ))}
+                        </div>
+                        <input
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder="Type a message"
+                        />
+                        <button onClick={sendMessage}>Send</button>
                     </div>
                 </>
             )}

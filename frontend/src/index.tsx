@@ -47,11 +47,11 @@ const server = serve({
         console: true,
     },
 
-    hostname: "0.0.0.0", // Allow access from other devices on the network
-    tls: {
-        cert: Bun.file("localhost.pem"),
-        key: Bun.file("localhost-key.pem"),
-    },
+    // hostname: "0.0.0.0", // Allow access from other devices on the network
+    // tls: {
+    //     cert: Bun.file("localhost.pem"),
+    //     key: Bun.file("localhost-key.pem"),
+    // },
 });
 
 console.log(`🚀 Server running at ${server.url}`);
