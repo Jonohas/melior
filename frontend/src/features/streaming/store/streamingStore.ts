@@ -31,7 +31,7 @@ export const useStreamStore = create<StreamStore>()((set, get) => ({
 
         pc.ontrack = (event) => {
             set({ streams: event.streams });
-            console.log("Received remote track", event.streams);
+//            console.log("Received remote track", event.streams);
         };
 
         pc.addTransceiver("video", { direction: "sendrecv" });
@@ -45,7 +45,7 @@ export const useStreamStore = create<StreamStore>()((set, get) => ({
             };
         });
 
-        console.log(pc.localDescription?.sdp);
+  //      console.log(pc.localDescription?.sdp);
         console.log("ICE Gathering Finished - Ready to connect");
 
         set({ peerConnection: pc });

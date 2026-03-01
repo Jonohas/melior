@@ -11,7 +11,7 @@ export function App() {
     const [ws, setWs] = useState<WebSocket | null>(null);
 
     useEffect(() => {
-        const websocket = new WebSocket('ws://localhost:5000');
+      const websocket = new WebSocket('ws://localhost:5000/ws');
         setWs(websocket);
 
         websocket.onopen = () => console.log('Connected to WebSocket server');
@@ -50,42 +50,42 @@ export function App() {
     );
     
     const connectToStream = useCallback(async (channelId: string) => {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false
-        });
-
-        setStream(stream);
-
-        // 2. Find the transceiver we created during initialization
-        const videoTrack = stream.getVideoTracks()[0];
-        const sender = peerConnection.getSenders().find(s => s.track === null || s.track?.kind === "video");
-
-        if (sender && videoTrack) {
-            // This attaches the camera to the pre-gathered ICE session
-            await sender.replaceTrack(videoTrack);
-        }
-        
-        console.log(peerConnection.localDescription?.sdp);
-        
-        const response = await fetch(`/api/channels/${channelId}/connect`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                sdp: peerConnection.localDescription?.sdp,
-                displayName: "Test User",
-                sdpType: "offer"
-            })
-        });
-
-        const { response: answerSdp } = await response.json();
-
-        // 8. Set Answer
-        await peerConnection.setRemoteDescription(new RTCSessionDescription({
-            type: "answer",
-            sdp: answerSdp
-        }));
-
+//        const stream = await navigator.mediaDevices.getUserMedia({
+//            video: true,
+//            audio: false
+//        });
+//
+//        setStream(stream);
+//
+//        // 2. Find the transceiver we created during initialization
+//        const videoTrack = stream.getVideoTracks()[0];
+//        const sender = peerConnection.getSenders().find(s => s.track === null || s.track?.kind === "video");
+//
+//        if (sender && videoTrack) {
+//            // This attaches the camera to the pre-gathered ICE session
+//            await sender.replaceTrack(videoTrack);
+//        }
+//        
+//        console.log(peerConnection.localDescription?.sdp);
+//        
+//        const response = await fetch(`/api/channels/${channelId}/connect`, {
+//            method: "POST",
+//            headers: { "Content-Type": "application/json" },
+//            body: JSON.stringify({
+//                sdp: peerConnection.localDescription?.sdp,
+//                displayName: "Test User",
+//                sdpType: "offer"
+//            })
+//        });
+//
+//        const { response: answerSdp } = await response.json();
+//
+//        // 8. Set Answer
+//        await peerConnection.setRemoteDescription(new RTCSessionDescription({
+//            type: "answer",
+//            sdp: answerSdp
+//        }));
+//
     }, [peerConnection, setStream])
 
     return (

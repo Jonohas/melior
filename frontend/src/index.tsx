@@ -1,8 +1,7 @@
 import { serve } from "bun";
 import index from "./index.html";
 
-const TARGET_API_URL = "https://localhost:7115";
-
+const TARGET_API_URL = "http://localhost:5000";
 const server = serve({
     routes: {
         // Serve index.html for all unmatched routes.
