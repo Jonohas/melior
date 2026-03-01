@@ -14,3 +14,4 @@ thiserror = "1.0.69"
 ratatui = "0.30.0"
 color-eyre = "0.6.5"
 crossterm = "0.29.0"
+axum = { version = "0.8.8", features = ["ws"] }
