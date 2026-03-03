@@ -26,14 +26,14 @@ export function App() {
 
     const sendMessage = () => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(input);
+            ws.send(JSON.stringify({ channel: "echo", payload: input }));
             setInput('');
         }
     };
     
     useEffect(() => {
         const init = async () => {
-            await initialize();
+            // await initialize();
             setLoading(false);
         }
         

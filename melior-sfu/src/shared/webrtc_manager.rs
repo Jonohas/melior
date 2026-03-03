@@ -36,6 +36,19 @@ impl<'a> WebRtcManager {
         Self { api, channels: HashMap::new(), peers }
     }
 
+    pub fn get_config(&self) -> RTCConfiguration {
+        RTCConfiguration {
+            ice_servers: vec![
+                RTCIceServer {
+                    urls: vec!["turn:127.0.0.1:3478?transport=udp".to_string()],
+                    username: "username".to_string(),
+                    credential: "password".to_string(),
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
     pub async fn create_response_to_offer(
         &mut self,
         offer_sdp: String,
@@ -101,7 +114,6 @@ impl<'a> WebRtcManager {
 
         println!("here 1");
 
-
         let channel = self.channels.get(&channel_id_copy).unwrap().clone();
         let channel_lock = channel.lock().await;
 
@@ -115,7 +127,6 @@ impl<'a> WebRtcManager {
                 track_id.ne(&&orig_session_id)
             })
             .collect();
-
 
         println!("here 2");
 
@@ -158,12 +169,22 @@ impl<'a> WebRtcManager {
         pc.set_local_description(answer).await?;
         let _ = gatherer.recv().await;
 
-
         println!("here 3");
 
         self.peers.insert(orig_session_id.clone(), pc.clone());
 
         println!("here 4");
+        Ok(pc.local_description().await.unwrap().sdp)
+    }
+
+    pub async fn connect(&self, offer_sdp: String) -> Result<String, Box<dyn std::error::Error + Send + Sync>>{
+        let config = self.get_config();
+        let pc = self.api.new_peer_connection(config).await?;
+        pc.set_remote_description(RTCSessionDescription::offer(offer_sdp)?)
+            .await?;
+        let answer = pc.create_answer(None).await?;
+        let mut gatherer = pc.gathering_complete_promise().await;
+        pc.set_local_description(answer).await?;
         Ok(pc.local_description().await.unwrap().sdp)
     }
 }
