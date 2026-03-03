@@ -1,3 +1,3 @@
-pub mod tracks;
 pub mod peer;
 mod random;
+pub mod tracks;

@@ -4,6 +4,8 @@ use serde_json::Value;
 #[derive(Deserialize)]
 pub struct IncomingMessage {
     pub channel: String,
+    pub session_id: String,
+    pub channel_id: String,
     pub payload: Value,
 }
 

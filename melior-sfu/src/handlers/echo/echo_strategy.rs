@@ -1,5 +1,6 @@
-use axum::extract::ws::{Message, WebSocket};
 use crate::handlers::websocket_strategy::WebsocketStrategy;
+use crate::structs::app_state::AppState;
+use axum::extract::ws::{Message, WebSocket};
 
 pub struct EchoStrategy;
 
@@ -11,7 +12,14 @@ impl WebsocketStrategy for EchoStrategy {
         Self
     }
 
-    async fn handle_message(&self, socket: &mut WebSocket, message: Self::Message) {
+    async fn handle_message(
+        &self,
+        socket: &mut WebSocket,
+        message: Self::Message,
+        _session_id: &str,
+        _channel_id: &str,
+        _state: &AppState,
+    ) {
         println!("Echo: {}", message);
         let _ = socket.send(Message::text(message)).await;
     }

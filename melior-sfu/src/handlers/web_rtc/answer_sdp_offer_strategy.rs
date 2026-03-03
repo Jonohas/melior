@@ -1,6 +1,7 @@
+use crate::handlers::websocket_strategy::WebsocketStrategy;
+use crate::structs::app_state::AppState;
 use axum::extract::ws::{Message, WebSocket};
 use serde::Deserialize;
-use crate::handlers::websocket_strategy::WebsocketStrategy;
 
 #[derive(Deserialize)]
 pub struct SDPOfferMessage {
@@ -17,8 +18,38 @@ impl WebsocketStrategy for AnswerSDPOfferStrategy {
         Self
     }
 
-    async fn handle_message(&self, socket: &mut WebSocket, message: Self::Message) {
+    async fn handle_message(
+        &self,
+        socket: &mut WebSocket,
+        message: Self::Message,
+        session_id: &str,
+        channel_id: &str,
+        state: &AppState,
+    ) {
         println!("Handle sdp offer: {}", message.sdp);
-        let _ = socket.send(Message::text(message.sdp)).await;
+
+        let answer_sdp = state
+            .web_rtc_manager
+            .lock()
+            .await
+            .create_response_to_offer(
+                message.sdp,
+                session_id.to_string(),
+                channel_id.to_string(),
+                state.client_registry.clone(),
+            )
+            .await;
+
+        match answer_sdp {
+            Ok(sdp) => {
+                let response = serde_json::json!({ "sdp": sdp });
+                let _ = socket
+                    .send(Message::text(serde_json::to_string(&response).unwrap()))
+                    .await;
+            }
+            Err(e) => {
+                eprintln!("Failed to create answer: {}", e);
+            }
+        }
     }
 }
