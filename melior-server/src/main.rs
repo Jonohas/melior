@@ -16,16 +16,9 @@ use axum::Router;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::shared::track_registry::TrackRegistry;
-use axum_server::tls_rustls::RustlsConfig;
-
-
 
 #[tokio::main]
 async fn main() {
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .unwrap();
-
     let client_registry = Arc::new(ClientRegistry::new());
 
     let app_state = AppState {
@@ -40,15 +33,9 @@ async fn main() {
         .route("/ws", get(ws_handler))
         .with_state(app_state);
 
-    let config = RustlsConfig::from_pem_file("cert.pem", "key.pem")
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:5000")
         .await
         .unwrap();
 
-    axum_server::bind_rustls(
-        "0.0.0.0:5000".parse().unwrap(),
-        config,
-    )
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+    axum::serve(listener, app).await.unwrap();
 }

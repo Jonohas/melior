@@ -12,5 +12,4 @@ uuid = { version = "1.21.0", features = ["v4"] }
 thiserror = "1.0.69"
 axum = { version = "0.8.8", features = ["ws"] }
 futures-util = "0.3"
-axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
-rustls = { version = "0.23", features = ["ring"] }
+

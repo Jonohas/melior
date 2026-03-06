@@ -10,7 +10,7 @@ export const useWebRTC = () => {
         const pc = new RTCPeerConnection({
             iceServers: [
                 {
-                    urls: "turn:10.54.89.137:3478?transport=udp",
+                    urls: "turn:127.0.0.1:3478?transport=udp",
                     username: "username",
                     credential: "password",
                 },
