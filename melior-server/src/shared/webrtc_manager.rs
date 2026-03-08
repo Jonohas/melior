@@ -1,4 +1,6 @@
+use crate::shared::track_registry::TrackRegistry;
 use crate::structs::client_registry::ClientRegistry;
+use crate::tui::{EventEmitter, TuiEvent};
 use axum::extract::ws::Message;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,17 +11,17 @@ use webrtc::api::{APIBuilder, API};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::track::track_remote::TrackRemote;
-use crate::shared::track_registry::TrackRegistry;
 
 pub struct WebRtcManager {
     api: Arc<API>,
     pub peers: Arc<Mutex<HashMap<String, Arc<webrtc::peer_connection::RTCPeerConnection>>>>,
+    pub event_emitter: Option<Arc<Mutex<EventEmitter>>>,
 }
 
 impl WebRtcManager {
@@ -31,7 +33,13 @@ impl WebRtcManager {
         Self {
             api,
             peers: Arc::new(Mutex::new(HashMap::new())),
+            event_emitter: None,
         }
+    }
+
+    pub fn with_emitter(mut self, emitter: Arc<Mutex<EventEmitter>>) -> Self {
+        self.event_emitter = Some(emitter);
+        self
     }
 
     pub async fn create_response_to_offer(
@@ -43,11 +51,12 @@ impl WebRtcManager {
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let pc = Arc::new(self.api.new_peer_connection(Self::ice_config()).await?);
 
-        Self::setup_ice_logging(&pc);
+        Self::setup_ice_logging(&pc, self.event_emitter.clone(), session_id.clone());
         Self::setup_ice_candidate_forwarding(
             &pc,
             session_id.clone(),
             client_registry.clone(),
+            self.event_emitter.clone(),
         );
         Self::setup_on_track(
             &pc,
@@ -55,6 +64,7 @@ impl WebRtcManager {
             track_registry.clone(),
             client_registry.clone(),
             self.peers.clone(),
+            self.event_emitter.clone(),
         );
 
         let existing_tracks = track_registry.get_other_tracks(&session_id).await;
@@ -80,9 +90,27 @@ impl WebRtcManager {
         }
     }
 
-    fn setup_ice_logging(pc: &Arc<RTCPeerConnection>) {
+    fn setup_ice_logging(
+        pc: &Arc<RTCPeerConnection>,
+        event_emitter: Option<Arc<Mutex<EventEmitter>>>,
+        session_id: String,
+    ) {
+        let emitter = event_emitter.clone();
+        let session_id_for_log = session_id.clone();
         pc.on_ice_connection_state_change(Box::new(move |state| {
-            println!("ICE state: {:?}", state);
+            if let Some(em) = &emitter {
+                let em = em.clone();
+                let session_id = session_id_for_log.clone();
+                let state_str = format!("{:?}", state);
+                tokio::spawn(async move {
+                    let emitter = em.lock().await;
+                    emitter.emit(TuiEvent::IceStateChange {
+                        session_id,
+                        state: state_str.clone(),
+                    });
+                    emitter.emit_log("INFO", &format!("ICE state: {}", state_str));
+                });
+            }
             Box::pin(async {})
         }));
     }
@@ -91,10 +119,13 @@ impl WebRtcManager {
         pc: &Arc<RTCPeerConnection>,
         session_id: String,
         client_registry: Arc<ClientRegistry>,
+        event_emitter: Option<Arc<Mutex<EventEmitter>>>,
     ) {
+        let emitter = event_emitter.clone();
         pc.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
             let session_id = session_id.clone();
             let client_registry = client_registry.clone();
+            let emitter = emitter.clone();
 
             Box::pin(async move {
                 if let Some(cand) = candidate {
@@ -107,13 +138,17 @@ impl WebRtcManager {
                         if let Err(e) = client_registry
                             .send_to_session(
                                 &session_id,
-                                Message::text(
-                                    serde_json::to_string(&ice_msg).unwrap(),
-                                ),
+                                Message::text(serde_json::to_string(&ice_msg).unwrap()),
                             )
                             .await
                         {
-                            eprintln!("Failed to send ICE candidate: {}", e);
+                            if let Some(em) = &emitter {
+                                let em = em.lock().await;
+                                em.emit_log(
+                                    "ERROR",
+                                    &format!("Failed to send ICE candidate: {}", e),
+                                );
+                            }
                         }
                     }
                 }
@@ -127,12 +162,14 @@ impl WebRtcManager {
         track_registry: TrackRegistry,
         client_registry: Arc<ClientRegistry>,
         peers: Arc<Mutex<HashMap<String, Arc<RTCPeerConnection>>>>,
+        event_emitter: Option<Arc<Mutex<EventEmitter>>>,
     ) {
         pc.on_track(Box::new(move |track: Arc<TrackRemote>, _, _| {
             let session_id = session_id.clone();
             let track_registry = track_registry.clone();
             let client_registry = client_registry.clone();
             let peers = peers.clone();
+            let emitter = event_emitter.clone();
 
             Box::pin(async move {
                 let local_track = Self::create_local_track(&track);
@@ -148,20 +185,14 @@ impl WebRtcManager {
                     local_track,
                     &peers,
                     &client_registry,
+                    emitter,
                 )
-                    .await;
-
-                println!(
-                    "Track from {} stored and renegotiated to other peers",
-                    session_id
-                );
+                .await;
             })
         }));
     }
 
-    fn create_local_track(
-        remote: &Arc<TrackRemote>,
-    ) -> Arc<TrackLocalStaticRTP> {
+    fn create_local_track(remote: &Arc<TrackRemote>) -> Arc<TrackLocalStaticRTP> {
         let codec = remote.codec();
         Arc::new(TrackLocalStaticRTP::new(
             RTCRtpCodecCapability {
@@ -173,10 +204,7 @@ impl WebRtcManager {
         ))
     }
 
-    fn spawn_rtp_forwarder(
-        remote: Arc<TrackRemote>,
-        local: Arc<TrackLocalStaticRTP>,
-    ) {
+    fn spawn_rtp_forwarder(remote: Arc<TrackRemote>, local: Arc<TrackLocalStaticRTP>) {
         tokio::spawn(async move {
             while let Ok((packet, _)) = remote.read_rtp().await {
                 if local.write_rtp(&packet).await.is_err() {
@@ -191,6 +219,7 @@ impl WebRtcManager {
         local_track: Arc<TrackLocalStaticRTP>,
         peers: &Arc<Mutex<HashMap<String, Arc<RTCPeerConnection>>>>,
         client_registry: &Arc<ClientRegistry>,
+        event_emitter: Option<Arc<Mutex<EventEmitter>>>,
     ) {
         let peers_locked = peers.lock().await;
         for (peer_session_id, peer_pc) in peers_locked.iter() {
@@ -198,19 +227,21 @@ impl WebRtcManager {
                 continue;
             }
 
-            if let Err(e) =
-                Self::renegotiate_single_peer(
-                    peer_session_id,
-                    peer_pc,
-                    local_track.clone(),
-                    client_registry,
-                )
-                    .await
+            if let Err(e) = Self::renegotiate_single_peer(
+                peer_session_id,
+                peer_pc,
+                local_track.clone(),
+                client_registry,
+            )
+            .await
             {
-                eprintln!(
-                    "Failed to renegotiate peer {}: {}",
-                    peer_session_id, e
-                );
+                if let Some(em) = &event_emitter {
+                    let em = em.lock().await;
+                    em.emit_log(
+                        "ERROR",
+                        &format!("Failed to renegotiate peer {}: {}", peer_session_id, e),
+                    );
+                }
             }
         }
     }
@@ -285,12 +316,12 @@ impl WebRtcManager {
 
         let sdp = pc.local_description().await.unwrap();
         let msg = serde_json::json!({
-        "channel": "sdp_offer",
-        "payload": {
-            "type": "offer",
-            "sdp": sdp.sdp
-        }
-    });
+            "channel": "sdp_offer",
+            "payload": {
+                "type": "offer",
+                "sdp": sdp.sdp
+            }
+        });
 
         client_registry
             .send_to_session(

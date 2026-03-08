@@ -1,6 +1,7 @@
 use super::message::IncomingMessage;
 use super::router::WebsocketMessageRouter;
 use crate::structs::app_state::AppState;
+use crate::tui::TuiEvent;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
@@ -24,12 +25,25 @@ pub async fn ws_handler(
 async fn handle_socket(
     mut socket: WebSocket,
     session_id: String,
-    _channel_id: String,
+    channel_id: String,
     state: AppState,
 ) {
     let (tx, mut rx) = mpsc::channel::<Message>(100);
 
     state.client_registry.register(session_id.clone(), tx).await;
+
+    {
+        let emitter = state.event_emitter.lock().await;
+        emitter.emit(TuiEvent::WsConnect {
+            session_id: session_id.clone(),
+            channel_id: channel_id.clone(),
+        });
+        emitter.emit(TuiEvent::Log {
+            level: "INFO".to_string(),
+            message: format!("WebSocket connected: {} ({})", session_id, channel_id),
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+        });
+    }
 
     loop {
         tokio::select! {
@@ -38,6 +52,18 @@ async fn handle_socket(
                     Some(Ok(Message::Text(text))) => text,
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
                         state.client_registry.unregister(&session_id).await;
+                        state.track_registry.remove_session(&session_id).await;
+                        {
+                            let emitter = state.event_emitter.lock().await;
+                            emitter.emit(TuiEvent::WsDisconnect {
+                                session_id: session_id.clone(),
+                            });
+                            emitter.emit(TuiEvent::Log {
+                                level: "INFO".to_string(),
+                                message: format!("WebSocket disconnected: {}", session_id),
+                                timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                            });
+                        }
                         return;
                     }
                     _ => continue,
@@ -46,7 +72,8 @@ async fn handle_socket(
                 let incoming: IncomingMessage = match serde_json::from_str(&msg) {
                     Ok(m) => m,
                     Err(e) => {
-                        eprintln!("Invalid message: {e}");
+                        let emitter = state.event_emitter.lock().await;
+                        emitter.emit_log("WARN", &format!("Invalid message: {}", e));
                         continue;
                     }
                 };
@@ -57,11 +84,25 @@ async fn handle_socket(
                     Some(m) => m,
                     None => {
                         state.client_registry.unregister(&session_id).await;
+                        state.track_registry.remove_session(&session_id).await;
+                        {
+                            let emitter = state.event_emitter.lock().await;
+                            emitter.emit(TuiEvent::WsDisconnect {
+                                session_id: session_id.clone(),
+                            });
+                        }
                         return;
                     }
                 };
                 if socket.send(msg).await.is_err() {
                     state.client_registry.unregister(&session_id).await;
+                    state.track_registry.remove_session(&session_id).await;
+                    {
+                        let emitter = state.event_emitter.lock().await;
+                        emitter.emit(TuiEvent::WsDisconnect {
+                            session_id: session_id.clone(),
+                        });
+                    }
                     return;
                 }
             }

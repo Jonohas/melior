@@ -8,7 +8,6 @@ impl WebsocketStrategy for EchoStrategy {
     type Message = String;
 
     fn new() -> Self {
-        println!("Echo handler initialized");
         Self
     }
 
@@ -18,9 +17,10 @@ impl WebsocketStrategy for EchoStrategy {
         message: Self::Message,
         _session_id: &str,
         _channel_id: &str,
-        _state: &AppState,
+        state: &AppState,
     ) {
-        println!("Echo: {}", message);
+        let emitter = state.event_emitter.lock().await;
+        emitter.emit_log("DEBUG", &format!("Echo: {}", message));
         let _ = socket.send(Message::text(message)).await;
     }
 }

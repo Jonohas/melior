@@ -7,7 +7,7 @@ use serde::Deserialize;
 pub struct SDPOfferMessage {
     sdp: String,
     #[serde(rename = "type")]
-    sdp_type: String, // This will capture "offer"
+    sdp_type: String,
 }
 
 pub struct AnswerSDPOfferStrategy;
@@ -16,7 +16,6 @@ impl WebsocketStrategy for AnswerSDPOfferStrategy {
     type Message = SDPOfferMessage;
 
     fn new() -> Self {
-        println!("Sdp handler initialized");
         Self
     }
 
@@ -51,7 +50,8 @@ impl WebsocketStrategy for AnswerSDPOfferStrategy {
                     .await;
             }
             Err(e) => {
-                eprintln!("Failed to create answer: {}", e);
+                let emitter = state.event_emitter.lock().await;
+                emitter.emit_log("ERROR", &format!("Failed to create answer: {}", e));
             }
         }
     }

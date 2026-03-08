@@ -40,7 +40,8 @@ impl WebsocketStrategy for IceCandidateStrategy {
             };
 
             if let Err(e) = peer.add_ice_candidate(init).await {
-                eprintln!("Failed to add ICE candidate: {}", e);
+                let emitter = state.event_emitter.lock().await;
+                emitter.emit_log("ERROR", &format!("Failed to add ICE candidate: {}", e));
             }
         }
     }

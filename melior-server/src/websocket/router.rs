@@ -1,11 +1,11 @@
 use crate::handlers::echo::echo_strategy::EchoStrategy;
 use crate::handlers::web_rtc::answer_sdp_offer_strategy::AnswerSDPOfferStrategy;
+use crate::handlers::web_rtc::handle_sdp_answer_strategy::HandleSDPAnswerStrategy;
 use crate::handlers::web_rtc::ice_candidate_strategy::IceCandidateStrategy;
 use crate::handlers::websocket_strategy::WebsocketStrategy;
 use crate::structs::app_state::AppState;
 use crate::websocket::message::IncomingMessage;
 use axum::extract::ws::WebSocket;
-use crate::handlers::web_rtc::handle_sdp_answer_strategy::HandleSDPAnswerStrategy;
 
 pub struct WebsocketMessageRouter {}
 
@@ -51,7 +51,7 @@ impl WebsocketMessageRouter {
                     )
                     .await
             }
-            
+
             "sdp_answer" => {
                 let strategy = HandleSDPAnswerStrategy::new();
                 strategy
@@ -65,7 +65,10 @@ impl WebsocketMessageRouter {
                     )
                     .await
             }
-            _ => eprintln!("[Websocket] Unknown channel: {}", msg.channel),
+            _ => {
+                let emitter = state.event_emitter.lock().await;
+                emitter.emit_log("WARN", &format!("Unknown channel: {}", msg.channel));
+            }
         }
     }
 }

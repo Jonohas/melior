@@ -1,7 +1,10 @@
 use crate::handlers::websocket_strategy::WebsocketStrategy;
 use crate::structs::app_state::AppState;
-use axum::extract::ws::{Message, WebSocket};
+use crate::tui::EventEmitter;
+use axum::extract::ws::WebSocket;
 use serde::Deserialize;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Deserialize)]
 pub struct SDPAnswerMessage {
@@ -15,7 +18,6 @@ impl WebsocketStrategy for HandleSDPAnswerStrategy {
     type Message = SDPAnswerMessage;
 
     fn new() -> Self {
-        println!("Sdp answer handler initialized");
         Self
     }
 
@@ -33,7 +35,11 @@ impl WebsocketStrategy for HandleSDPAnswerStrategy {
             .handle_renegotiation_answer(session_id, message.sdp)
             .await
         {
-            eprintln!("Failed to handle renegotiation answer: {}", e);
+            let emitter = state.event_emitter.lock().await;
+            emitter.emit_log(
+                "ERROR",
+                &format!("Failed to handle renegotiation answer: {}", e),
+            );
         }
     }
 }
