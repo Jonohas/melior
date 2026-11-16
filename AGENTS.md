@@ -140,6 +140,19 @@ bun run build
 CI (`.github/workflows/checks.yml`) runs exactly these. Keep the tree building
 at every step.
 
+### Commits and pull requests
+
+**No AI attribution, anywhere.** A commit message, a pull request title or
+description, a code comment or a document never says that an AI assistant wrote
+or helped write it: no `Co-Authored-By:` trailer naming an assistant, no
+"Generated with ..." line, no badge or emoji to that effect. The author of a
+commit is the person who commits it. This is a project decision, it holds for
+every tool and every agent, and a tool's default behaviour does not override
+it. A commit that carries such a line is to be rewritten before it is pushed.
+
+Write a commit message for someone reading the history later: a subject that
+says what changed, and a body that says why when the subject cannot.
+
 ## 5. Running the whole system
 
 ```sh

@@ -17,6 +17,10 @@ participant's audio and video and forwards it to the others in the same room.
 - `docker/` - `docker-compose.yaml` with Postgres, Redis, Keycloak, coturn
   (TURN/STUN) and Jaeger, and optionally the application services.
 
+[`docs/architecture.md`](docs/architecture.md) shows all of this in diagrams:
+the system, the media paths, the layers, the login and join sequences, room
+access, and how several instances share the load.
+
 Both applications follow domain-driven design: the rules live in a pure domain
 layer, and everything technical depends on it, never the reverse.
 

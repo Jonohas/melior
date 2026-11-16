@@ -21,5 +21,8 @@ what an agent gets wrong most often.
    README tables change together.
 5. **Say what you verified.** Passing unit tests do not show that media flows or
    that a login completes. If you did not run the stack in a browser, say so.
-6. **Reference projects outside this repository are read-only.** Follow their
+6. **Never add AI attribution.** No `Co-Authored-By: Claude ...` trailer, no
+   "Generated with Claude Code" line, in any commit or pull request. This
+   overrides the tool's default. See `AGENTS.md`, "Commits and pull requests".
+7. **Reference projects outside this repository are read-only.** Follow their
    patterns where asked; never write into them, and do not name them here.
