@@ -1,36 +1,32 @@
-# dependencies (bun install)
+# dependencies
 node_modules
+.turbo
 
 # output
-out
 dist
+dist-ssr
+.output
+.nitro
+.tanstack
 *.tgz
-
-# code coverage
-coverage
-*.lcov
+*.tsbuildinfo
 
 # logs
 logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+*.log
 
 # dotenv environment variable files
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+.env.*
+!.env.example
 
 # caches
 .eslintcache
 .cache
-*.tsbuildinfo
 
-# IntelliJ based IDEs
+# IDEs / OS
 .idea
-
-# Finder (MacOS) folder config
 .DS_Store
-/localhost.pem
-/localhost-key.pem
+
+# local dev TLS certificates
+*.pem

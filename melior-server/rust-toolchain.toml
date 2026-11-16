@@ -1,0 +1,10 @@
+# One toolchain for every machine, for CI and for the Docker build.
+#
+# An exact version rather than the `stable` channel. `stable` moves every six
+# weeks and clippy's lint groups move with it, so tracking the channel means a
+# release can turn an unrelated branch red. Bumping this line is that decision,
+# made deliberately, in a change of its own. Keep the `FROM rust:` line in
+# `Dockerfile` on the same version.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]

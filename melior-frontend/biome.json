@@ -1,0 +1,87 @@
+{
+    "$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
+    "vcs": {
+        "enabled": true,
+        "clientKind": "git",
+        "useIgnoreFile": true
+    },
+    "files": {
+        "ignoreUnknown": true,
+        "includes": ["**", "!**/dist", "!**/routeTree.gen.ts", "!**/fonts"]
+    },
+    "formatter": {
+        "enabled": true,
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineWidth": 120
+    },
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "recommended": false,
+            "a11y": {
+                "noAriaUnsupportedElements": "warn",
+                "useAltText": "warn",
+                "useAriaPropsForRole": "warn",
+                "useAriaPropsSupportedByRole": "warn",
+                "useMediaCaption": "warn",
+                "useValidAriaProps": "warn",
+                "useValidAriaValues": "warn"
+            },
+            "complexity": {
+                "noArguments": "error",
+                "noUselessTypeConstraint": "error"
+            },
+            "correctness": {
+                "noChildrenProp": "error",
+                "noUnusedVariables": "error",
+                "useExhaustiveDependencies": "warn",
+                "useHookAtTopLevel": "error",
+                "useJsxKeyInIterable": "error"
+            },
+            "performance": {
+                "noImgElement": "warn"
+            },
+            "security": {
+                "noDangerouslySetInnerHtmlWithChildren": "error"
+            },
+            "style": {
+                "noCommonJs": "error",
+                "noNamespace": "error",
+                "useArrayLiterals": "error",
+                "useAsConstAssertion": "error",
+                "useConst": "error"
+            },
+            "suspicious": {
+                "noCommentText": "error",
+                "noDuplicateJsxProps": "error",
+                "noExplicitAny": "error",
+                "noExtraNonNullAssertion": "error",
+                "noMisleadingInstantiator": "error",
+                "noNonNullAssertedOptionalChain": "error",
+                "noUnsafeDeclarationMerging": "error",
+                "noVar": "error",
+                "useNamespaceKeyword": "error"
+            }
+        },
+        "includes": ["**", "!**/dist/**"]
+    },
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "single"
+        }
+    },
+    "assist": {
+        "enabled": true,
+        "actions": {
+            "source": {
+                "organizeImports": "on"
+            }
+        }
+    },
+    "css": {
+        "parser": {
+            "tailwindDirectives": true
+        }
+    }
+}

@@ -1,0 +1,41 @@
+{
+    "$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
+    "extends": ["../../biome.json"],
+    "root": false,
+    "files": {
+        "includes": ["**", "!src/routeTree.gen.ts", "!src/fonts"]
+    },
+    "linter": {
+        "rules": {
+            "performance": {
+                "noNamespaceImport": "error"
+            },
+            "style": {
+                "noRestrictedImports": {
+                    "level": "error",
+                    "options": {
+                        "patterns": [
+                            {
+                                "group": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+                                "message": "Do not include .ts or .tsx extensions in import paths."
+                            },
+                            {
+                                "group": ["@/features/*"],
+                                "message": "Import from a feature subfolder barrel, e.g. @/features/conference/components."
+                            },
+                            {
+                                "group": ["@/features/*/*/*", "@/features/*/*/**"],
+                                "message": "Prefer feature subfolder barrels over deep imports."
+                            },
+                            {
+                                "group": ["*", "**/*"],
+                                "importNamePattern": "\\*",
+                                "message": "Use named imports/re-exports, not wildcards."
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}

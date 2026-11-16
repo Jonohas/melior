@@ -1,0 +1,5 @@
+# rustfmt's `max_width` is 100, but its sub-limits are far tighter
+# (`fn_call_width` 60, `struct_lit_width` 18), so it splits expressions that
+# fit on one line with room to spare. `Max` uses the full width for calls,
+# chains and struct literals.
+use_small_heuristics = "Max"

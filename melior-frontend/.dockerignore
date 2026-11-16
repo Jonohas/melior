@@ -1,0 +1,12 @@
+**/node_modules/
+**/dist/
+.turbo/
+**/.tanstack/
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+*.md
+*.pem
+.env*
+*.log

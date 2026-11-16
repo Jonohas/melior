@@ -1,0 +1,49 @@
+{
+  "realm": "melior",
+  "enabled": true,
+  "displayName": "Melior (dev, local only)",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "accessTokenLifespan": 300,
+  "clients": [
+    {
+      "clientId": "melior",
+      "name": "Melior",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "https://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "https://localhost:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*##https://localhost:3000/*"
+      }
+    }
+  ],
+  "roles": {
+    "client": {
+      "melior": [
+        {
+          "name": "admin",
+          "description": "May use Melior and administer it"
+        },
+        {
+          "name": "member",
+          "description": "May join rooms"
+        }
+      ]
+    }
+  }
+}

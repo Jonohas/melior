@@ -1,0 +1,81 @@
+{
+  "realm": "melior",
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@melior.localhost",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "melior": [
+          "admin",
+          "member"
+        ]
+      }
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@melior.localhost",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "melior": [
+          "member"
+        ]
+      }
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@melior.localhost",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "carol",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "melior": [
+          "member"
+        ]
+      }
+    },
+    {
+      "username": "guest",
+      "enabled": true,
+      "email": "guest@melior.localhost",
+      "emailVerified": true,
+      "firstName": "Guest",
+      "lastName": "Example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "guest",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

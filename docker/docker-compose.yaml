@@ -1,54 +1,201 @@
-﻿services:
+# Melior development stack.
+#
+# `docker compose up` starts only the infrastructure (postgres, redis, keycloak,
+# coturn, jaeger). The application itself is behind the "app" profile:
+#
+#   ./init-env.sh                              # once: writes .env with random secrets
+#   docker compose --profile app up --build
+#   docker compose --profile app --profile scale up --build   # two SFU instances
+#
+# Configuration comes from docker/.env (see .env.example). The four secrets
+# (POSTGRES_PASSWORD, KEYCLOAK_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, TURN_SECRET)
+# have no default: compose refuses to run until init-env.sh has created .env.
+# Everything else has a development default.
+
+# Shared by both SFU instances so that they cannot drift apart.
+x-melior-server: &melior-server
+  build:
+    context: ../melior-server
+  image: melior-server:dev
+  network_mode: host
+  environment: &melior-server-env
+    MELIOR_BIND: ${MELIOR_BIND:-0.0.0.0:5000}
+    MELIOR_INSTANCE_ID: ${MELIOR_INSTANCE_ID:-melior-1}
+    MELIOR_TURN_URLS: ${MELIOR_TURN_URLS:-turn:127.0.0.1:3478?transport=udp}
+    # Shared with coturn (--static-auth-secret); the server derives time-limited
+    # TURN credentials from it.
+    MELIOR_TURN_SECRET: ${TURN_SECRET:?run docker/init-env.sh first}
+    MELIOR_TURN_TTL_SECONDS: ${MELIOR_TURN_TTL_SECONDS:-3600}
+    # The origin browsers use; Keycloak redirects back to <FRONTEND_URL>/signin.
+    FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    REDIS_URL: ${REDIS_URL:-redis://127.0.0.1:6379}
+    IDP_ISSUER: ${IDP_ISSUER:-http://localhost:8300/realms/melior}
+    IDP_CLIENT_ID: ${IDP_CLIENT_ID:-melior}
+    SESSION_RECHECK_SECONDS: ${SESSION_RECHECK_SECONDS:-15}
+    # Room registry in the application database; traces go to Jaeger (OTLP gRPC).
+    DATABASE_URL: postgres://${POSTGRES_USER:-melior}:${POSTGRES_PASSWORD:?run docker/init-env.sh first}@127.0.0.1:5432/${POSTGRES_DB:-melior}
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://127.0.0.1:4317}
+    RUST_LOG: ${RUST_LOG:-}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    coturn:
+      condition: service_started
+    redis:
+      condition: service_started
+    keycloak:
+      condition: service_started
+    jaeger:
+      condition: service_started
+  restart: unless-stopped
+
+services:
+  # All infrastructure ports are bound to loopback only.
+  #
+  # postgres holds Keycloak's database (created by postgres/init on first start)
+  # next to the application database, where the SFU stores its room registry.
   postgres:
     image: postgres:17
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     environment:
-      POSTGRES_DB: melior
-      POSTGRES_USER: pg
-      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: ${POSTGRES_DB:-melior}
+      POSTGRES_USER: ${POSTGRES_USER:-melior}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run docker/init-env.sh first}
+      KEYCLOAK_DB_NAME: ${KEYCLOAK_DB_NAME:-keycloak}
+      KEYCLOAK_DB_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?run docker/init-env.sh first}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pg -d melior"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
     restart: unless-stopped
 
+  # Identity provider. Dev mode over plain http. The "melior" realm (client and
+  # roles) is imported from keycloak/melior-realm.json on first start, and the
+  # users from the file named by KEYCLOAK_USERS_FILE (dev users by default;
+  # keycloak/no-users.json for none). --import-realm skips a realm that already
+  # exists: after editing the files, remove the realm (or `docker compose down
+  # -v`) and start again.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?run docker/init-env.sh first}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?run docker/init-env.sh first}
+      # The issuer in tokens must be the URL browsers use, whoever asks.
+      # Set KEYCLOAK_PUBLIC_URL when browsers reach Keycloak under another URL
+      # (a reverse proxy, `tailscale serve`); IDP_ISSUER must then be
+      # <KEYCLOAK_PUBLIC_URL>/realms/melior.
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:${KEYCLOAK_PORT:-8300}}
+      # Trust X-Forwarded-* from such a proxy. The port is published on loopback
+      # only, so nothing but a proxy on this host can send them.
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "127.0.0.1:${KEYCLOAK_PORT:-8300}:8080"
+    volumes:
+      - ./keycloak/melior-realm.json:/opt/keycloak/data/import/melior-realm.json:ro
+      - ${KEYCLOAK_USERS_FILE:-./keycloak/melior-users-0.json}:/opt/keycloak/data/import/melior-users-0.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Receives the SFU's traces over OTLP gRPC (4317); UI on 16686.
   jaeger:
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.14.0
     container_name: jaeger
     ports:
-      - "16686:16686"  # Jaeger UI
-      - "4317:4317"    # OTLP gRPC receiver
-      - "4318:4318"    # OTLP HTTP receiver
-      - "5778:5778"    # Zipkin compact thrift
-      - "9411:9411"    # Zipkin HTTP
+      - "127.0.0.1:16686:16686"  # Jaeger UI
+      - "127.0.0.1:4317:4317"    # OTLP gRPC receiver
+      - "127.0.0.1:4318:4318"    # OTLP HTTP receiver
+      - "127.0.0.1:5778:5778"    # Remote sampling / config
+      - "127.0.0.1:9411:9411"    # Zipkin HTTP
     restart: unless-stopped
-    
+
+  # Holds the login sessions of the SFU's BFF endpoints.
   redis:
     image: redis:7-alpine
     container_name: redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     restart: unless-stopped
 
+  # TURN/STUN relay with time-limited credentials (use-auth-secret in
+  # turnserver.conf). Settings that differ per machine are passed as arguments
+  # and override turnserver.conf. TLS is off by default (see turnserver.conf).
   coturn:
     image: coturn/coturn:4.6.2
     container_name: coturn
     restart: unless-stopped
+    command:
+      - "-c"
+      - "/etc/coturn/turnserver.conf"
+      - "--static-auth-secret=${TURN_SECRET:?run docker/init-env.sh first}"
+      - "--realm=${TURN_REALM:-localhost}"
+      - "--external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}"
     ports:
-      - "3478:3478"
-      - "3478:3478/udp"
-      - "5349:5349"
-      - "5349:5349/udp"
-      - "49152-49160:49152-49160/udp" # Small range for Mac testing
+      # COTURN_BIND defaults to loopback; set it to 0.0.0.0 to serve other machines.
+      - "${COTURN_BIND:-127.0.0.1}:3478:3478"
+      - "${COTURN_BIND:-127.0.0.1}:3478:3478/udp"
+      - "${COTURN_BIND:-127.0.0.1}:5349:5349"      # only used if TLS is enabled
+      - "${COTURN_BIND:-127.0.0.1}:5349:5349/udp"  # only used if TLS is enabled
+      - "${COTURN_BIND:-127.0.0.1}:49152-49451:49152-49451/udp" # relay range, matches min-port/max-port
     volumes:
-        - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
-        - ./cert.pem:/etc/coturn/certs/cert.pem:ro
-        - ./privkey.pem:/etc/coturn/certs/privkey.pem:ro
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      # Optional TLS material (cert.pem, privkey.pem). Mounted as a directory so
+      # a missing folder is harmless; see turnserver.conf to enable TLS.
+      - ${COTURN_CERT_DIR:-./certs}:/etc/coturn/certs:ro
+
+  # ---- application (profile "app") ----
+
+  # The SFU needs arbitrary UDP ports for WebRTC media, so on Linux it runs in
+  # the host network namespace. Published ports are ignored in that mode; it
+  # listens on MELIOR_BIND directly on the host and reaches postgres, redis,
+  # keycloak and jaeger through their loopback ports. Host networking does not
+  # work on Docker Desktop (macOS/Windows); run the server with cargo there.
+  melior-server:
+    <<: *melior-server
+    profiles: ["app"]
+
+  # Second instance for scaling tests (profile "scale"; combine it with "app"
+  # for the rest of the stack). Set MELIOR_SERVER_URLS to both instances so that
+  # the frontend's nginx spreads rooms over them:
+  #   http://host.docker.internal:5000,http://host.docker.internal:5001
+  melior-server-2:
+    <<: *melior-server
+    profiles: ["scale"]
+    environment:
+      <<: *melior-server-env
+      MELIOR_BIND: 0.0.0.0:5001
+      MELIOR_INSTANCE_ID: melior-2
+
+  # nginx serving the built app and proxying /ws, /api, /login, /signin and
+  # /signout to the SFU instance(s) on the host, hashing rooms over the list.
+  melior-frontend:
+    profiles: ["app"]
+    build:
+      context: ../melior-frontend
+    environment:
+      MELIOR_SERVER_URLS: ${MELIOR_SERVER_URLS:-http://host.docker.internal:5000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - melior-server
+    restart: unless-stopped
 
 volumes:
   postgres_data:

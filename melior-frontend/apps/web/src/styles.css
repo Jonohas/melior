@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+:root {
+    --bg-color: hsl(44.7, 5%, 10%);
+    --fg-color: hsl(44.7, 100%, 95%);
+    --border-color: hsl(44.7, 5%, 20%);
+    --card-bg-color: hsl(44.7, 5%, 15%);
+    --fg-color-primary: hsl(44.7, 20%, 10%);
+    --color-primary: hsl(44.7, 100%, 48.4%);
+    --color-primary-hover: hsl(44.7, 100%, 40%);
+    --color-primary-dark: hsl(45, 100%, 25%);
+    --input-background-color: hsl(44.7, 5%, 20%);
+    --input-background-color-hover: hsl(44.7, 5%, 25%);
+    --shadow-color: hsl(44.7, 5%, 8%);
+
+    --space: 1rem; /* your base unit */
+}
+
+@font-face {
+    font-family: "FiraSans";
+    src: url("./fonts/FiraSans/Regular.ttf") format("truetype");
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "FiraSans";
+    src: url("./fonts/FiraSans/SemiBold.ttf") format("truetype");
+    font-weight: 500;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "FiraSans";
+    src: url("./fonts/FiraSans/Bold.ttf") format("truetype");
+    font-weight: 600;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "FiraSans";
+    src: url("./fonts/FiraSans/Black.ttf") format("truetype");
+    font-weight: 700;
+    font-style: normal;
+}
+
+@layer base {
+    html {
+        font-family: "FiraSans", system-ui, sans-serif;
+    }
+}
+
+@layer components {
+    .text-heading1 {
+        @apply text-5xl font-bold leading-tight tracking-tight;
+    }
+
+    .text-heading2 {
+        @apply text-4xl font-bold leading-tight tracking-tight;
+    }
+
+    .text-heading3 {
+        @apply text-3xl font-semibold leading-snug tracking-normal;
+    }
+
+    .text-heading4 {
+        @apply text-2xl font-semibold leading-snug tracking-normal;
+    }
+
+    .text-body1 {
+        @apply text-base leading-relaxed tracking-wide;
+    }
+
+    .text-body2 {
+        @apply text-xl leading-relaxed tracking-wide;
+    }
+
+    .text-caption {
+        @apply text-sm leading-normal tracking-wider;
+    }
+}
+
+* {
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--fg-color);
+}
+
+/* width */
+::-webkit-scrollbar {
+    width: calc(var(--space) * 0.6);
+}
+
+/* Track */
+::-webkit-scrollbar-track {
+}
+
+/* Handle */
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+}
+
+/* Handle on hover */
+::-webkit-scrollbar-thumb:hover {
+    background: var(--input-background-color-hover);
+}

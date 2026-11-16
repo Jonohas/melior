@@ -1,0 +1,79 @@
+# Production-oriented override:
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml --profile app up -d --build
+#
+# This is NOT a turnkey deployment. It does not provide:
+#   - TLS termination. You must run a reverse proxy in front of Keycloak
+#     (KEYCLOAK_PUBLIC_URL -> 127.0.0.1:${KEYCLOAK_PORT}) and the frontend
+#     (FRONTEND_URL -> 127.0.0.1:${FRONTEND_PORT}) that terminates TLS and sets
+#     X-Forwarded-* headers. Browsers need HTTPS for camera access.
+#   - Backups of the postgres volume (Keycloak data and room registry) or Redis.
+#   - Keycloak clustering or high availability: one Keycloak, one Postgres, one
+#     Redis, one coturn.
+#   - A hardened realm: keycloak/melior-realm.json is a development realm
+#     (sslRequired none, redirect URIs for localhost only). Edit its redirect
+#     URIs and review its settings, or manage the realm in the admin console.
+#   - TURN over TLS, firewall rules, or monitoring. Publish only what you need.
+#
+# Required variables: the four secrets (init-env.sh), KEYCLOAK_PUBLIC_URL,
+# FRONTEND_URL, IDP_ISSUER, COTURN_BIND, TURN_EXTERNAL_IP.
+
+x-prod-server-env: &prod-server-env
+  FRONTEND_URL: ${FRONTEND_URL:?set the public origin of the app, e.g. https://melior.example.org}
+  IDP_ISSUER: ${IDP_ISSUER:?set the realm issuer, e.g. https://id.example.org/realms/melior}
+  RUST_LOG: ${RUST_LOG:-}
+
+services:
+  keycloak:
+    # `start` (production mode) builds its optimised configuration on first
+    # start, which takes a little longer than `--optimized` with a pre-built
+    # image but needs no custom image. It enforces a hostname and refuses http
+    # unless allowed below.
+    command: ["start", "--import-realm"]
+    restart: always
+    environment:
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:?set the public URL of Keycloak, e.g. https://id.example.org}
+      # TLS is terminated by the reverse proxy; Keycloak listens on plain http
+      # behind it and trusts X-Forwarded-* headers. Port 8080 stays bound to
+      # loopback, so only the proxy on this host can reach it.
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+    volumes:
+      - ./keycloak/melior-realm.json:/opt/keycloak/data/import/melior-realm.json:ro
+      - ./keycloak/no-users.json:/opt/keycloak/data/import/melior-users-0.json:ro
+
+  melior-server:
+    environment:
+      <<: *prod-server-env
+    restart: always
+
+  melior-server-2:
+    environment:
+      <<: *prod-server-env
+    restart: always
+
+  melior-frontend:
+    restart: always
+
+  coturn:
+    restart: always
+    # The base file defaults these to loopback; production must choose them.
+    command: !override
+      - "-c"
+      - "/etc/coturn/turnserver.conf"
+      - "--static-auth-secret=${TURN_SECRET:?run docker/init-env.sh first}"
+      - "--realm=${TURN_REALM:-localhost}"
+      - "--external-ip=${TURN_EXTERNAL_IP:?set the address clients use to reach coturn}"
+    ports: !override
+      - "${COTURN_BIND:?set the interface for coturn, e.g. 0.0.0.0}:3478:3478"
+      - "${COTURN_BIND}:3478:3478/udp"
+      - "${COTURN_BIND}:5349:5349"
+      - "${COTURN_BIND}:5349:5349/udp"
+      - "${COTURN_BIND}:49152-49451:49152-49451/udp"
+
+  postgres:
+    restart: always
+  redis:
+    restart: always
+  jaeger:
+    restart: always

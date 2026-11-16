@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+description = "Workspace tooling for Melior. Run with `cargo xtask <task>`."
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

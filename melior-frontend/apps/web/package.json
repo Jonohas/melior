@@ -1,0 +1,39 @@
+{
+    "name": "@melior/web",
+    "private": true,
+    "type": "module",
+    "imports": {
+        "@/*": "./src/*"
+    },
+    "scripts": {
+        "dev": "vite dev",
+        "build": "bun run check && bun run check-types && vite build",
+        "preview": "vite preview",
+        "format": "biome format",
+        "lint": "biome lint",
+        "check": "biome check",
+        "lint-fix": "biome check --write .",
+        "check-types": "tsc --noEmit",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@tailwindcss/vite": "catalog:styling",
+        "@tanstack/react-query": "catalog:tanstack",
+        "@tanstack/react-router": "catalog:tanstack",
+        "@tanstack/react-start": "catalog:tanstack",
+        "react": "catalog:react",
+        "react-dom": "catalog:react",
+        "tailwindcss": "catalog:styling"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "catalog:tooling",
+        "@types/node": "catalog:tooling",
+        "@types/react": "catalog:tooling",
+        "@types/react-dom": "catalog:tooling",
+        "@vitejs/plugin-react": "catalog:tooling",
+        "jsdom": "catalog:tooling",
+        "typescript": "catalog:tooling",
+        "vite": "catalog:tooling",
+        "vitest": "catalog:tooling"
+    }
+}

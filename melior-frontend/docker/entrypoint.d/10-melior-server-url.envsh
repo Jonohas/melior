@@ -1,0 +1,29 @@
+# Sourced by the nginx image's entrypoint before the template step.
+#
+# MELIOR_SERVER_URLS is a comma-separated list of backend base URLs; MELIOR_SERVER_URL is the single-entry
+# fallback. Entries may be ws://, wss://, http:// or https:// (nginx's proxy_pass needs http(s)); all
+# entries must use the same scheme, the first one decides. Exports:
+#   MELIOR_UPSTREAM_SCHEME   http or https
+#   MELIOR_UPSTREAM_SERVERS  one `server host:port;` line per backend, for the upstream blocks
+_melior_list="${MELIOR_SERVER_URLS:-${MELIOR_SERVER_URL:-http://melior-server:5000}}"
+MELIOR_UPSTREAM_SCHEME=http
+MELIOR_UPSTREAM_SERVERS=""
+_melior_first=1
+_melior_old_ifs="$IFS"
+IFS=','
+for _melior_entry in $_melior_list; do
+    _melior_entry="$(printf '%s' "$_melior_entry" | tr -d ' \t\r\n')"
+    [ -z "$_melior_entry" ] && continue
+    if [ "$_melior_first" = 1 ]; then
+        case "$_melior_entry" in
+            https://* | wss://*) MELIOR_UPSTREAM_SCHEME=https ;;
+        esac
+        _melior_first=0
+    fi
+    _melior_hostport="$(printf '%s' "$_melior_entry" | sed -e 's#^[a-z]*://##' -e 's#/.*$##')"
+    MELIOR_UPSTREAM_SERVERS="${MELIOR_UPSTREAM_SERVERS}    server ${_melior_hostport};
+"
+done
+IFS="$_melior_old_ifs"
+export MELIOR_UPSTREAM_SCHEME MELIOR_UPSTREAM_SERVERS
+unset _melior_list _melior_first _melior_old_ifs _melior_entry _melior_hostport

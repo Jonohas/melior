@@ -1,0 +1,19 @@
+[package]
+name = "melior-application"
+description = "The Melior use cases (conference, login, room registry) and the ports they need from the outside world."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+melior-domain.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# Paused time, for the tests that wait on another instance's token refresh.
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

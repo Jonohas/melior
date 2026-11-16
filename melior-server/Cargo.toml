@@ -1,15 +1,80 @@
-[package]
-name = "melior-sfu"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+# What `cargo run` and `cargo build` act on from the workspace root.
+default-members = ["crates/melior-sfu"]
 
-[dependencies]
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# One version of each dependency for the whole workspace. A crate opts in with
+# `name.workspace = true`; which crate may use which dependency is a layering
+# rule checked by `cargo xtask layers`.
+[workspace.dependencies]
+melior-domain = { path = "crates/melior-domain" }
+melior-application = { path = "crates/melior-application" }
+melior-infrastructure = { path = "crates/melior-infrastructure" }
+melior-interfaces = { path = "crates/melior-interfaces" }
+
+async-trait = "0.1"
+axum = { version = "0.8.8", features = ["ws"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+base64 = "0.22"
+futures-util = "0.3"
+hmac = "0.12"
+jsonwebtoken = "9"
+opentelemetry = "0.33"
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "grpc-tonic"] }
+opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
+rand = "0.8"
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
-tokio = "1.49.0"
-webrtc = "0.17.1"
-uuid = { version = "1.21.0", features = ["v4"] }
+sha1 = "0.10"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "migrate", "macros"] }
 thiserror = "1.0.69"
-axum = { version = "0.8.8", features = ["ws"] }
-futures-util = "0.3"
+time = "0.3"
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = "0.28"
+tracing = "0.1"
+tracing-opentelemetry = "0.34"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+uuid = { version = "1.21.0", features = ["v4"] }
+webrtc = "0.17.1"
 
+[workspace.lints.rust]
+# Nothing here needs it, and `forbid` cannot be switched off further down.
+unsafe_code = "forbid"
+
+[workspace.lints.rustdoc]
+# A link to a renamed item renders as plain text and only warns. The crate
+# docs are how the layers are explained, so a dead link is a defect. Denying
+# it locally makes `cargo doc` agree with the CI gate.
+broken_intra_doc_links = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Types are re-exported flat from each crate root, so `conference::ConferenceError`
+# never appears at a call site.
+module_name_repetitions = "allow"
+# Nearly every public function here returns a crate error enum whose variants
+# are documented where they are defined; repeating them per function adds
+# nothing a reader can use.
+missing_errors_doc = "allow"
+# `#[async_trait]` puts `#[must_use]` on the boxed future it generates, which
+# this lint (part of `all`) then reports on every async trait method.
+double_must_use = "allow"
+# Its fix is `assert_eq!(x, [] as [T; 0])`, which is harder to read than
+# `assert!(x.is_empty())` and names a type the test does not care about.
+assert_is_empty = "allow"
+
+# Release builds are what the Docker image ships. Thin LTO and one codegen
+# unit cost build time once and make the binary smaller and faster.
+[profile.release]
+lto = "thin"
+codegen-units = 1

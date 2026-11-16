@@ -1,26 +1,53 @@
 {
-  "name": "bun-react-template",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "bun --hot src/index.tsx",
-    "start": "NODE_ENV=production bun src/index.tsx",
-    "build": "bun run build.ts"
-  },
-  "dependencies": {
-    "@heroicons/react": "^2.2.0",
-    "bun-plugin-tailwind": "^0.0.15",
-    "classnames": "^2.5.1",
-    "react": "^19",
-    "react-dom": "^19",
-    "tailwindcss": "^4.1.11",
-    "uuid": "^13.0.0",
-    "zustand": "^5.0.8"
-  },
-  "devDependencies": {
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "@types/bun": "latest"
-  }
+    "name": "melior-frontend",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "dev": "turbo run dev",
+        "build": "turbo run build",
+        "check-types": "turbo run check-types",
+        "test:unit": "turbo run test",
+        "biome-check": "biome check",
+        "lint-fix": "biome lint --write",
+        "format-fix": "biome format --write",
+        "biome-fix": "biome check --write"
+    },
+    "workspaces": [
+        "apps/*",
+        "packages/*"
+    ],
+    "catalogs": {
+        "react": {
+            "react": "19.2.5",
+            "react-dom": "19.2.5"
+        },
+        "tanstack": {
+            "@tanstack/react-query": "5.100.9",
+            "@tanstack/react-router": "1.169.1",
+            "@tanstack/react-start": "1.167.62"
+        },
+        "styling": {
+            "tailwindcss": "4.2.4",
+            "@tailwindcss/vite": "4.2.4"
+        },
+        "tooling": {
+            "@biomejs/biome": "2.4.14",
+            "@types/node": "25.6.0",
+            "@types/react": "19.2.14",
+            "@types/react-dom": "19.2.3",
+            "@vitejs/plugin-react": "6.0.1",
+            "jsdom": "29.1.1",
+            "turbo": "2.9.8",
+            "typescript": "6.0.3",
+            "vite": "8.0.16",
+            "vitest": "4.1.5"
+        }
+    },
+    "devDependencies": {
+        "@biomejs/biome": "catalog:tooling",
+        "@types/node": "catalog:tooling",
+        "turbo": "catalog:tooling",
+        "typescript": "catalog:tooling"
+    },
+    "packageManager": "bun@1.4.4"
 }

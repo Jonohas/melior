@@ -1,0 +1,20 @@
+[package]
+name = "melior-interfaces"
+description = "Delivery mechanisms for the Melior use cases: the login endpoints and the signalling WebSocket."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+melior-domain.workspace = true
+melior-application.workspace = true
+axum.workspace = true
+axum-extra.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

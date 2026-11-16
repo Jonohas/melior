@@ -1,0 +1,25 @@
+[package]
+name = "melior-sfu"
+description = "The Melior SFU server binary: the composition root that wires adapters to the application."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+melior-application.workspace = true
+melior-infrastructure.workspace = true
+melior-interfaces.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+melior-domain.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tokio-tungstenite.workspace = true
+webrtc.workspace = true
+
+[lints]
+workspace = true

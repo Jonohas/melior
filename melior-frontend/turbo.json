@@ -1,0 +1,40 @@
+{
+    "$schema": "https://turborepo.dev/schema.json",
+    "globalDependencies": ["tsconfig.base.json", ".env", ".env.local"],
+    "globalEnv": ["NODE_ENV"],
+    "tasks": {
+        "build": {
+            "outputs": ["dist/**"],
+            "inputs": ["$TURBO_DEFAULT$", "!**/*.md"]
+        },
+        "dev": {
+            "cache": false,
+            "persistent": true,
+            // Read by apps/web/vite.config.ts. Turbo's strict env mode drops any variable not declared
+            // here, so without this a value exported in the shell never reaches vite.
+            "passThroughEnv": [
+                "PORT",
+                "MELIOR_SERVER_URL",
+                "MELIOR_SERVER_URLS",
+                "TLS_CERT",
+                "TLS_KEY",
+                "ALLOWED_HOSTS"
+            ]
+        },
+        "check-types": {
+            "outputs": ["*.tsbuildinfo"]
+        },
+        "test": {
+            "passThroughEnv": ["VITEST_MAX_WORKERS"]
+        },
+        "lint-fix": {
+            "cache": false
+        },
+        "format-fix": {
+            "cache": false
+        },
+        "biome-fix": {
+            "cache": false
+        }
+    }
+}

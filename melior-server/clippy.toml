@@ -1,0 +1,9 @@
+# Proper nouns clippy would otherwise ask to be wrapped in backticks.
+# `".."` keeps clippy's own list, so this only adds to the defaults.
+doc-valid-idents = ["WebRTC", "WebSocket", "WebSockets", "OpenID", "Keycloak", "PKCE", ".."]
+
+# Non-test code never panics (AGENTS.md, "Never crash"). The crates deny
+# unwrap, expect and panic; tests still use them freely.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

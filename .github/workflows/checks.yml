@@ -1,0 +1,133 @@
+# Everything a reviewer should not have to take on trust: the same commands
+# AGENTS.md asks for before a task is finished, run on a clean machine.
+name: checks
+
+# `push` is narrowed to `main` on purpose. With a bare `push:` next to
+# `pull_request:`, every push to a branch starts two runs of the same commit.
+# Narrowed, a branch is checked by its pull request and `main` after every merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same ref supersedes the first rather than racing it.
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# Read-only, explicitly: none of these jobs writes anything.
+permissions:
+  contents: read
+
+jobs:
+  server-test:
+    name: server / build and test
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: melior-server
+    steps:
+      # Actions are pinned to a commit, not a tag: a tag is a mutable
+      # reference. The version is in the comment because the SHA is unreadable.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # rustup reads rust-toolchain.toml itself, so this installs the pinned
+      # toolchain without restating which one it is.
+      - run: rustup toolchain install && rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: melior-server
+
+      # `--locked`: a branch whose manifests and lockfile disagree should say
+      # so here rather than quietly resolve a different dependency set.
+      - run: cargo build --workspace --all-targets --locked
+
+      # Needs no Keycloak, Redis or TURN server: the tests put fakes behind the
+      # application's ports, and the end-to-end test uses real WebRTC clients
+      # over loopback.
+      - run: cargo test --workspace --locked
+
+  server-fmt:
+    name: server / rustfmt
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: melior-server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install && rustup show active-toolchain
+      # No cache: `cargo fmt` parses the sources and never builds them.
+      - run: cargo fmt --all --check
+
+  server-clippy:
+    name: server / clippy and layers
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: melior-server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: melior-server
+
+      # The lint levels live in `[workspace.lints]` in Cargo.toml, so a local
+      # `cargo clippy` and this job apply the same rules. `-D warnings` on top
+      # keeps the tree at zero warnings, which is the state it is in.
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # The DDD dependency rule (xtask/src/layers.rs): a crate depends only on
+      # lower layers, and each layer keeps to the libraries it may use.
+      - run: cargo xtask layers
+
+  server-docs:
+    name: server / rustdoc
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: melior-server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: melior-server
+
+      # `-D warnings` turns a broken intra-doc link into a failed check.
+      # Private items are included because that is where most of the prose is.
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked
+
+  frontend:
+    name: frontend / lint, types, test, build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: melior-frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The version comes from `packageManager` in package.json, so there is
+      # one place that says which Bun this workspace uses.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: melior-frontend/package.json
+
+      - run: bun install --frozen-lockfile
+      - run: bun run biome-check
+      - run: bun run check-types
+      - run: bun run test:unit
+      - run: bun run build
+
+# Not gated here, deliberately:
+#
+# * A dependency licence and advisory audit (`cargo-deny` or `cargo-audit`).
+# * Anything that updates these action pins. There is no Dependabot
+#   configuration, so the SHAs above go stale silently. That is the cost of
+#   pinning, and it is a real one.
+# * The Docker images and the browser run against Keycloak, coturn and Redis.
