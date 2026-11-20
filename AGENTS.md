@@ -27,6 +27,7 @@ melior-server/                 Cargo workspace
 melior-frontend/               Bun workspace + Turborepo
   apps/web                     TanStack Start on Vite; routes/, lib/, features/<feature>/{domain,api,hooks,components}
 docker/                        compose: Postgres, Redis, Keycloak, coturn, Jaeger, and the app profile
+deploy/                        production compose and deploy script for the Melior VM (deploy.yml)
 ```
 
 **Layering is enforced** by `cargo xtask layers` (rules in `xtask/src/layers.rs`, run in CI):
