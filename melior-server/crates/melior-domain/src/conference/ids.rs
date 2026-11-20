@@ -12,6 +12,14 @@ impl SessionId {
         Self(Uuid::new_v4().to_string())
     }
 
+    /// Accepts exactly what [`Self::generate`] produces (a lowercase hyphenated UUID)
+    /// and nothing else, so a client cannot name a session in another spelling.
+    #[must_use]
+    pub fn parse(raw: &str) -> Option<Self> {
+        let canonical = Uuid::parse_str(raw).ok()?.to_string();
+        (canonical == raw).then_some(Self(canonical))
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -91,6 +99,33 @@ mod tests {
     fn channel_id_rejects_empty_long_and_unsafe_names() {
         for bad in ["", "has space", "slash/y", "ünï", &"a".repeat(65)] {
             assert_eq!(ChannelId::parse(bad), Err(DomainError::InvalidChannelId));
+        }
+    }
+
+    #[test]
+    fn session_id_parse_accepts_what_generate_produces() {
+        let id = SessionId::generate();
+        assert_eq!(SessionId::parse(id.as_str()), Some(id));
+    }
+
+    #[test]
+    fn session_id_parse_rejects_everything_else() {
+        let id = SessionId::generate();
+        let raw = id.as_str();
+        for bad in [
+            String::new(),
+            "x".repeat(36),
+            raw[..35].to_owned(),
+            format!("{raw}0"),
+            format!(" {raw}"),
+            format!("{raw}\n"),
+            raw.to_uppercase(),
+            raw.replace('-', ""),
+            format!("{{{raw}}}"),
+            format!("urn:uuid:{raw}"),
+            raw.replacen(&raw[..1], "g", 1),
+        ] {
+            assert_eq!(SessionId::parse(&bad), None, "{bad:?}");
         }
     }
 
