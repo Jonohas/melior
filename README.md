@@ -297,6 +297,7 @@ community).
 | `voice_left` | `{ channel_id, session_id }` |
 | `message` | `{ channel_id, message }`, a new message in a text channel |
 | `structure_changed` | `{}`: fetch `GET /api/communities/{id}` again |
+| `members_changed` | `{}`: someone joined through an invite, left or was kicked; fetch `GET /api/communities/{id}/members` again |
 | `removed` | `{ reason: "kicked" \| "left" \| "deleted" }`, then the server closes |
 | `closed` | `{ reason: "session_ended" }`, then the server closes |
 

@@ -69,6 +69,7 @@ pub(super) enum EventRecord {
     VoiceLeft { channel_id: String, session_id: String },
     Message { message: MessageRecord },
     StructureChanged,
+    MemberJoined { user_id: String },
     MemberRemoved { user_id: String, kicked: bool },
     CommunityDeleted,
 }
@@ -92,6 +93,9 @@ impl From<&CommunityEvent> for EventRecord {
                 },
             },
             CommunityEvent::StructureChanged => Self::StructureChanged,
+            CommunityEvent::MemberJoined { user_id } => {
+                Self::MemberJoined { user_id: user_id.to_string() }
+            }
             CommunityEvent::MemberRemoved { user_id, reason } => Self::MemberRemoved {
                 user_id: user_id.to_string(),
                 kicked: *reason == RemovalReason::Kicked,
@@ -124,6 +128,9 @@ impl EventRecord {
                 }
             }
             Self::StructureChanged => CommunityEvent::StructureChanged,
+            Self::MemberJoined { user_id } => {
+                CommunityEvent::MemberJoined { user_id: UserId::new(user_id) }
+            }
             Self::MemberRemoved { user_id, kicked } => CommunityEvent::MemberRemoved {
                 user_id: UserId::new(user_id),
                 reason: if kicked { RemovalReason::Kicked } else { RemovalReason::Left },
@@ -175,6 +182,7 @@ mod tests {
             },
             CommunityEvent::Message { channel_id: message.channel_id.clone(), message },
             CommunityEvent::StructureChanged,
+            CommunityEvent::MemberJoined { user_id: UserId::new("u") },
             CommunityEvent::MemberRemoved {
                 user_id: UserId::new("u"),
                 reason: RemovalReason::Kicked,

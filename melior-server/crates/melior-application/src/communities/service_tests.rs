@@ -147,6 +147,25 @@ async fn invites_admit_members_once_and_run_out() {
 }
 
 #[tokio::test]
+async fn joining_through_an_invite_is_announced_once() {
+    let h = Harness::new();
+    let view = h.community(&[]).await;
+    let id = &view.community.id;
+    let invite =
+        h.service.create_invite(id, &user("alice"), InviteSettings::default()).await.unwrap();
+    let mut feed = h.events.subscribe(id);
+
+    h.service.redeem_invite(&invite.code, &user("bob")).await.unwrap();
+    h.service.redeem_invite(&invite.code, &user("bob")).await.unwrap();
+
+    assert_eq!(
+        feed.recv().await.unwrap(),
+        CommunityEvent::MemberJoined { user_id: user("bob").id }
+    );
+    assert!(feed.try_recv().is_err(), "a member who was already in is not announced again");
+}
+
+#[tokio::test]
 async fn invites_are_listed_by_managers_and_deleted_by_creators_or_managers() {
     let h = Harness::new();
     let view = h.community(&["bob", "carol"]).await;

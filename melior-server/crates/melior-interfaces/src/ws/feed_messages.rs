@@ -27,6 +27,8 @@ pub enum FeedMessage {
     },
     /// Refetch the community.
     StructureChanged {},
+    /// Someone joined, left or was kicked: refetch the member list.
+    MembersChanged {},
     /// The member is out of the community; the server closes the feed next.
     Removed {
         reason: RemovedReason,
@@ -95,7 +97,10 @@ impl FeedMessage {
                 message: ChatMessageDto::new(message, None),
             },
             CommunityEvent::StructureChanged => Self::StructureChanged {},
-            CommunityEvent::MemberRemoved { .. } | CommunityEvent::CommunityDeleted => return None,
+            CommunityEvent::MemberJoined { .. } | CommunityEvent::MemberRemoved { .. } => {
+                Self::MembersChanged {}
+            }
+            CommunityEvent::CommunityDeleted => return None,
         })
     }
 }
@@ -186,6 +191,11 @@ mod tests {
         assert_eq!(
             wire(FeedMessage::Closed { reason: CloseReason::SessionEnded }),
             json!({ "channel": "closed", "payload": { "reason": "session_ended" } })
+        );
+        let joined = CommunityEvent::MemberJoined { user_id: UserId::new("sub-dave") };
+        assert_eq!(
+            wire(FeedMessage::forwarded(joined).unwrap()),
+            json!({ "channel": "members_changed", "payload": {} })
         );
         assert_eq!(FeedMessage::forwarded(CommunityEvent::CommunityDeleted), None);
     }

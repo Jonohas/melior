@@ -165,6 +165,26 @@ async fn structure_changes_are_announced_and_members_who_are_out_are_told_why() 
 }
 
 #[tokio::test]
+async fn members_hear_when_someone_joins_or_is_kicked() {
+    let server = TestServer::start().await;
+    let alice = server.login("alice", &["member"]).await;
+    let bob = server.login("bob", &["member"]).await;
+    let carol = server.login("carol", &["member"]).await;
+    let town = town(&server, &alice, &[&carol]).await;
+    let mut alice_feed = feed(&server, &town.id, &alice).await;
+
+    let invites = format!("/api/communities/{}/invites", town.id);
+    let (_, invite) = call(&server, Method::POST, &invites, &alice, Some(json!({}))).await;
+    let redeem = format!("/api/invites/{}", invite["code"].as_str().unwrap());
+    call(&server, Method::POST, &redeem, &bob, None).await;
+    assert_eq!(next_on(&mut alice_feed, "members_changed").await, json!({}));
+
+    let kick = format!("/api/communities/{}/members/sub-carol", town.id);
+    call(&server, Method::DELETE, &kick, &alice, None).await;
+    assert_eq!(next_on(&mut alice_feed, "members_changed").await, json!({}));
+}
+
+#[tokio::test]
 async fn the_feed_is_for_members_only() {
     let server = TestServer::start().await;
     let alice = server.login("alice", &["member"]).await;

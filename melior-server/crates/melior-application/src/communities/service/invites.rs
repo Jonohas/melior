@@ -1,7 +1,7 @@
 //! Invites: creating, listing, deleting, previewing and redeeming them.
 
 use super::{CommunitiesError, CommunityService, now_ms, require_role};
-use crate::communities::ports::Redemption;
+use crate::communities::ports::{CommunityEvent, Redemption};
 use melior_domain::{
     Community, CommunityId, CommunityState, Invite, InviteCode, InviteSettings, Member, User,
 };
@@ -82,6 +82,7 @@ impl CommunityService {
         match self.store.redeem_invite(code, &member, now_ms()).await? {
             Redemption::Joined(id) => {
                 info!(community = %id, user = %user.username, "member joined");
+                self.publish(&id, CommunityEvent::MemberJoined { user_id: user.id.clone() }).await;
                 Ok(id)
             }
             Redemption::AlreadyMember(id) => Ok(id),

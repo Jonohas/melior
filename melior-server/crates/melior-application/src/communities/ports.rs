@@ -147,6 +147,10 @@ pub enum CommunityEvent {
     },
     /// Channels, categories, roles, member roles, overrides or the name changed.
     StructureChanged,
+    /// Someone joined through an invite.
+    MemberJoined {
+        user_id: UserId,
+    },
     MemberRemoved {
         user_id: UserId,
         reason: RemovalReason,

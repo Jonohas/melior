@@ -56,7 +56,9 @@ impl FeedFilter {
                     RemovalReason::Left => FeedEnd::Left,
                 })
             }
-            CommunityEvent::MemberRemoved { .. } => FeedVerdict::Drop,
+            CommunityEvent::MemberJoined { .. } | CommunityEvent::MemberRemoved { .. } => {
+                FeedVerdict::Forward
+            }
             CommunityEvent::CommunityDeleted => FeedVerdict::End(FeedEnd::Deleted),
         }
     }
@@ -147,7 +149,15 @@ mod tests {
             f.verdict(&removed("sub-bob", RemovalReason::Left)),
             FeedVerdict::End(FeedEnd::Left)
         );
-        assert_eq!(f.verdict(&removed("sub-carol", RemovalReason::Kicked)), FeedVerdict::Drop);
+        assert_eq!(
+            f.verdict(&removed("sub-carol", RemovalReason::Kicked)),
+            FeedVerdict::Forward,
+            "the others learn that the member list changed"
+        );
+        assert_eq!(
+            f.verdict(&CommunityEvent::MemberJoined { user_id: UserId::new("sub-dave") }),
+            FeedVerdict::Forward
+        );
         assert_eq!(
             f.verdict(&CommunityEvent::CommunityDeleted),
             FeedVerdict::End(FeedEnd::Deleted)
