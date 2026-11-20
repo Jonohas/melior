@@ -1,0 +1,80 @@
+# Melior on its VM (`melior`, prepared by Jonohas/infra): the server, the frontend, Postgres and
+# Redis, from the release images. deploy.sh runs it as
+#
+#   docker compose --env-file .env --env-file version.env -f compose.yaml ...
+#
+# .env is written by the infrastructure repository: FRONTEND_URL, FRONTEND_BIND, FRONTEND_PORT,
+# IDP_ISSUER, IDP_CLIENT_ID, MELIOR_TURN_URLS, TURN_SECRET and POSTGRES_PASSWORD. version.env
+# holds MELIOR_VERSION, the release deploy.sh starts. Keycloak and coturn run elsewhere.
+name: melior
+
+services:
+  # The room registry. Postgres reads its password only when the volume is first created.
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: melior
+      POSTGRES_USER: melior
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing from .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Loopback only: the server reaches it from the host network.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Login sessions and room leases.
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+
+  # WebRTC media needs arbitrary UDP ports, so the SFU runs in the host network namespace and
+  # reaches Postgres and Redis on loopback. The frontend reaches it on port 5000.
+  melior-server:
+    image: ghcr.io/jonohas/melior-server:${MELIOR_VERSION:?missing from version.env}
+    network_mode: host
+    environment:
+      MELIOR_BIND: 0.0.0.0:5000
+      MELIOR_INSTANCE_ID: melior-1
+      FRONTEND_URL: ${FRONTEND_URL:?missing from .env}
+      IDP_ISSUER: ${IDP_ISSUER:?missing from .env}
+      IDP_CLIENT_ID: ${IDP_CLIENT_ID:-melior}
+      DATABASE_URL: postgres://melior:${POSTGRES_PASSWORD:?missing from .env}@127.0.0.1:5432/melior
+      REDIS_URL: redis://127.0.0.1:6379
+      MELIOR_TURN_URLS: ${MELIOR_TURN_URLS:-}
+      MELIOR_TURN_SECRET: ${TURN_SECRET:?missing from .env}
+      RUST_LOG: ${RUST_LOG:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # nginx with the built app. Traefik on the web VM sends https://meet.<domain> here, so it listens
+  # on FRONTEND_BIND, which .env sets to every interface.
+  melior-frontend:
+    image: ghcr.io/jonohas/melior-frontend:${MELIOR_VERSION:?missing from version.env}
+    environment:
+      MELIOR_SERVER_URLS: http://host.docker.internal:5000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - melior-server
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
