@@ -7,6 +7,8 @@ import {
     type TrackAssignment,
     type TracksBySession,
 } from '@/features/conference/domain';
+import type { StatsSource } from './stats-sampler';
+import { setSendersActive } from './uplink';
 
 type PeerSessionOptions = {
     iceServers: IceServer[];
@@ -26,6 +28,10 @@ export type PeerSession = {
     /** `tracks` is the server's complete, authoritative list of which media section carries whose track. */
     answerOffer: (sdp: string, tracks: TrackAssignment[]) => Promise<string>;
     addIceCandidate: (candidate: IceCandidate) => Promise<void>;
+    /** Pauses or resumes sending on this connection (`uplink`), without renegotiation. */
+    setUplinkActive: (active: boolean) => Promise<void>;
+    /** What the stats sampler reads: this connection, with media sections mapped to their publisher. */
+    statsSource: StatsSource;
     close: () => void;
 };
 
@@ -47,6 +53,7 @@ export const createPeerSession = ({
     const streams = new Map<SessionId, MediaStream>();
     let assignments: TrackAssignment[] = [];
     let current: TracksBySession<MediaStreamTrack> = {};
+    let uplinkActive = true;
 
     const reconcile = () => {
         const receivers = new Map<string, MediaStreamTrack>();
@@ -100,7 +107,21 @@ export const createPeerSession = ({
         }
     };
 
+    // A negotiation may add senders; a paused uplink stays paused.
+    const reapplyUplink = async () => {
+        if (!uplinkActive) await setSendersActive(connection, false);
+    };
+
     return {
+        statsSource: {
+            connection,
+            isConnected: () => connection.connectionState === 'connected',
+            peerOfMid: (mid) => assignments.find((a) => a.mid === mid)?.session_id,
+        },
+        setUplinkActive: async (active) => {
+            uplinkActive = active;
+            await setSendersActive(connection, active);
+        },
         createOffer: async () => {
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
@@ -110,6 +131,7 @@ export const createPeerSession = ({
             await connection.setRemoteDescription({ type: 'answer', sdp });
             reconcile();
             await flushCandidates();
+            await reapplyUplink();
         },
         answerOffer: async (sdp, tracks) => {
             await connection.setRemoteDescription({ type: 'offer', sdp });
@@ -119,6 +141,7 @@ export const createPeerSession = ({
             await flushCandidates();
             const answer = await connection.createAnswer();
             await connection.setLocalDescription(answer);
+            await reapplyUplink();
             return connection.localDescription?.sdp ?? answer.sdp ?? '';
         },
         addIceCandidate: async (candidate) => {

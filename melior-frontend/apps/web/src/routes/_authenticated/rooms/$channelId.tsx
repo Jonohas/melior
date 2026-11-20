@@ -36,6 +36,8 @@ function RoomPage() {
         participants,
         localStream,
         remoteStreams,
+        directStreams,
+        shownPaths,
         status,
         reconnectAttempt,
         stopReason,
@@ -90,7 +92,12 @@ function RoomPage() {
             )}
             {room.data && !room.data.isOwner && <RoomAccessSummary room={room.data} />}
             <LocalPreview stream={localStream} username={username} />
-            <RemoteVideoGrid streams={remoteStreams} usernames={participants} />
+            <RemoteVideoGrid
+                streams={remoteStreams}
+                directStreams={directStreams}
+                shownPaths={shownPaths}
+                usernames={participants}
+            />
         </div>
     );
 }

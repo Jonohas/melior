@@ -14,8 +14,19 @@ export {
     type StreamRef,
 } from './conference-state';
 export type { ConferenceStatus } from './conference-status';
+export { isOfferer } from './direct-link-role';
 export { parseForceRelay } from './force-relay';
 export { parseServerMessage } from './parse-server-message';
+export {
+    countInbound,
+    FLOW_WINDOW_MS,
+    type FlowState,
+    flowingKinds,
+    type InboundCounters,
+    type InboundEntry,
+    type MediaKind,
+    updateFlow,
+} from './path-flow';
 export {
     type CloseDecision,
     decideAfterDiagnosis,
@@ -44,9 +55,18 @@ export type {
     IceCandidate,
     IceServer,
     Participant,
+    Path,
     ServerMessage,
     ServerOffer,
     SessionDescription,
     TrackAssignment,
 } from './signalling-message';
-export { CLOSE_REASONS } from './signalling-message';
+export { CLOSE_REASONS, PATHS } from './signalling-message';
+export {
+    applyRoute,
+    initialRouteView,
+    type PathObservation,
+    type PeerRouteView,
+    type SelectionResult,
+    selectSource,
+} from './source-selection';

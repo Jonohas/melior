@@ -3,6 +3,7 @@ import {
     captureLocalMedia,
     createPeerSession,
     createSignallingClient,
+    type Mesh,
     type PeerSession,
     type SignallingClient,
     stopMedia,
@@ -23,6 +24,7 @@ import {
     type SessionProbe,
     type StopReason,
 } from '@/features/conference/domain';
+import { startMesh } from './start-mesh';
 
 type UseConferenceReturn = ConferenceState<MediaStream>;
 
@@ -61,6 +63,7 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
         let disposed = false;
         let signalling: SignallingClient | null = null;
         let peer: PeerSession | null = null;
+        let mesh: Mesh | null = null;
         let local: MediaStream | null = null;
         let timer: ReturnType<typeof setTimeout> | null = null;
         // Bumped on every teardown so late callbacks of an old connection are ignored.
@@ -72,9 +75,11 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
 
         const release = () => {
             signalling?.close();
+            mesh?.close();
             peer?.close();
             signalling = null;
             peer = null;
+            mesh = null;
         };
 
         const teardown = () => {
@@ -183,6 +188,16 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
                         },
                     });
                     peer = session;
+                    mesh = startMesh({
+                        selfId: message.payload.session_id,
+                        iceServers: message.payload.ice_servers,
+                        forceRelay,
+                        localStream: local,
+                        peer: () => peer,
+                        signalling: () => signalling,
+                        dispatch,
+                        isCurrent: () => !disposed && mine === generation,
+                    });
                     const sdp = await session.createOffer();
                     if (disposed || mine !== generation) return;
                     signalling?.send({ channel: 'sdp_offer', payload: { type: 'offer', sdp } });
@@ -208,7 +223,18 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
                         username: message.payload.username,
                     });
                     break;
+                case 'route':
+                case 'link_close':
+                case 'peer_offer':
+                case 'peer_answer':
+                case 'peer_ice':
+                    await mesh?.handle(message);
+                    break;
+                case 'uplink':
+                    await peer?.setUplinkActive(message.payload.active);
+                    break;
                 case 'peer_left':
+                    mesh?.peerLeft(message.payload.session_id);
                     dispatch({ type: 'peer_left', sessionId: message.payload.session_id });
                     break;
                 case 'closed':

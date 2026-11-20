@@ -1,33 +1,23 @@
-import { useEffect, useRef } from 'react';
+import type { Path } from '@/features/conference/domain';
+import { PathVideo } from './path-video';
 
 type RemoteVideoProps = {
-    stream: MediaStream;
+    /** The participant's media through the SFU. */
+    forwarded?: MediaStream;
+    /** The participant's media over the direct link. */
+    direct?: MediaStream;
+    shownPath: Path;
     username?: string;
 };
 
-export const RemoteVideo = ({ stream, username }: RemoteVideoProps) => {
-    const ref = useRef<HTMLVideoElement>(null);
-
-    useEffect(() => {
-        const video = ref.current;
-        if (!video) return;
-        video.srcObject = stream;
-        // A reused media section hands this participant a track that lived in another stream before. The
-        // element is paused after its previous tracks ended, so nudge it whenever the track set changes.
-        const nudge = () => void video.play().catch(() => undefined);
-        stream.addEventListener('addtrack', nudge);
-        stream.addEventListener('removetrack', nudge);
-        nudge();
-        return () => {
-            stream.removeEventListener('addtrack', nudge);
-            stream.removeEventListener('removetrack', nudge);
-        };
-    }, [stream]);
-
+/** Both paths stay attached and playing; only the shown one is visible and audible. */
+export const RemoteVideo = ({ forwarded, direct, shownPath, username }: RemoteVideoProps) => {
     return (
         <div className="border-2 rounded border-green-500">
-            {/* biome-ignore lint/a11y/useMediaCaption: live remote stream has no captions */}
-            <video ref={ref} autoPlay playsInline className="w-full aspect-video bg-black" />
+            <div className="relative">
+                {forwarded && <PathVideo stream={forwarded} shown={shownPath === 'forwarded'} />}
+                {direct && <PathVideo stream={direct} shown={shownPath === 'direct'} />}
+            </div>
             {username && <p className="px-2 py-1">{username}</p>}
         </div>
     );
