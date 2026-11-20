@@ -1,30 +1,16 @@
 import { isChannelId } from './channel-id';
+import { parseMeshMessage } from './parse-mesh-message';
+import { isObject, isString, optionalString, parseIceCandidate } from './parse-primitives';
 import {
     type ChatPayload,
     CLOSE_REASONS,
     type CloseReason,
-    type IceCandidate,
     type IceServer,
     type Participant,
     type ServerMessage,
     TRACK_SOURCES,
     type TrackAssignment,
 } from './signalling-message';
-
-type JsonObject = Record<string, unknown>;
-
-const isObject = (value: unknown): value is JsonObject =>
-    typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const isString = (value: unknown): value is string => typeof value === 'string';
-
-const optionalString = (value: unknown): value is string | undefined => value === undefined || isString(value);
-
-const nullableString = (value: unknown): value is string | null | undefined =>
-    value === undefined || value === null || isString(value);
-
-const nullableNumber = (value: unknown): value is number | null | undefined =>
-    value === undefined || value === null || (typeof value === 'number' && Number.isFinite(value));
 
 const isWholeNumber = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value);
 
@@ -40,7 +26,6 @@ const parseChatPayload = (value: unknown): ChatPayload | null => {
     if (value.client_id !== undefined) payload.client_id = value.client_id;
     return payload;
 };
-
 const parseIceServer = (value: unknown): IceServer | null => {
     if (!isObject(value)) return null;
     const { urls, username, credential } = value;
@@ -63,14 +48,6 @@ const parseTrackAssignment = (value: unknown): TrackAssignment | null => {
     const source = TRACK_SOURCES.find((known) => known === value.source);
     if (!source) return null;
     return { mid: value.mid, session_id: value.session_id, source };
-};
-
-const parseIceCandidate = (value: unknown): IceCandidate | null => {
-    if (!isObject(value)) return null;
-    const { candidate, sdpMid, sdpMLineIndex, usernameFragment } = value;
-    if (!optionalString(candidate) || !nullableString(sdpMid) || !nullableNumber(sdpMLineIndex)) return null;
-    if (!nullableString(usernameFragment)) return null;
-    return { candidate, sdpMid, sdpMLineIndex, usernameFragment };
 };
 
 const parseSessionDescription = <T extends 'offer' | 'answer'>(
@@ -155,7 +132,7 @@ const parseEnvelope = (value: unknown): ServerMessage | null => {
                 ? { channel: 'error', payload: { message: payload.message } }
                 : null;
         default:
-            return null;
+            return parseMeshMessage(value.channel, payload);
     }
 };
 

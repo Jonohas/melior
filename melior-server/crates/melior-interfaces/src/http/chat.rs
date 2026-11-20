@@ -3,7 +3,7 @@
 use super::rooms::rejected;
 use super::session::{Authenticated, authenticate};
 use crate::AppState;
-use crate::ws::messages::ChatMessageDto;
+use crate::ws::chat::ChatMessageDto;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::header::CACHE_CONTROL;

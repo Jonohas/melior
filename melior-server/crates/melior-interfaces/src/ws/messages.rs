@@ -3,10 +3,12 @@
 //! These types exist only to be (de)serialized; they are translated to and from the
 //! application's vocabulary at the edge so the wire format can evolve independently.
 
+use super::chat::{ChatMessageDto, ChatSendDto};
+use super::peer::{LinkFailedDto, PeerDescriptionDto, PeerIceDto, RouteLiveDto};
 use melior_application::Signal;
 #[cfg(test)]
 use melior_application::TrackOwner;
-use melior_domain::{ChatMessage, IceCandidate, IceServer, ParticipantInfo, Sdp, TrackSource};
+use melior_domain::{IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp, TrackSource};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -15,8 +17,21 @@ pub enum ClientMessage {
     SdpOffer(SessionDescriptionDto),
     SdpAnswer(SessionDescriptionDto),
     Ice(IceCandidateDto),
+    RouteLive(RouteLiveDto),
+    LinkFailed(LinkFailedDto),
+    PeerOffer(PeerDescriptionDto),
+    PeerAnswer(PeerDescriptionDto),
+    PeerIce(PeerIceDto),
     Echo(String),
     ChatSend(ChatSendDto),
+}
+
+impl ClientMessage {
+    /// Whether the message asks the server to relay something to another participant.
+    #[must_use]
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::PeerOffer(_) | Self::PeerAnswer(_) | Self::PeerIce(_))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -36,6 +51,35 @@ pub enum ServerMessage {
     PeerLeft {
         session_id: String,
     },
+    /// Play `peer`'s media over `path` as soon as it works there, then report `route_live`.
+    Route {
+        peer: String,
+        path: PathDto,
+        epoch: u64,
+    },
+    /// Close the direct connection to `peer`.
+    LinkClose {
+        peer: String,
+    },
+    /// Pause (`false`) or resume (`true`) sending on the SFU connection.
+    Uplink {
+        active: bool,
+    },
+    /// A relayed offer for the direct connection with `from`.
+    PeerOffer {
+        from: String,
+        sdp: String,
+    },
+    /// A relayed answer for the direct connection with `from`.
+    PeerAnswer {
+        from: String,
+        sdp: String,
+    },
+    /// A relayed ICE candidate for the direct connection with `from`.
+    PeerIce {
+        from: String,
+        candidate: IceCandidateDto,
+    },
     Error {
         message: String,
     },
@@ -53,41 +97,6 @@ pub enum ServerMessage {
     },
 }
 
-/// What a client says to the room. `client_id` is the client's own name for the
-/// message; the author's copy of it comes back carrying the same one.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct ChatSendDto {
-    #[serde(default)]
-    pub client_id: Option<String>,
-    pub text: String,
-}
-
-/// A saved chat message, as it is sent to the room and in the history.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ChatMessageDto {
-    pub id: i64,
-    pub username: String,
-    pub text: String,
-    /// Milliseconds since the Unix epoch.
-    pub sent_at_ms: i64,
-    /// Set only on the author's own copy of a message it just sent.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-}
-
-impl ChatMessageDto {
-    #[must_use]
-    pub fn new(message: ChatMessage, client_id: Option<String>) -> Self {
-        Self {
-            id: message.id.value(),
-            username: message.author,
-            text: message.text.to_string(),
-            sent_at_ms: message.sent_at_ms,
-            client_id,
-        }
-    }
-}
-
 /// Why the server ends a connection that the client did not close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,6 +107,23 @@ pub enum CloseReason {
     Removed,
     /// Another server instance hosts this room now; reconnect.
     RoomMoved,
+}
+
+/// The path media takes between two participants, as clients name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PathDto {
+    Direct,
+    Forwarded,
+}
+
+impl From<MediaPath> for PathDto {
+    fn from(path: MediaPath) -> Self {
+        match path {
+            MediaPath::Direct => Self::Direct,
+            MediaPath::Forwarded => Self::Forwarded,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +276,20 @@ impl From<Signal> for ServerMessage {
             }),
             Signal::IceCandidate(candidate) => Self::Ice(candidate.into()),
             Signal::PeerLeft(session_id) => Self::PeerLeft { session_id: session_id.to_string() },
+            Signal::Route { peer, path, epoch } => {
+                Self::Route { peer: peer.to_string(), path: path.into(), epoch }
+            }
+            Signal::LinkClose { peer } => Self::LinkClose { peer: peer.to_string() },
+            Signal::Uplink { active } => Self::Uplink { active },
+            Signal::PeerOffer { from, sdp } => {
+                Self::PeerOffer { from: from.to_string(), sdp: sdp.into_string() }
+            }
+            Signal::PeerAnswer { from, sdp } => {
+                Self::PeerAnswer { from: from.to_string(), sdp: sdp.into_string() }
+            }
+            Signal::PeerIce { from, candidate } => {
+                Self::PeerIce { from: from.to_string(), candidate: candidate.into() }
+            }
             Signal::Chat { message, client_id } => {
                 Self::Chat(ChatMessageDto::new(message, client_id))
             }
@@ -303,80 +343,6 @@ mod tests {
         let echo: ClientMessage =
             serde_json::from_value(json!({ "channel": "echo", "payload": "hi" })).unwrap();
         assert_eq!(echo, ClientMessage::Echo("hi".into()));
-    }
-
-    #[test]
-    fn parses_a_chat_message_with_and_without_a_client_id() {
-        let with: ClientMessage = serde_json::from_value(
-            json!({ "channel": "chat_send", "payload": { "client_id": "c1", "text": "hi" } }),
-        )
-        .unwrap();
-        assert_eq!(
-            with,
-            ClientMessage::ChatSend(ChatSendDto {
-                client_id: Some("c1".into()),
-                text: "hi".into()
-            })
-        );
-
-        let without: ClientMessage =
-            serde_json::from_value(json!({ "channel": "chat_send", "payload": { "text": "hi" } }))
-                .unwrap();
-        assert_eq!(
-            without,
-            ClientMessage::ChatSend(ChatSendDto { client_id: None, text: "hi".into() })
-        );
-    }
-
-    #[test]
-    fn a_chat_message_needs_a_text() {
-        for bad in [
-            json!({ "channel": "chat_send", "payload": {} }),
-            json!({ "channel": "chat_send", "payload": { "text": 5 } }),
-            json!({ "channel": "chat_send", "payload": "hi" }),
-        ] {
-            assert!(serde_json::from_value::<ClientMessage>(bad).is_err());
-        }
-    }
-
-    #[test]
-    fn serializes_chat_messages_and_refusals() {
-        let message = ChatMessage {
-            id: melior_domain::MessageId::new(7),
-            channel_id: ChannelId::parse("general").unwrap(),
-            author: "alice".into(),
-            text: melior_domain::ChatText::parse("hello").unwrap(),
-            sent_at_ms: 1_700_000_000_000,
-        };
-
-        assert_eq!(
-            serde_json::to_value(ServerMessage::from(Signal::Chat {
-                message: message.clone(),
-                client_id: Some("c1".into()),
-            }))
-            .unwrap(),
-            json!({
-                "channel": "chat",
-                "payload": { "id": 7, "username": "alice", "text": "hello", "sent_at_ms": 1_700_000_000_000_i64, "client_id": "c1" }
-            })
-        );
-        // Everyone but the author sees no client id.
-        assert_eq!(
-            serde_json::to_value(ServerMessage::from(Signal::Chat { message, client_id: None }))
-                .unwrap(),
-            json!({
-                "channel": "chat",
-                "payload": { "id": 7, "username": "alice", "text": "hello", "sent_at_ms": 1_700_000_000_000_i64 }
-            })
-        );
-        assert_eq!(
-            serde_json::to_value(ServerMessage::ChatError {
-                client_id: Some("c1".into()),
-                message: "a message cannot be empty".into(),
-            })
-            .unwrap(),
-            json!({ "channel": "chat_error", "payload": { "client_id": "c1", "message": "a message cannot be empty" } })
-        );
     }
 
     #[test]
@@ -476,6 +442,53 @@ mod tests {
             serde_json::to_value(ServerMessage::from(Signal::PeerLeft(session_id.clone())))
                 .unwrap(),
             json!({ "channel": "peer_left", "payload": { "session_id": session_id.as_str() } })
+        );
+    }
+
+    #[test]
+    fn serializes_the_mesh_signals_in_the_wire_format() {
+        let peer = SessionId::generate();
+        let wire = |signal| serde_json::to_value(ServerMessage::from(signal)).unwrap();
+
+        for (path, name) in [(MediaPath::Direct, "direct"), (MediaPath::Forwarded, "forwarded")] {
+            assert_eq!(
+                wire(Signal::Route { peer: peer.clone(), path, epoch: 7 }),
+                json!({ "channel": "route", "payload": { "peer": peer.as_str(), "path": name, "epoch": 7 } })
+            );
+        }
+        assert_eq!(
+            wire(Signal::LinkClose { peer: peer.clone() }),
+            json!({ "channel": "link_close", "payload": { "peer": peer.as_str() } })
+        );
+        assert_eq!(
+            wire(Signal::Uplink { active: false }),
+            json!({ "channel": "uplink", "payload": { "active": false } })
+        );
+        assert_eq!(
+            wire(Signal::PeerOffer { from: peer.clone(), sdp: Sdp::new("v=0") }),
+            json!({ "channel": "peer_offer", "payload": { "from": peer.as_str(), "sdp": "v=0" } })
+        );
+        assert_eq!(
+            wire(Signal::PeerAnswer { from: peer.clone(), sdp: Sdp::new("v=0") }),
+            json!({ "channel": "peer_answer", "payload": { "from": peer.as_str(), "sdp": "v=0" } })
+        );
+        assert_eq!(
+            wire(Signal::PeerIce {
+                from: peer.clone(),
+                candidate: IceCandidate {
+                    candidate: "c".into(),
+                    sdp_mid: Some("0".into()),
+                    sdp_mline_index: Some(1),
+                    username_fragment: None,
+                },
+            }),
+            json!({
+                "channel": "peer_ice",
+                "payload": {
+                    "from": peer.as_str(),
+                    "candidate": { "candidate": "c", "sdpMid": "0", "sdpMLineIndex": 1, "usernameFragment": null }
+                }
+            })
         );
     }
 

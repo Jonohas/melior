@@ -3,22 +3,37 @@
 #![allow(dead_code)]
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use melior_application::{
     AuthService, AuthSettings, Authentication, AuthorizationRequest, ChatService,
     ConferenceService, IdentityProvider, IdpError, InMemoryChatRepository, InMemoryRoomRepository,
     InMemorySessionStore, LeaseError, RoomAccessService, RoomLeases, StaticIceServers, Tokens,
 };
-use melior_domain::{ChannelId, User, UserId};
+use melior_domain::{ChannelId, MeshPolicy, User, UserId};
 use melior_infrastructure::webrtc::WebRtcMediaEngine;
 use melior_interfaces::{AppState, router};
+use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
+use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::client::Request;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
+use webrtc::api::APIBuilder;
+use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::setting_engine::SettingEngine;
+use webrtc::ice::network_type::NetworkType;
+use webrtc::interceptor::registry::Registry;
+use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::peer_connection::configuration::RTCConfiguration;
+
+/// How long a test waits for any one message or event.
+pub const STEP: Duration = Duration::from_secs(20);
 
 pub const SESSION_COOKIE: &str = "melior_session_id";
 /// The origin the server believes the application is served from.
@@ -116,10 +131,19 @@ pub struct TestServer {
 
 impl TestServer {
     pub async fn start() -> Self {
+        Self::start_with_mesh(MeshPolicy::OFF).await
+    }
+
+    /// A server whose rooms run as a mesh up to the policy's limit.
+    pub async fn start_with_mesh(mesh: MeshPolicy) -> Self {
         let media = Arc::new(WebRtcMediaEngine::new().expect("media engine"));
         let leases = Arc::new(SwitchableLeases::default());
-        let conference =
-            ConferenceService::new(media, Arc::new(StaticIceServers::default()), leases.clone());
+        let conference = ConferenceService::new(
+            media,
+            Arc::new(StaticIceServers::default()),
+            leases.clone(),
+            mesh,
+        );
         let chat = Arc::new(ChatService::new(
             conference.clone(),
             Arc::new(InMemoryChatRepository::default()),
@@ -169,4 +193,43 @@ impl TestServer {
         }
         request
     }
+}
+
+/// A WebRTC peer connection that speaks every default codec, like a browser's. It
+/// gathers candidates on the loopback interface only: clients on one machine then
+/// connect at once instead of probing every address of the host, which keeps a
+/// negotiation well inside the server's timeouts and the tests' own.
+pub async fn new_peer_connection() -> RTCPeerConnection {
+    let mut settings = SettingEngine::default();
+    settings.set_include_loopback_candidate(true);
+    settings.set_network_types(vec![NetworkType::Udp4]);
+    settings.set_interface_filter(Box::new(|name| name == "lo"));
+    build_peer_connection(settings).await
+}
+
+async fn build_peer_connection(settings: SettingEngine) -> RTCPeerConnection {
+    let mut media_engine = MediaEngine::default();
+    media_engine.register_default_codecs().unwrap();
+    let interceptors = register_default_interceptors(Registry::new(), &mut media_engine).unwrap();
+    APIBuilder::new()
+        .with_media_engine(media_engine)
+        .with_interceptor_registry(interceptors)
+        .with_setting_engine(settings)
+        .build()
+        .new_peer_connection(RTCConfiguration::default())
+        .await
+        .unwrap()
+}
+
+/// The next WebSocket message, parsed as JSON.
+pub async fn next_json<S>(stream: &mut S) -> Value
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    let message = timeout(STEP, stream.next())
+        .await
+        .expect("timed out waiting for a message")
+        .expect("socket closed")
+        .expect("socket error");
+    serde_json::from_str(message.to_text().unwrap()).unwrap()
 }

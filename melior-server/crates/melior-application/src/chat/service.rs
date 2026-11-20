@@ -115,7 +115,7 @@ mod tests {
         StaticIceServers,
     };
     use async_trait::async_trait;
-    use melior_domain::{IceCandidate, Sdp, TrackId, User, UserId};
+    use melior_domain::{IceCandidate, MeshPolicy, Sdp, TrackId, User, UserId};
     use std::sync::Weak;
 
     /// A media plane that does nothing: chat does not touch it.
@@ -198,6 +198,7 @@ mod tests {
                 Arc::new(NoMedia),
                 Arc::new(StaticIceServers::default()),
                 Arc::new(SingleInstance),
+                MeshPolicy::new(0),
             );
             let store = Arc::new(InMemoryChatRepository::default());
             let chat = ChatService::new(conference.clone(), store.clone());

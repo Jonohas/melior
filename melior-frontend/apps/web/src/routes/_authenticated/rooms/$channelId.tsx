@@ -56,6 +56,9 @@ function RoomPage() {
         participants,
         localStream,
         remoteStreams,
+        directStreams,
+        directScreens,
+        shownPaths,
         screenStreams,
         screenShareSupported,
         screenSharing,
@@ -124,7 +127,13 @@ function RoomPage() {
     return (
         <>
             <TopBar room={channelId}>
-                <ConferenceStatusBadges sessionId={sessionId} status={status} reconnectAttempt={reconnectAttempt} />
+                <ConferenceStatusBadges
+                    sessionId={sessionId}
+                    status={status}
+                    reconnectAttempt={reconnectAttempt}
+                    participants={participants}
+                    shownPaths={shownPaths}
+                />
                 {room.data && (
                     <Badge variant="outline">
                         {room.data.restricted ? (
@@ -163,6 +172,9 @@ function RoomPage() {
                         )}
                         <RemoteVideoGrid
                             streams={remoteStreams}
+                            directStreams={directStreams}
+                            directScreens={directScreens}
+                            shownPaths={shownPaths}
                             usernames={participants}
                             screens={screenStreams}
                             speakerId={speakerId}

@@ -15,6 +15,9 @@ describe('conferenceReducer', () => {
             participants: {},
             localStream: null,
             remoteStreams: {},
+            directStreams: {},
+            directScreens: {},
+            shownPaths: {},
             screenStreams: {},
             status: 'starting',
             reconnectAttempt: 0,
@@ -159,5 +162,38 @@ describe('conferenceReducer', () => {
             { type: 'reset' },
         );
         expect(state).toEqual(createInitialConferenceState<Stream>());
+    });
+});
+
+describe('direct paths', () => {
+    const joined = run({
+        type: 'session_started',
+        sessionId: 'me',
+        username: 'm',
+        participants: [{ session_id: 'p', username: 'peer' }],
+    });
+
+    test('tracks the direct stream and the shown path, and drops both when the peer leaves', () => {
+        const stream = { id: 'x' };
+        let state = conferenceReducer(joined, { type: 'direct_media_updated', sessionId: 'p', stream });
+        state = conferenceReducer(state, { type: 'shown_path_changed', sessionId: 'p', path: 'direct' });
+        expect(state.directStreams.p).toBe(stream);
+        expect(state.shownPaths.p).toBe('direct');
+        state = conferenceReducer(state, { type: 'direct_media_updated', sessionId: 'p', stream: null });
+        expect(state.directStreams).toEqual({});
+        state = conferenceReducer(state, { type: 'shown_path_changed', sessionId: 'p', path: 'direct' });
+        state = conferenceReducer(state, { type: 'peer_left', sessionId: 'p' });
+        expect(state.shownPaths).toEqual({});
+    });
+
+    test('tracks the direct screen and drops it when the peer leaves', () => {
+        const screen = { id: 'scr' };
+        let state = conferenceReducer(joined, { type: 'direct_screen_updated', sessionId: 'p', stream: screen });
+        expect(state.directScreens.p).toBe(screen);
+        state = conferenceReducer(state, { type: 'direct_screen_updated', sessionId: 'p', stream: null });
+        expect(state.directScreens).toEqual({});
+        state = conferenceReducer(state, { type: 'direct_screen_updated', sessionId: 'p', stream: screen });
+        state = conferenceReducer(state, { type: 'peer_left', sessionId: 'p' });
+        expect(state.directScreens).toEqual({});
     });
 });

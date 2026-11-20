@@ -16,6 +16,7 @@
 use melior_application::{
     AuthService, AuthSettings, ChatService, ConferenceService, RoomAccessService,
 };
+use melior_domain::MeshPolicy;
 use melior_infrastructure::config::Config;
 use melior_infrastructure::oidc::{OidcIdentityProvider, OidcSettings};
 use melior_infrastructure::postgres::{Database, PostgresChatRepository, PostgresRoomRepository};
@@ -48,7 +49,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         config.instance_id.clone(),
         config.room_lease_ttl(),
     ));
-    let conference = ConferenceService::new(media, ice_servers, leases);
+    let mesh_limit = config.effective_mesh_limit();
+    if config.mesh_max_participants > 0 && mesh_limit == 0 {
+        info!("mesh is off: no TURN server is configured (MELIOR_TURN_URLS)");
+    }
+    let conference =
+        ConferenceService::new(media, ice_servers, leases, MeshPolicy::new(mesh_limit));
 
     let identity_provider = Arc::new(OidcIdentityProvider::new(OidcSettings {
         issuer: config.idp_issuer.clone(),
@@ -87,6 +93,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         issuer = %config.idp_issuer,
         traces = config.otlp_endpoint.as_deref().unwrap_or("off"),
         turn_urls = config.turn_urls.len(),
+        mesh_limit,
         "melior-sfu listening"
     );
     // Stopping drops the open connections; clients reconnect by themselves, and

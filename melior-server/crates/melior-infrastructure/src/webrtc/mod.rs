@@ -2,6 +2,7 @@
 
 mod engine;
 mod forwarder;
+mod offer;
 mod session;
 
 pub use engine::WebRtcMediaEngine;
