@@ -208,10 +208,11 @@ JSON messages of the form `{channel, payload}`:
 - Client to server: `sdp_offer`, `sdp_answer`, `ice` (an
   `RTCIceCandidateInit`), `echo`, and:
   - `route_live` (`peer`, `epoch`): I now play `peer`'s media over the path of
-    route `epoch`.
+    route `epoch`, or I already did when the route arrived.
   - `peer_offer` (`to`, `sdp`), `peer_answer` (`to`, `sdp`): the offer and
     answer for the direct link with `to`.
   - `peer_ice` (`to`, `candidate`): an ICE candidate for that link.
+  - `link_failed` (`peer`): my direct link to `peer` reached `failed`.
 
 Every `peer` (and `from`, `to`) is a session id. The server drops a relayed SDP
 over 64 KiB and a candidate over 1 KiB.
@@ -249,7 +250,8 @@ the browsers switch without a gap.
   ignored.
 - **Make before break.** On `route`, both browsers set up the new path while the
   old one keeps playing. Each shows the new path once its media is flowing
-  there and reports `route_live`. Only when both have reported does the server
+  there and reports `route_live`. A browser that already plays the peer's
+  media on the route's path reports at once. Only when both have reported does the server
   stop the old path: it unsubscribes both from each other's SFU tracks
   (`ToDirect` to `Direct`) or sends `link_close` (`ToForwarded` to `Forwarded`).
   Until then both paths carry media. Switching is per pair.
@@ -263,11 +265,16 @@ the browsers switch without a gap.
   a late ICE candidate after `link_close` is normal.
 - **Roles.** The browser whose session id sorts lower makes the offer on a
   direct link; the other answers.
-- **When a direct link fails.** If a link in `ToDirect` has not been reported by
-  both browsers within 10 seconds, the room is pinned to `forwarded` and every
-  link moves back through the SFU, whose subscriptions never stopped. The pin
-  lasts until the next join or leave. A direct connection that reaches `failed`
-  is closed and nothing else happens in the browser; the timeout does the rest.
+- **When a direct link fails.** Two things count as a failure: a link in
+  `ToDirect` that both browsers have not reported within 10 seconds, and a
+  `link_failed` from either browser for a link in `ToDirect`, `Direct` or
+  `ToForwarded`. A browser sends `link_failed` when its direct connection
+  reaches `failed`, and does nothing else (no whole-session reconnect). The
+  server then pins the room to `forwarded`, and every link moves back through
+  the SFU: a `Direct` link gets its SFU subscriptions back and goes to
+  `ToForwarded`, and the others follow the target. The pin lasts until the next
+  join or leave. A `link_failed` for a `Forwarded` link, an unknown peer or a
+  peer outside the sender's room is ignored.
 
 ## Configuration
 

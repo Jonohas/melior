@@ -528,6 +528,8 @@ stateDiagram-v2
     ToDirect --> ToForwarded: target becomes forwarded<br/>send route forwarded
     ToDirect --> ToForwarded: timeout fires<br/>pin the room to forwarded
     Direct --> ToForwarded: target becomes forwarded<br/>subscribe both to the SFU, send route forwarded
+    Direct --> ToForwarded: link_failed<br/>pin the room to forwarded, subscribe both to the SFU
+    ToDirect --> ToForwarded: link_failed<br/>pin the room to forwarded
     ToForwarded --> Forwarded: both sides reported<br/>send link_close
     ToForwarded --> ToDirect: target becomes direct<br/>send route direct, arm 10 s timeout
     Forwarded --> [*]: either participant leaves
@@ -537,7 +539,9 @@ stateDiagram-v2
 ```
 
 `ToForwarded` has no timeout: the direct link keeps working until both sides
-report. On a leave, the remaining participant gets `link_close` if the link was
+report. A `link_failed` from either side acts like the timeout, in `ToDirect`,
+`Direct` and `ToForwarded`; in `ToForwarded` the link already moves back, so only
+the pin changes. In `Forwarded` it is ignored. On a leave, the remaining participant gets `link_close` if the link was
 in any state but `Forwarded`.
 
 ## 15. Switching from forwarded to direct
