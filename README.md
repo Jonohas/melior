@@ -1,8 +1,11 @@
 # Melior
 
 Melior is a video-conferencing system. Signed-in users join rooms in the
-browser; a selective forwarding unit (SFU) written in Rust receives each
-participant's audio and video and forwards it to the others in the same room.
+browser. Rooms of up to `MELIOR_MESH_MAX_PARTICIPANTS` people send audio and
+video browser to browser; bigger rooms use a selective forwarding unit (SFU)
+written in Rust, which receives each participant's audio and video and forwards
+it to the others in the same room. A room switches between the two as people
+come and go, without freezing any video.
 
 ## Architecture
 
@@ -10,7 +13,9 @@ participant's audio and video and forwards it to the others in the same room.
   It also acts as the backend-for-frontend (BFF) for login: it runs the OpenID
   Connect flow against Keycloak and keeps sessions in Redis, so tokens never
   reach the browser. Room ownership and invitations are stored in Postgres.
-  Media flows over WebRTC on arbitrary UDP ports.
+  Media flows over WebRTC on arbitrary UDP ports. In a mesh room (see
+  "Mesh" below) the server only signals: media goes straight between browsers,
+  with TURN as the fallback, and the SFU forwards nothing for that room.
 - `melior-frontend/` - a Bun workspace run by Turborepo with one app,
   `apps/web`: TanStack Start (SPA mode) on Vite, React 19, Tailwind 4. In
   development Vite proxies the backend paths; in production nginx does.
@@ -187,11 +192,29 @@ JSON messages of the form `{channel, payload}`:
     complete list of `{ mid, session_id }`: which media section carries whose
     track from now on.
   - `ice`, `error` (`message`).
+  - `route` (`peer`, `path`, `epoch`): play `peer`'s media over `path`
+    (`direct` or `forwarded`) as soon as it works there, then report
+    `route_live`. For `direct`, open the direct link to `peer` if it does not
+    exist.
+  - `link_close` (`peer`): close the direct link to `peer`.
+  - `uplink` (`active`): pause (`false`) or resume (`true`) sending on the SFU
+    connection.
+  - `peer_offer` (`from`, `sdp`), `peer_answer` (`from`, `sdp`): the relayed
+    offer and answer of the direct link with `from`.
+  - `peer_ice` (`from`, `candidate`): a relayed ICE candidate for that link.
   - `closed` (`reason`): the last message before the server closes the socket.
     `session_ended` (log in again), `removed` (no access to this room any
     more), `room_moved` (reconnect).
 - Client to server: `sdp_offer`, `sdp_answer`, `ice` (an
-  `RTCIceCandidateInit`), `echo`.
+  `RTCIceCandidateInit`), `echo`, and:
+  - `route_live` (`peer`, `epoch`): I now play `peer`'s media over the path of
+    route `epoch`.
+  - `peer_offer` (`to`, `sdp`), `peer_answer` (`to`, `sdp`): the offer and
+    answer for the direct link with `to`.
+  - `peer_ice` (`to`, `candidate`): an ICE candidate for that link.
+
+Every `peer` (and `from`, `to`) is a session id. The server drops a relayed SDP
+over 64 KiB and a candidate over 1 KiB.
 
 The client makes the first offer. Once its media connection is established, the
 server offers it the other participants' tracks, and renegotiates whenever
@@ -204,6 +227,47 @@ with the number of people who have come and gone. Because WebRTC does not allow
 a section's stream id to change, clients attribute media by the `tracks` list,
 never by stream id. On a switch the server continues the section's RTP sequence
 numbers and timestamps, so receivers see one uninterrupted stream.
+
+### Mesh
+
+Small rooms send media directly between browsers; the server decides when, and
+the browsers switch without a gap.
+
+- **Paths.** A *direct* path is a browser-to-browser `RTCPeerConnection`; a
+  *forwarded* path goes through the SFU. The SFU connection stays open for the
+  whole session, whatever the path.
+- **Target.** The path the room as a whole wants, `direct` or `forwarded`. The
+  server re-evaluates it after every join and leave, with hysteresis. With the
+  default limit of 4, a 5th participant moves the room to `forwarded`, and
+  dropping to 3 moves it back to `direct`; at exactly 4 the room keeps what it
+  had. With a limit of `0` the target is always `forwarded`.
+- **Links and routes.** Every pair of participants has one link, created when
+  the second of them joins and removed when either leaves. A link's *route* is
+  `Forwarded`, `ToDirect`, `Direct` or `ToForwarded`, and has an `epoch` that
+  grows on every change. A new link starts as `Forwarded`, so a newcomer sees
+  everyone through the SFU at once. A `route_live` for any other epoch is
+  ignored.
+- **Make before break.** On `route`, both browsers set up the new path while the
+  old one keeps playing. Each shows the new path once its media is flowing
+  there and reports `route_live`. Only when both have reported does the server
+  stop the old path: it unsubscribes both from each other's SFU tracks
+  (`ToDirect` to `Direct`) or sends `link_close` (`ToForwarded` to `Forwarded`).
+  Until then both paths carry media. Switching is per pair.
+- **Paused uplink.** A participant's SFU uplink is paused when it has at least
+  one link and every link is `Direct`; the server sends `uplink` when this
+  changes. The track stays published, the sender only stops sending packets.
+  A participant alone in a room keeps sending.
+- **Relay rule.** The server relays `peer_offer`, `peer_answer` and `peer_ice`
+  only when the target is in the sender's room and their link is `ToDirect`,
+  `Direct` or `ToForwarded`. Anything else is dropped without an `error`, because
+  a late ICE candidate after `link_close` is normal.
+- **Roles.** The browser whose session id sorts lower makes the offer on a
+  direct link; the other answers.
+- **When a direct link fails.** If a link in `ToDirect` has not been reported by
+  both browsers within 10 seconds, the room is pinned to `forwarded` and every
+  link moves back through the SFU, whose subscriptions never stopped. The pin
+  lasts until the next join or leave. A direct connection that reaches `failed`
+  is closed and nothing else happens in the browser; the timeout does the rest.
 
 ## Configuration
 
@@ -225,6 +289,7 @@ numbers and timestamps, so receivers see one uninterrupted stream.
 | `SESSION_RECHECK_SECONDS` | `15` | How often an open connection re-checks its session, its room access and the room lease. A room lease lasts three times this |
 | `MELIOR_TURN_URLS` | unset | Comma-separated ICE server URLs handed to browsers. The server itself connects directly |
 | `MELIOR_TURN_SECRET` | unset | Secret shared with the TURN server; per-user credentials are derived from it |
+| `MELIOR_MESH_MAX_PARTICIPANTS` | `4` | The largest room that sends media browser to browser. `0` turns mesh off; otherwise `2` to `8`, anything else fails startup. Effectively `0` when `MELIOR_TURN_URLS` is unset: mesh needs TURN as its fallback, and the server logs that once at startup |
 | `MELIOR_TURN_TTL_SECONDS` | `3600` | Lifetime of a TURN credential |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP gRPC endpoint for traces, e.g. `http://127.0.0.1:4317` |
 | `RUST_LOG` | warnings, plus info for Melior's crates | Log filter (tracing) |
@@ -270,6 +335,9 @@ coturn uses time-limited credentials (the TURN REST scheme, `use-auth-secret`).
 For each participant the server derives a username `<expiry>:<user id>` and an
 HMAC credential from `MELIOR_TURN_SECRET`, valid for `MELIOR_TURN_TTL_SECONDS`,
 and hands them to the browser with the URLs in `MELIOR_TURN_URLS`.
+Direct links between browsers use the same per-user credentials as the SFU
+connection. Mesh needs TURN as its fallback, so it is off while
+`MELIOR_TURN_URLS` is unset.
 `MELIOR_TURN_SECRET` must equal the `TURN_SECRET` coturn was started with;
 compose wires both from `.env`. There is no static TURN user.
 
@@ -394,4 +462,11 @@ Postgres, OIDC and TURN adapters are exercised only by running the stack; see
   mixed codecs keeps one set of sections per codec.
 - The server needs host networking in Docker, so the `app` profile works on
   Linux only.
+- In a mesh room the participants see each other's IP addresses, because the
+  browsers connect directly (unless a browser forces relay candidates).
+- A removed participant's direct links close when the other browsers act on
+  `link_close` or `peer_left`, not at the instant of removal.
+- After a switch, video quality ramps up for a few seconds on the new path.
+- Switching is per pair of participants. A failed direct link moves the whole
+  room to the SFU until the next join or leave.
 - There is no recording, screen sharing, simulcast or bandwidth adaptation.
