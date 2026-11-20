@@ -9,6 +9,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets release.yml run the same checks before it publishes anything.
+  workflow_call:
 
 # A second push to the same ref supersedes the first rather than racing it.
 concurrency:
