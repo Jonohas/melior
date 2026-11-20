@@ -73,6 +73,7 @@ export {
     type TrackRef,
     type TracksBySession,
 } from './remote-tracks';
+export { type RoomMediaPath, roomMediaPath } from './room-path';
 export { parseScreenState, screenStateMessage, sharingPeers } from './screen-state';
 export type { SessionId } from './session-id';
 export type {

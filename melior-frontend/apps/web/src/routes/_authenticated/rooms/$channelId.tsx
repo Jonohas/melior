@@ -127,7 +127,13 @@ function RoomPage() {
     return (
         <>
             <TopBar room={channelId}>
-                <ConferenceStatusBadges sessionId={sessionId} status={status} reconnectAttempt={reconnectAttempt} />
+                <ConferenceStatusBadges
+                    sessionId={sessionId}
+                    status={status}
+                    reconnectAttempt={reconnectAttempt}
+                    participants={participants}
+                    shownPaths={shownPaths}
+                />
                 {room.data && (
                     <Badge variant="outline">
                         {room.data.restricted ? (
