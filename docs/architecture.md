@@ -16,6 +16,8 @@ reference; these diagrams are the map.
 11. [When the server closes a connection](#11-when-the-server-closes-a-connection)
 12. [Several server instances](#12-several-server-instances)
 13. [Access over Tailscale](#13-access-over-tailscale)
+14. [Route of a link](#14-route-of-a-link)
+15. [Switching from forwarded to direct](#15-switching-from-forwarded-to-direct)
 
 ## 1. The system
 
@@ -58,31 +60,56 @@ flowchart LR
 
 ## 2. Where media flows
 
-Media never goes from browser to browser. Each browser has one connection to
-the SFU: it sends its own camera and microphone there and receives everyone
-else's from there. The SFU forwards packets; it does not decode or mix them.
-TURN is a per-browser fallback, and the SFU itself never uses it.
+A room sends media over one of two paths. In a room of up to
+`MELIOR_MESH_MAX_PARTICIPANTS` people (default 4) the browsers connect to each
+other, *direct*. In a bigger room each browser has one connection to the SFU:
+it sends its own camera and microphone there and receives everyone else's from
+there, *forwarded*. The SFU forwards packets; it does not decode or mix them.
+TURN is the fallback for both: for a browser that cannot reach the SFU, and for
+a pair of browsers that cannot reach each other. The SFU itself never uses it.
+
+The SFU connection stays open in a mesh room, so the room can switch to
+forwarding without a new connection.
 
 ```mermaid
 flowchart LR
-    alice["Alice's browser"]
-    bob["Bob's browser"]
-    carol["Carol's browser<br/>UDP to the SFU blocked"]
-    turn["coturn"]
-    sfu["SFU"]
+    subgraph mesh["Room of 2 to 4, direct"]
+        a1["Alice's browser"]
+        b1["Bob's browser"]
+        c1["Carol's browser<br/>UDP to Bob blocked"]
+        t1["coturn"]
+        a1 <==> b1
+        a1 <==> c1
+        b1 -. "relayed" .-> t1
+        t1 -. "relayed" .-> c1
+    end
 
-    alice == "her tracks" ==> sfu
-    sfu == "Bob's and Carol's tracks" ==> alice
-    bob == "his tracks" ==> sfu
-    sfu == "Alice's and Carol's tracks" ==> bob
-    carol -. "her tracks" .-> turn
-    turn -. "relayed" .-> sfu
-    sfu -. "Alice's and Bob's tracks" .-> turn
-    turn -. "relayed" .-> carol
+    subgraph big["Room of 5 or more, forwarded"]
+        a2["Alice's browser"]
+        b2["Bob's browser"]
+        d2["Dave's browser<br/>UDP to the SFU blocked"]
+        t2["coturn"]
+        sfu["SFU"]
+        a2 == "her tracks" ==> sfu
+        sfu == "everyone else's tracks" ==> a2
+        b2 == "his tracks" ==> sfu
+        sfu == "everyone else's tracks" ==> b2
+        d2 -. "his tracks" .-> t2
+        t2 -. "relayed" .-> sfu
+        sfu -. "everyone else's tracks" .-> t2
+        t2 -. "relayed" .-> d2
+    end
 ```
 
-With `n` participants the SFU receives `n` sets of tracks and sends
-`n * (n - 1)`.
+In a mesh room with `n` participants each browser sends `n - 1` copies of its
+tracks (camera, microphone and, while it shares, its screen in a fixed third
+section of each link), and the SFU sends nothing; its connection is open but the uplink is
+paused. In a forwarded room the SFU receives `n` sets of tracks and sends
+`n * (n - 1)`. Signalling always goes through the server, which relays the
+offers, answers and candidates of the direct links.
+
+During a switch both paths carry media, one pair at a time; see
+[section 14](#14-route-of-a-link) and [section 15](#15-switching-from-forwarded-to-direct).
 
 ## 3. Server crates and layers
 
@@ -487,3 +514,75 @@ flowchart LR
     device -. "media, if direct fails" .-> coturn
     coturn -.-> sfu
 ```
+
+## 14. Route of a link
+
+The server keeps one link per pair of participants. Its route says which path
+carries the pair's media. Every transition adds one to the link's `epoch`, and a
+`route_live` report counts only for the current epoch.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Forwarded: second participant joins, epoch 0
+    Forwarded --> ToDirect: target is direct<br/>send route direct, arm 10 s timeout
+    ToDirect --> Direct: both sides reported<br/>unsubscribe both from the SFU
+    ToDirect --> ToForwarded: target becomes forwarded<br/>send route forwarded
+    ToDirect --> ToForwarded: timeout fires<br/>pin the room to forwarded
+    Direct --> ToForwarded: target becomes forwarded<br/>subscribe both to the SFU, send route forwarded
+    Direct --> ToForwarded: link_failed<br/>pin the room to forwarded, subscribe both to the SFU
+    ToDirect --> ToForwarded: link_failed<br/>pin the room to forwarded
+    ToForwarded --> Forwarded: both sides reported<br/>send link_close
+    ToForwarded --> ToDirect: target becomes direct<br/>send route direct, arm 10 s timeout
+    Forwarded --> [*]: either participant leaves
+    ToDirect --> [*]: either participant leaves
+    Direct --> [*]: either participant leaves
+    ToForwarded --> [*]: either participant leaves
+```
+
+`ToForwarded` has no timeout: the direct link keeps working until both sides
+report. A `link_failed` from either side acts like the timeout, in `ToDirect`,
+`Direct` and `ToForwarded`; in `ToForwarded` the link already moves back, so only
+the pin changes. In `Forwarded` it is ignored. On a leave, the remaining participant gets `link_close` if the link was
+in any state but `Forwarded`.
+
+## 15. Switching from forwarded to direct
+
+Alice's session id sorts lower than Bob's, so she makes the offer on the direct
+link. Both browsers keep playing the SFU path until the direct path has decoded
+media. Bob joins a room where Alice is alone and the target is `direct`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant alice as Alice's browser
+    participant sfu as SFU, melior-server
+    participant bob as Bob's browser
+
+    Note over alice,bob: link Forwarded, epoch 0, media through the SFU
+    sfu->>alice: route: Bob, direct, epoch 1
+    sfu->>bob: route: Alice, direct, epoch 1
+    Note over sfu: link ToDirect, arm 10 s timeout
+    alice->>sfu: peer_offer to Bob
+    sfu->>bob: peer_offer from Alice
+    bob->>sfu: peer_answer to Alice
+    sfu->>alice: peer_answer from Bob
+    alice-->>bob: peer_ice, both directions, relayed
+    Note over alice,bob: direct media flows, the SFU path still plays
+    Note over alice: direct video decodes, show it
+    alice->>sfu: route_live: Bob, epoch 1
+    Note over bob: direct video decodes, show it
+    bob->>sfu: route_live: Alice, epoch 1
+    Note over sfu: both reported, link Direct
+    sfu->>alice: sdp_offer without Bob's tracks
+    alice->>sfu: sdp_answer
+    sfu->>bob: sdp_offer without Alice's tracks
+    bob->>sfu: sdp_answer
+    sfu->>alice: uplink: active false
+    sfu->>bob: uplink: active false
+    Note over alice,bob: media only over the direct link, no tile froze
+```
+
+The `uplink` message goes to a participant only when every one of its links is
+`Direct`. Going back is the same sequence in the other direction: `route`
+`forwarded` first, the SFU subscriptions return and `uplink` `active` is
+`true`, and `link_close` follows once both report.

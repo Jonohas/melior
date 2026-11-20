@@ -174,6 +174,11 @@ What only a run of the stack proves, and how to check it:
   must show the others' videos playing (`videoWidth > 0`, `currentTime` rising).
 - **TURN**: add `?relay=true` to the room URL; coturn's log must show
   `ALLOCATE processed, success` for usernames of the form `<expiry>:<user id>`.
+- **Mesh**: with `MELIOR_TURN_URLS` set, a room of 2 to 4 must play media over
+  direct links, and the SFU connection's inbound bytes (`getStats()` on it)
+  must stop growing. A 5th participant moves the room to the SFU, and dropping
+  to 3 moves it back; no tile freezes during either switch (`currentTime` keeps
+  rising on every video).
 - **Section reuse**: let a user leave and rejoin a few times; the others'
   videos must keep playing.
 - **Access and sessions**: restrict the room with `PUT /api/rooms/<id>` and

@@ -2,6 +2,7 @@ export {
     type CallPreferences,
     DEFAULT_CALL_PREFERENCES,
     parseCallPreferences,
+    trackEnabled,
 } from './call-preferences';
 export {
     CHANNEL_ID_PATTERN,
@@ -29,8 +30,24 @@ export {
     parseDevicePreferences,
     selectedDevice,
 } from './devices';
+export { isOfferer } from './direct-link-role';
 export { parseForceRelay } from './force-relay';
 export { parseServerMessage } from './parse-server-message';
+export {
+    countInbound,
+    DIRECT_SECTIONS,
+    directKindOf,
+    FLOW_WINDOW_MS,
+    type FlowState,
+    flowingKinds,
+    type InboundCounters,
+    type InboundEntry,
+    type InboundSource,
+    type MediaKind,
+    type ReceiverSection,
+    sfuSourceOf,
+    updateFlow,
+} from './path-flow';
 export {
     type CloseDecision,
     decideAfterDiagnosis,
@@ -56,6 +73,8 @@ export {
     type TrackRef,
     type TracksBySession,
 } from './remote-tracks';
+export { type RoomMediaPath, roomMediaPath } from './room-path';
+export { parseScreenState, screenStateMessage, sharingPeers } from './screen-state';
 export type { SessionId } from './session-id';
 export type {
     ChatPayload,
@@ -64,10 +83,20 @@ export type {
     IceCandidate,
     IceServer,
     Participant,
+    Path,
     ServerMessage,
     ServerOffer,
     SessionDescription,
     TrackAssignment,
     TrackSource,
 } from './signalling-message';
-export { CLOSE_REASONS, TRACK_SOURCES } from './signalling-message';
+export { CLOSE_REASONS, PATHS, TRACK_SOURCES } from './signalling-message';
+export {
+    applyRoute,
+    initialRouteView,
+    NO_OBSERVATION,
+    type PathObservation,
+    type PeerRouteView,
+    type SelectionResult,
+    selectSource,
+} from './source-selection';

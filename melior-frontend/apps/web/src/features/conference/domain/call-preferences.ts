@@ -19,3 +19,7 @@ export const parseCallPreferences = (raw: string | null): CallPreferences => {
     const { microphoneMuted, cameraOff } = value as Record<string, unknown>;
     return { microphoneMuted: microphoneMuted === true, cameraOff: cameraOff === true };
 };
+
+/** Whether a local track of this kind sends media (true) or silence and black frames (false). */
+export const trackEnabled = (kind: string, preferences: CallPreferences): boolean =>
+    kind === 'audio' ? !preferences.microphoneMuted : !preferences.cameraOff;

@@ -1,10 +1,11 @@
 use super::backend;
 use super::forwarder::{Forwarder, ForwarderRegistry, OutletTrack};
+use super::offer::sections_not_sending;
 use async_trait::async_trait;
 use melior_application::{MediaError, MediaEvents, MediaOffer, MediaSession};
 use melior_domain::{IceCandidate, MediaKind, Sdp, SessionId, Track, TrackId};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
@@ -60,12 +61,22 @@ struct Outlets {
     idle: Vec<Outlet>,
 }
 
+/// A track the client sends, with the receiver section it arrives on.
+struct Incoming {
+    forwarder: Arc<Forwarder>,
+    transceiver: Arc<RTCRtpTransceiver>,
+}
+
+type IncomingTracks = Arc<Mutex<Vec<Incoming>>>;
+
 /// [`MediaSession`] over one webrtc-rs peer connection.
 pub(super) struct WebRtcSession {
     id: SessionId,
     connection: Arc<RTCPeerConnection>,
     forwarders: ForwarderRegistry,
     outlets: AsyncMutex<Outlets>,
+    /// What the client sends, until it ends or the client stops sending it.
+    incoming: IncomingTracks,
     /// Subscriptions added since the last answer; they need a keyframe to start.
     awaiting_keyframe: Mutex<Vec<Arc<Forwarder>>>,
 }
@@ -79,9 +90,11 @@ impl WebRtcSession {
     ) -> Self {
         Self::report_ice_candidates(&id, &connection, events.clone());
         Self::report_connection_state(&id, &connection, events.clone());
-        Self::forward_published_tracks(&id, &connection, &forwarders, events);
+        let incoming = IncomingTracks::default();
+        Self::forward_published_tracks(&id, &connection, &forwarders, &incoming, events);
 
         Self {
+            incoming,
             id,
             connection,
             forwarders,
@@ -133,13 +146,15 @@ impl WebRtcSession {
         id: &SessionId,
         connection: &Arc<RTCPeerConnection>,
         forwarders: &ForwarderRegistry,
+        incoming: &IncomingTracks,
         events: Weak<dyn MediaEvents>,
     ) {
         let id = id.clone();
+        let incoming = incoming.clone();
         let publisher = Arc::downgrade(connection);
         let forwarders = forwarders.clone();
 
-        connection.on_track(Box::new(move |remote: Arc<TrackRemote>, _, _| {
+        connection.on_track(Box::new(move |remote: Arc<TrackRemote>, _, transceiver| {
             let kind = match remote.kind() {
                 RTPCodecType::Audio => MediaKind::Audio,
                 RTPCodecType::Video => MediaKind::Video,
@@ -147,8 +162,10 @@ impl WebRtcSession {
             };
             let forwarder = Arc::new(Forwarder::new(&remote, kind, publisher.clone()));
             forwarders.insert(forwarder.clone());
+            lock(&incoming).push(Incoming { forwarder: forwarder.clone(), transceiver });
 
             let id = id.clone();
+            let incoming = incoming.clone();
             let forwarders = forwarders.clone();
             let events = events.clone();
             tokio::spawn(async move {
@@ -159,6 +176,7 @@ impl WebRtcSession {
                     events.track_published(&id, track).await;
                 }
                 forwarder.run(remote).await;
+                lock(&incoming).retain(|track| !Arc::ptr_eq(&track.forwarder, &forwarder));
                 forwarders.remove(&forwarder.id);
                 if let Some(events) = events.upgrade() {
                     events.track_ended(&id, &forwarder.id).await;
@@ -166,6 +184,22 @@ impl WebRtcSession {
             });
             Box::pin(async {})
         }));
+    }
+
+    /// Ends the tracks that arrive on the given sections: the client no longer sends
+    /// there, so nothing would ever make their reads fail. Ends them as a failed
+    /// read does; the task that runs the forwarder retracts the track.
+    fn end_tracks_in(&self, mids: &HashSet<String>) {
+        if mids.is_empty() {
+            return;
+        }
+        let incoming = lock(&self.incoming);
+        for track in incoming.iter() {
+            let silent = track.transceiver.mid().is_some_and(|mid| mids.contains(mid.as_str()));
+            if silent {
+                track.forwarder.stop();
+            }
+        }
     }
 
     /// The local description as it should be sent to the client.
@@ -239,7 +273,9 @@ impl WebRtcSession {
 impl MediaSession for WebRtcSession {
     async fn apply_offer(&self, offer: Sdp) -> Result<Sdp, MediaError> {
         let offer = RTCSessionDescription::offer(offer.into_string()).map_err(backend)?;
+        let silent = sections_not_sending(&offer.sdp);
         self.connection.set_remote_description(offer).await.map_err(backend)?;
+        self.end_tracks_in(&silent);
         let answer = self.connection.create_answer(None).await.map_err(backend)?;
         self.connection.set_local_description(answer.clone()).await.map_err(backend)?;
         Ok(self.local_sdp(answer).await)
@@ -333,6 +369,10 @@ impl MediaSession for WebRtcSession {
             }
         }
     }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn to_rtc_candidate(candidate: IceCandidate) -> RTCIceCandidateInit {

@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::TestServer;
+use common::{STEP, TestServer, new_peer_connection, next_json};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -13,21 +13,15 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
-use webrtc::api::APIBuilder;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MIME_TYPE_VP8, MediaEngine};
+use webrtc::api::media_engine::MIME_TYPE_VP8;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
-use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp::header::Header;
 use webrtc::rtp::packet::Packet;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
-
-const STEP: Duration = Duration::from_secs(20);
 
 /// Something a test client observed.
 #[derive(Debug)]
@@ -153,8 +147,9 @@ impl Client {
         let section_count = media_sections.clone();
 
         let offer = connection.create_offer(None).await.unwrap();
-        connection.set_local_description(offer.clone()).await.unwrap();
+        // Queue the offer before gathering starts: no candidate may overtake it.
         out_tx.send(json!({ "channel": "sdp_offer", "payload": offer })).unwrap();
+        connection.set_local_description(offer).await.unwrap();
 
         // The signalling loop: one message at a time, like the browser client.
         let pc = connection.clone();
@@ -303,31 +298,6 @@ fn report_when_flowing(
     });
 }
 
-async fn new_peer_connection() -> RTCPeerConnection {
-    let mut media_engine = MediaEngine::default();
-    media_engine.register_default_codecs().unwrap();
-    let interceptors = register_default_interceptors(Registry::new(), &mut media_engine).unwrap();
-    APIBuilder::new()
-        .with_media_engine(media_engine)
-        .with_interceptor_registry(interceptors)
-        .build()
-        .new_peer_connection(RTCConfiguration::default())
-        .await
-        .unwrap()
-}
-
-async fn next_json<S>(stream: &mut S) -> Value
-where
-    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
-{
-    let message = timeout(STEP, stream.next())
-        .await
-        .expect("timed out waiting for a message")
-        .expect("socket closed")
-        .expect("socket error");
-    serde_json::from_str(message.to_text().unwrap()).unwrap()
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn participants_receive_each_others_media_including_late_joiners() {
     let server = TestServer::start().await;
@@ -451,4 +421,35 @@ async fn invalid_channel_ids_are_refused_and_bad_messages_get_an_error() {
 
     socket.send(Message::Text("nonsense".into())).await.unwrap();
     assert_eq!(next_json(&mut socket).await["channel"], "error");
+}
+
+#[tokio::test]
+async fn an_oversized_message_ends_that_connection_and_nothing_else() {
+    let server = TestServer::start().await;
+    let cookie = server.login("alice", &["member"]).await;
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(server.ws_request(Some("big"), Some(&cookie)))
+            .await
+            .unwrap();
+    next_json(&mut socket).await;
+    let bob = server.login("bob", &["member"]).await;
+    let (mut other, _) =
+        tokio_tungstenite::connect_async(server.ws_request(Some("big"), Some(&bob))).await.unwrap();
+    next_json(&mut other).await;
+
+    let frame = format!(r#"{{"channel":"echo","payload":"{}"}}"#, "a".repeat(200 * 1024));
+    let _ = socket.send(Message::Text(frame.into())).await;
+    // The server closes that socket: what follows is a close, an error or the end.
+    let ended = timeout(STEP, async {
+        while let Some(Ok(message)) = socket.next().await {
+            assert!(!message.is_text() || !message.to_text().unwrap().contains("echo"));
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "the oversized message must end the connection");
+
+    // The others carry on: bob is told that alice left, and can still talk.
+    assert_eq!(next_json(&mut other).await["channel"], "peer_left");
+    other.send(Message::Text(r#"{"channel":"echo","payload":"ping"}"#.into())).await.unwrap();
+    assert_eq!(next_json(&mut other).await, json!({ "channel": "echo", "payload": "ping" }));
 }

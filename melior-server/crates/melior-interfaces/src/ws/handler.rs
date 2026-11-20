@@ -1,4 +1,7 @@
-use super::messages::{ChatSendDto, ClientMessage, CloseReason, SdpType, ServerMessage};
+use super::chat::ChatSendDto;
+use super::limiter::TokenBucket;
+use super::messages::{ClientMessage, CloseReason, SdpType, ServerMessage};
+use super::peer::{PeerCommand, Rejection};
 use crate::AppState;
 use crate::http::{Authenticated, authenticate, from_foreign_origin};
 use axum::Router;
@@ -16,12 +19,15 @@ use melior_application::{
 use melior_domain::{AuthSessionId, ChannelId, DomainError, SessionId, User};
 use serde::Deserialize;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 
 const DEFAULT_CHANNEL: &str = "general";
+
+/// The largest WebSocket message the server accepts, above the largest SDP it relays.
+pub const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 
 /// `GET /ws?channel_id=<room>`: conference signalling for logged-in users.
 pub fn routes() -> Router<AppState> {
@@ -78,7 +84,10 @@ async fn upgrade(
     }
 
     let guest = Guest { state: state.clone(), auth_session: session_id, channel_id, user };
-    let response = upgrade.on_upgrade(move |socket| connection(socket, guest));
+    let response = upgrade
+        .max_message_size(MAX_MESSAGE_BYTES)
+        .max_frame_size(MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| connection(socket, guest));
     (jar, response).into_response()
 }
 
@@ -165,13 +174,16 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                 tokio::time::interval_at(tokio::time::Instant::now() + period, period);
             recheck.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+            let mut relay_limit = TokenBucket::for_relay(Instant::now());
+
             // The session id is bound to this socket: nothing a client sends can
             // make its messages act on another participant.
             loop {
                 tokio::select! {
                     message = stream.next() => match message {
                         Some(Ok(Message::Text(text))) => {
-                            dispatch(&Services { conference: &service, chat: &chat }, &session_id, &outbox, text.as_str())
+                            let services = Services { conference: &service, chat: &chat };
+                            dispatch(&services, &session_id, &outbox, &mut relay_limit, text.as_str())
                                 .await;
                         }
                         Some(Ok(Message::Close(_)) | Err(_)) | None => break,
@@ -209,7 +221,13 @@ struct Services<'a> {
 }
 
 /// Translates one client message into a use case call.
-async fn dispatch(services: &Services<'_>, session_id: &SessionId, outbox: &Outbox, text: &str) {
+async fn dispatch(
+    services: &Services<'_>,
+    session_id: &SessionId,
+    outbox: &Outbox,
+    relay_limit: &mut TokenBucket,
+    text: &str,
+) {
     let message = match serde_json::from_str::<ClientMessage>(text) {
         Ok(message) => message,
         Err(error) => {
@@ -218,6 +236,11 @@ async fn dispatch(services: &Services<'_>, session_id: &SessionId, outbox: &Outb
             return;
         }
     };
+
+    if message.is_relay() && !relay_limit.try_take(Instant::now()) {
+        debug!(session = %session_id, "relay message over the rate limit dropped");
+        return;
+    }
 
     let service = services.conference;
     let result = match message {
@@ -229,9 +252,18 @@ async fn dispatch(services: &Services<'_>, session_id: &SessionId, outbox: &Outb
             Some(answer) => service.handle_answer(session_id, answer).await,
             None => return wrong_type(outbox, "sdp_answer", "answer"),
         },
-        ClientMessage::Ice(candidate) => {
-            service.add_ice_candidate(session_id, candidate.into()).await
-        }
+        ClientMessage::Ice(candidate) => match candidate.into_checked() {
+            Ok(candidate) => service.add_ice_candidate(session_id, candidate).await,
+            Err(rejection) => {
+                debug!(session = %session_id, ?rejection, "ice candidate dropped");
+                Ok(())
+            }
+        },
+        ClientMessage::RouteLive(dto) => peer(service, session_id, dto.validate()).await,
+        ClientMessage::LinkFailed(dto) => peer(service, session_id, dto.validate()).await,
+        ClientMessage::PeerOffer(dto) => peer(service, session_id, dto.validate_offer()).await,
+        ClientMessage::PeerAnswer(dto) => peer(service, session_id, dto.validate_answer()).await,
+        ClientMessage::PeerIce(dto) => peer(service, session_id, dto.validate()).await,
         ClientMessage::Echo(text) => {
             outbox.push(ServerMessage::Echo(text));
             Ok(())
@@ -243,6 +275,40 @@ async fn dispatch(services: &Services<'_>, session_id: &SessionId, outbox: &Outb
 
     if let Err(error) = result {
         report(session_id, outbox, &error);
+    }
+}
+
+/// Carries out a validated mesh message. A rejected one is dropped with a debug log
+/// and no reply: the client tears everything down on `error`.
+async fn peer(
+    service: &ConferenceService,
+    session_id: &SessionId,
+    command: Result<PeerCommand, Rejection>,
+) -> Result<(), ConferenceError> {
+    let command = match command {
+        Ok(command) => command,
+        Err(rejection) => {
+            debug!(session = %session_id, ?rejection, "mesh message dropped");
+            return Ok(());
+        }
+    };
+    match command {
+        PeerCommand::RouteLive { peer, epoch } => {
+            service.route_live(session_id, &peer, epoch).await
+        }
+        PeerCommand::LinkFailed { peer } => service.link_failed(session_id, &peer).await,
+        PeerCommand::Offer { to, sdp } => {
+            service.relay_peer_offer(session_id, &to, sdp).await;
+            Ok(())
+        }
+        PeerCommand::Answer { to, sdp } => {
+            service.relay_peer_answer(session_id, &to, sdp).await;
+            Ok(())
+        }
+        PeerCommand::Ice { to, candidate } => {
+            service.relay_peer_ice(session_id, &to, candidate).await;
+            Ok(())
+        }
     }
 }
 

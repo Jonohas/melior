@@ -4,13 +4,15 @@ use super::ports::{
 };
 use async_trait::async_trait;
 use melior_domain::{
-    ChannelId, DomainError, IceCandidate, Negotiation, ParticipantInfo, Room, Sdp, SessionId,
-    Track, TrackId, User,
+    ChannelId, DomainError, IceCandidate, MeshPolicy, Negotiation, ParticipantInfo, Room, Sdp,
+    SessionId, Track, TrackId, User,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
+
+mod mesh;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ConferenceError {
@@ -60,6 +62,7 @@ pub struct ConferenceService {
     leases: Arc<dyn RoomLeases>,
     rooms: Mutex<HashMap<ChannelId, RoomCell>>,
     sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
+    mesh: MeshPolicy,
     this: Weak<ConferenceService>,
 }
 
@@ -68,6 +71,7 @@ impl ConferenceService {
         media: Arc<dyn MediaEngine>,
         ice_servers: Arc<dyn IceServerProvider>,
         leases: Arc<dyn RoomLeases>,
+        mesh: MeshPolicy,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             media,
@@ -75,6 +79,7 @@ impl ConferenceService {
             leases,
             rooms: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
+            mesh,
             this: this.clone(),
         })
     }
@@ -115,8 +120,8 @@ impl ConferenceService {
             }
         };
 
-        let present = match room.join(session_id.clone(), user.username.clone()) {
-            Ok(present) => present,
+        let joined = match room.join(session_id.clone(), user.username.clone()) {
+            Ok(joined) => joined,
             Err(error) => {
                 drop(room);
                 media.close().await;
@@ -141,15 +146,16 @@ impl ConferenceService {
             channel_id,
             username: user.username.clone(),
             ice_servers: self.ice_servers.ice_servers_for(user),
-            participants: present.clone(),
+            participants: joined.present.clone(),
         });
         let newcomer =
             ParticipantInfo { session_id: session_id.clone(), username: user.username.clone() };
-        for other in present {
+        for other in joined.present {
             if let Some(other) = self.session(&other.session_id) {
                 other.signals.send(Signal::PeerJoined(newcomer.clone()));
             }
         }
+        self.carry_out(&mut room, joined.effects).await;
         Ok(session_id)
     }
 
@@ -170,17 +176,7 @@ impl ConferenceService {
                             other.signals.send(Signal::PeerLeft(session_id.clone()));
                         }
                     }
-                    for (subscriber_id, track_ids) in departure.unsubscribed {
-                        let Some(subscriber) = self.session(&subscriber_id) else {
-                            continue;
-                        };
-                        for track_id in &track_ids {
-                            if let Err(error) = subscriber.media.unsubscribe(track_id).await {
-                                warn!(session = %subscriber_id, track = %track_id, %error, "unsubscribe failed");
-                            }
-                        }
-                        self.renegotiate(&mut room, &subscriber).await;
-                    }
+                    self.carry_out(&mut room, departure.effects).await;
                 }
                 Err(error) => warn!(session = %session_id, %error, "leave"),
             }
@@ -338,7 +334,9 @@ impl ConferenceService {
     fn room_cell(&self, channel_id: &ChannelId) -> RoomCell {
         lock(&self.rooms)
             .entry(channel_id.clone())
-            .or_insert_with(|| Arc::new(AsyncMutex::new(Room::new(channel_id.clone()))))
+            .or_insert_with(|| {
+                Arc::new(AsyncMutex::new(Room::with_mesh(channel_id.clone(), self.mesh)))
+            })
             .clone()
     }
 
@@ -444,467 +442,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::conference::{MediaOffer, SingleInstance, StaticIceServers};
-    use melior_domain::{MediaKind, TrackSource, UserId};
-
-    /// Records what the application asks of the media plane.
-    #[derive(Default)]
-    struct FakeEngine {
-        sessions: Mutex<HashMap<SessionId, Arc<FakeSession>>>,
-    }
-
-    impl FakeEngine {
-        fn session(&self, id: &SessionId) -> Arc<FakeSession> {
-            lock(&self.sessions).get(id).cloned().expect("media session")
-        }
-    }
-
-    #[async_trait]
-    impl MediaEngine for FakeEngine {
-        async fn create_session(
-            &self,
-            session_id: SessionId,
-            _events: Weak<dyn MediaEvents>,
-        ) -> Result<Arc<dyn MediaSession>, MediaError> {
-            let session = Arc::new(FakeSession::default());
-            lock(&self.sessions).insert(session_id, session.clone());
-            Ok(session)
-        }
-    }
-
-    #[derive(Default)]
-    struct FakeSession {
-        subscribed: Mutex<Vec<TrackId>>,
-        offers_created: Mutex<usize>,
-        closed: Mutex<bool>,
-        reject_answers: Mutex<bool>,
-    }
-
-    impl FakeSession {
-        fn subscribed(&self) -> Vec<TrackId> {
-            let mut tracks = lock(&self.subscribed).clone();
-            tracks.sort();
-            tracks
-        }
-    }
-
-    #[async_trait]
-    impl MediaSession for FakeSession {
-        async fn apply_offer(&self, _offer: Sdp) -> Result<Sdp, MediaError> {
-            Ok(Sdp::new("answer"))
-        }
-
-        async fn create_offer(&self) -> Result<MediaOffer, MediaError> {
-            let mut count = lock(&self.offers_created);
-            *count += 1;
-            // One media section per subscription, named after its position.
-            let carrying = lock(&self.subscribed)
-                .iter()
-                .enumerate()
-                .map(|(index, track)| (index.to_string(), track.clone()))
-                .collect();
-            Ok(MediaOffer { sdp: Sdp::new(format!("offer-{count}")), carrying })
-        }
-
-        async fn apply_answer(&self, _answer: Sdp) -> Result<(), MediaError> {
-            if *lock(&self.reject_answers) {
-                return Err(MediaError::Backend("bad answer".into()));
-            }
-            Ok(())
-        }
-
-        async fn add_ice_candidate(&self, _candidate: IceCandidate) -> Result<(), MediaError> {
-            Ok(())
-        }
-
-        async fn subscribe(&self, track: &TrackId) -> Result<(), MediaError> {
-            lock(&self.subscribed).push(track.clone());
-            Ok(())
-        }
-
-        async fn unsubscribe(&self, track: &TrackId) -> Result<(), MediaError> {
-            lock(&self.subscribed).retain(|t| t != track);
-            Ok(())
-        }
-
-        async fn close(&self) {
-            *lock(&self.closed) = true;
-        }
-    }
-
-    #[derive(Default)]
-    struct RecordingSink {
-        signals: Mutex<Vec<Signal>>,
-    }
-
-    impl RecordingSink {
-        fn take_all(&self) -> Vec<Signal> {
-            std::mem::take(&mut lock(&self.signals))
-        }
-
-        /// The signals so far, minus roster announcements and track ownership
-        /// (most tests are about negotiation and would only be cluttered by them).
-        fn take(&self) -> Vec<Signal> {
-            self.take_all()
-                .into_iter()
-                .filter(|signal| !matches!(signal, Signal::PeerJoined(_)))
-                .map(|signal| match signal {
-                    Signal::Offer { sdp, .. } => Signal::Offer { sdp, tracks: Vec::new() },
-                    other => other,
-                })
-                .collect()
-        }
-    }
-
-    /// An offer as [`RecordingSink::take`] reports it.
-    fn offer(sdp: &str) -> Signal {
-        Signal::Offer { sdp: Sdp::new(sdp), tracks: Vec::new() }
-    }
-
-    fn member(username: &str) -> User {
-        User::new(
-            UserId::new(format!("sub-{username}")),
-            username,
-            None,
-            [User::ROLE_MEMBER.to_owned()],
-        )
-    }
-
-    impl SignalSink for RecordingSink {
-        fn send(&self, signal: Signal) {
-            lock(&self.signals).push(signal);
-        }
-    }
-
-    struct Client {
-        id: SessionId,
-        sink: Arc<RecordingSink>,
-        media: Arc<FakeSession>,
-    }
-
-    struct Harness {
-        engine: Arc<FakeEngine>,
-        service: Arc<ConferenceService>,
-    }
-
-    impl Harness {
-        fn new() -> Self {
-            let engine = Arc::new(FakeEngine::default());
-            let service = ConferenceService::new(
-                engine.clone(),
-                Arc::new(StaticIceServers::default()),
-                Arc::new(SingleInstance),
-            );
-            Self { engine, service }
-        }
-
-        async fn join(&self, channel: &str) -> Client {
-            let sink = Arc::new(RecordingSink::default());
-            let id = self
-                .service
-                .join(ChannelId::parse(channel).unwrap(), &member("someone"), sink.clone())
-                .await
-                .unwrap();
-            let media = self.engine.session(&id);
-            Client { id, sink, media }
-        }
-
-        /// Joins, completes the first offer and connects, discarding the signals so far.
-        async fn join_ready(&self, channel: &str) -> Client {
-            let client = self.join(channel).await;
-            self.service.handle_offer(&client.id, Sdp::new("offer")).await.unwrap();
-            self.service.connected(&client.id).await;
-            client.sink.take();
-            client
-        }
-
-        async fn publish(&self, client: &Client) -> Track {
-            let track = Track::new(TrackId::generate(), MediaKind::Video);
-            self.service.track_published(&client.id, track.clone()).await;
-            track
-        }
-    }
-
-    #[tokio::test]
-    async fn join_announces_the_session_and_first_offer_is_answered() {
-        let h = Harness::new();
-        let alice = h.join("general").await;
-
-        assert!(matches!(
-            alice.sink.take().as_slice(),
-            [Signal::Joined { session_id, .. }] if *session_id == alice.id
-        ));
-
-        h.service.handle_offer(&alice.id, Sdp::new("offer")).await.unwrap();
-        assert_eq!(alice.sink.take(), vec![Signal::Answer(Sdp::new("answer"))]);
-    }
-
-    #[tokio::test]
-    async fn an_offer_says_whose_track_each_media_section_carries() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-        let carol = h.join_ready("general").await;
-
-        h.publish(&alice).await;
-        h.service.handle_answer(&carol.id, Sdp::new("answer")).await.unwrap();
-        carol.sink.take_all();
-        h.publish(&bob).await;
-
-        let signals = carol.sink.take_all();
-        let [Signal::Offer { tracks, .. }] = signals.as_slice() else {
-            panic!("expected one offer, got {signals:?}");
-        };
-        assert_eq!(
-            *tracks,
-            [
-                TrackOwner {
-                    mid: "0".into(),
-                    session_id: alice.id.clone(),
-                    source: TrackSource::Camera
-                },
-                TrackOwner {
-                    mid: "1".into(),
-                    session_id: bob.id.clone(),
-                    source: TrackSource::Camera
-                },
-            ],
-            "the complete list, not only what changed"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_screen_is_offered_with_its_source_and_a_stopped_one_is_retracted() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-        h.publish(&alice).await;
-        h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
-        bob.sink.take_all();
-
-        let screen = h.publish(&alice).await;
-
-        let signals = bob.sink.take_all();
-        let [Signal::Offer { tracks, .. }] = signals.as_slice() else {
-            panic!("expected one offer, got {signals:?}");
-        };
-        let sources: Vec<TrackSource> = tracks.iter().map(|owner| owner.source).collect();
-        assert_eq!(sources, [TrackSource::Camera, TrackSource::Screen]);
-
-        h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
-        bob.sink.take_all();
-        h.service.track_ended(&alice.id, &screen.id).await;
-        let signals = bob.sink.take_all();
-        let [Signal::Offer { tracks, .. }] = signals.as_slice() else {
-            panic!("expected one offer, got {signals:?}");
-        };
-        assert_eq!(tracks.len(), 1, "only the camera is left");
-        assert_eq!(tracks[0].source, TrackSource::Camera);
-    }
-
-    #[tokio::test]
-    async fn participants_learn_who_is_in_the_room() {
-        let h = Harness::new();
-        let alice_sink = Arc::new(RecordingSink::default());
-        let alice = h
-            .service
-            .join(ChannelId::parse("general").unwrap(), &member("alice"), alice_sink.clone())
-            .await
-            .unwrap();
-        alice_sink.take_all();
-
-        let bob_sink = Arc::new(RecordingSink::default());
-        let bob = h
-            .service
-            .join(ChannelId::parse("general").unwrap(), &member("bob"), bob_sink.clone())
-            .await
-            .unwrap();
-
-        assert!(matches!(
-            bob_sink.take_all().as_slice(),
-            [Signal::Joined { username, participants, .. }]
-                if username == "bob"
-                    && *participants == [ParticipantInfo { session_id: alice.clone(), username: "alice".into() }]
-        ));
-        assert_eq!(
-            alice_sink.take_all(),
-            vec![Signal::PeerJoined(ParticipantInfo { session_id: bob, username: "bob".into() })]
-        );
-    }
-
-    #[tokio::test]
-    async fn users_without_a_melior_role_cannot_join() {
-        let h = Harness::new();
-        let guest = User::new(UserId::new("sub-guest"), "guest", None, []);
-
-        let result = h
-            .service
-            .join(ChannelId::parse("general").unwrap(), &guest, Arc::new(RecordingSink::default()))
-            .await;
-
-        assert!(matches!(result, Err(ConferenceError::NotAllowed(name)) if name == "guest"));
-        assert_eq!(h.service.room_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn published_track_is_offered_to_the_other_participant_only() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-
-        let track = h.publish(&alice).await;
-
-        assert_eq!(bob.media.subscribed(), vec![track.id]);
-        assert_eq!(bob.sink.take(), vec![offer("offer-1")]);
-        assert!(alice.media.subscribed().is_empty());
-        assert!(alice.sink.take().is_empty());
-    }
-
-    #[tokio::test]
-    async fn late_joiner_is_offered_all_existing_tracks_once_connected() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-        let a = h.publish(&alice).await;
-        let b = h.publish(&bob).await;
-
-        let carol = h.join("general").await;
-        carol.sink.take();
-        h.service.handle_offer(&carol.id, Sdp::new("offer")).await.unwrap();
-
-        assert_eq!(
-            carol.sink.take(),
-            vec![Signal::Answer(Sdp::new("answer"))],
-            "nothing is offered while the connection is being established"
-        );
-        assert!(carol.media.subscribed().is_empty());
-
-        // A track published while carol is still connecting is not lost either.
-        let c = h.publish(&alice).await;
-        assert!(carol.sink.take().is_empty());
-
-        h.service.connected(&carol.id).await;
-
-        let mut expected = vec![a.id, b.id, c.id];
-        expected.sort();
-        assert_eq!(carol.media.subscribed(), expected);
-        assert_eq!(
-            carol.sink.take(),
-            vec![offer("offer-1")],
-            "a single offer covering every track"
-        );
-
-        h.service.connected(&carol.id).await;
-        assert!(carol.sink.take().is_empty(), "a reconnect changes nothing");
-    }
-
-    #[tokio::test]
-    async fn changes_during_an_outstanding_offer_are_batched_into_the_next_one() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-
-        // A camera, a screen and a microphone: a third video would be refused.
-        h.publish(&alice).await;
-        h.publish(&alice).await;
-        let microphone = Track::new(TrackId::generate(), MediaKind::Audio);
-        h.service.track_published(&alice.id, microphone).await;
-        assert_eq!(bob.sink.take(), vec![offer("offer-1")], "no overlapping offers");
-
-        h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
-        assert_eq!(bob.sink.take(), vec![offer("offer-2")]);
-
-        h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
-        assert!(bob.sink.take().is_empty());
-        assert_eq!(bob.media.subscribed().len(), 3);
-    }
-
-    #[tokio::test]
-    async fn leaving_cleans_up_media_subscriptions_and_the_room() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-        h.publish(&alice).await;
-        h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
-        bob.sink.take();
-
-        h.service.leave(&alice.id).await;
-
-        assert!(*lock(&alice.media.closed));
-        assert!(bob.media.subscribed().is_empty());
-        assert_eq!(bob.sink.take(), vec![Signal::PeerLeft(alice.id.clone()), offer("offer-2"),]);
-        assert_eq!(h.service.room_count(), 1);
-
-        h.service.leave(&alice.id).await; // idempotent
-        h.service.leave(&bob.id).await;
-        assert_eq!(h.service.room_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn rooms_are_isolated() {
-        let h = Harness::new();
-        let alice = h.join_ready("red").await;
-        let bob = h.join_ready("blue").await;
-
-        h.publish(&alice).await;
-
-        assert!(bob.media.subscribed().is_empty());
-        assert!(bob.sink.take().is_empty());
-    }
-
-    #[tokio::test]
-    async fn ended_track_is_unsubscribed_and_renegotiated() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-        let track = h.publish(&alice).await;
-        h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
-        bob.sink.take();
-
-        h.service.track_ended(&alice.id, &track.id).await;
-
-        assert!(bob.media.subscribed().is_empty());
-        assert_eq!(bob.sink.take(), vec![offer("offer-2")]);
-    }
-
-    #[tokio::test]
-    async fn protocol_violations_are_rejected() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-
-        assert!(matches!(
-            h.service.handle_answer(&bob.id, Sdp::new("answer")).await,
-            Err(ConferenceError::Domain(DomainError::UnexpectedAnswer))
-        ));
-
-        h.publish(&alice).await;
-        assert!(matches!(
-            h.service.handle_offer(&bob.id, Sdp::new("offer")).await,
-            Err(ConferenceError::Domain(DomainError::OfferDuringRenegotiation))
-        ));
-
-        assert!(matches!(
-            h.service.handle_offer(&SessionId::generate(), Sdp::new("offer")).await,
-            Err(ConferenceError::UnknownSession)
-        ));
-    }
-
-    #[tokio::test]
-    async fn rejected_answer_does_not_block_later_negotiation() {
-        let h = Harness::new();
-        let alice = h.join_ready("general").await;
-        let bob = h.join_ready("general").await;
-        h.publish(&alice).await;
-        bob.sink.take();
-
-        *lock(&bob.media.reject_answers) = true;
-        assert!(h.service.handle_answer(&bob.id, Sdp::new("garbage")).await.is_err());
-        *lock(&bob.media.reject_answers) = false;
-
-        h.publish(&alice).await;
-        assert_eq!(bob.sink.take(), vec![offer("offer-2")]);
-    }
-}
+mod mesh_tests;
+#[cfg(test)]
+mod testing;
+#[cfg(test)]
+mod tests;

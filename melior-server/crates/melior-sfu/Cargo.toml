@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+melior-domain.workspace = true
 melior-application.workspace = true
 melior-infrastructure.workspace = true
 melior-interfaces.workspace = true
@@ -13,7 +14,6 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-melior-domain.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
