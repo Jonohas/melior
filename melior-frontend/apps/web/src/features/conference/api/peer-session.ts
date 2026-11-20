@@ -2,13 +2,15 @@ import {
     diffTracks,
     type IceCandidate,
     type IceServer,
+    peerForTrack,
     reconcileTracks,
     type SessionId,
     type TrackAssignment,
     type TracksBySession,
 } from '@/features/conference/domain';
+import { createIceCandidateQueue } from './ice-candidate-queue';
 import type { StatsSource } from './stats-sampler';
-import { setSendersActive } from './uplink';
+import { createUplink } from './uplink';
 
 type PeerSessionOptions = {
     iceServers: IceServer[];
@@ -45,7 +47,8 @@ export const createPeerSession = ({
     onFailed,
 }: PeerSessionOptions): PeerSession => {
     const connection = new RTCPeerConnection({ iceServers, iceTransportPolicy: forceRelay ? 'relay' : 'all' });
-    let candidateQueue: IceCandidate[] = [];
+    const candidates = createIceCandidateQueue(connection, 'sfu');
+    const uplink = createUplink(connection);
 
     // One MediaStream per participant, alive across renegotiations. A stream's id means nothing: a reused
     // media section keeps the msid of its first user, so who publishes a track comes from the server's
@@ -53,7 +56,6 @@ export const createPeerSession = ({
     const streams = new Map<SessionId, MediaStream>();
     let assignments: TrackAssignment[] = [];
     let current: TracksBySession<MediaStreamTrack> = {};
-    let uplinkActive = true;
 
     const reconcile = () => {
         const receivers = new Map<string, MediaStreamTrack>();
@@ -95,33 +97,18 @@ export const createPeerSession = ({
         for (const track of localStream.getTracks()) connection.addTrack(track, localStream);
     }
 
-    const flushCandidates = async () => {
-        const queued = candidateQueue;
-        candidateQueue = [];
-        for (const candidate of queued) {
-            try {
-                await connection.addIceCandidate(candidate);
-            } catch (error) {
-                console.warn('addIceCandidate (queued) failed', error);
-            }
-        }
-    };
-
-    // A negotiation may add senders; a paused uplink stays paused.
-    const reapplyUplink = async () => {
-        if (!uplinkActive) await setSendersActive(connection, false);
-    };
-
     return {
         statsSource: {
             connection,
             isConnected: () => connection.connectionState === 'connected',
-            peerOfMid: (mid) => assignments.find((a) => a.mid === mid)?.session_id,
+            peerOf: (entry) =>
+                peerForTrack(
+                    entry.trackIdentifier,
+                    connection.getTransceivers().map((t) => ({ mid: t.mid, trackId: t.receiver.track.id })),
+                    assignments,
+                ),
         },
-        setUplinkActive: async (active) => {
-            uplinkActive = active;
-            await setSendersActive(connection, active);
-        },
+        setUplinkActive: uplink.set,
         createOffer: async () => {
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
@@ -130,34 +117,25 @@ export const createPeerSession = ({
         applyAnswer: async (sdp) => {
             await connection.setRemoteDescription({ type: 'answer', sdp });
             reconcile();
-            await flushCandidates();
-            await reapplyUplink();
+            await candidates.flush();
+            await uplink.reapply();
         },
         answerOffer: async (sdp, tracks) => {
             await connection.setRemoteDescription({ type: 'offer', sdp });
             // The transceivers and their mids exist now.
             assignments = tracks;
             reconcile();
-            await flushCandidates();
+            await candidates.flush();
             const answer = await connection.createAnswer();
             await connection.setLocalDescription(answer);
-            await reapplyUplink();
+            await uplink.reapply();
             return connection.localDescription?.sdp ?? answer.sdp ?? '';
         },
-        addIceCandidate: async (candidate) => {
-            if (!connection.remoteDescription) {
-                candidateQueue.push(candidate);
-                return;
-            }
-            try {
-                await connection.addIceCandidate(candidate);
-            } catch (error) {
-                console.warn('addIceCandidate failed', error);
-            }
-        },
+        addIceCandidate: candidates.add,
         close: () => {
             connection.onicecandidate = null;
             connection.onconnectionstatechange = null;
+            uplink.stop();
             connection.close();
         },
     };

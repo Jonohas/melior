@@ -23,6 +23,9 @@ export type SelectionResult = {
     report: number | null;
 };
 
+/** What a path shows when nothing is known about it. */
+export const NO_OBSERVATION: PathObservation = { connected: false, flowing: [] };
+
 export const initialRouteView = (): PeerRouteView => ({
     preferred: 'forwarded',
     epoch: null,
@@ -41,23 +44,31 @@ const reportOnce = (view: PeerRouteView): SelectionResult => {
     return { view: { ...view, reportedEpoch: view.epoch }, report: view.epoch };
 };
 
+/** The shown path carries nothing but the other one does: it died (link closed or failed), so show the other. */
+const recoverDeadPath = (view: PeerRouteView, paths: Record<Path, PathObservation>): PeerRouteView => {
+    const other = otherPath(view.shown);
+    const dead = paths[view.shown].flowing.length === 0 && paths[other].flowing.length > 0;
+    return dead ? { ...view, shown: other } : view;
+};
+
 /**
  * Evaluated on every stats sample. Show the preferred path once its transport is connected and it carries
  * every kind the shown path carries (a kind that sends nothing, camera off, is not waited for) and at least
  * something; report `route_live` once per epoch. If the shown path died and the other one flows, fall back to
- * it without reporting. A peer already on the preferred path still reports its epoch once: the server waits
- * for both sides in every transition, including one this side never had to switch for.
+ * it without reporting, also when the shown path is the preferred one. A peer already on the preferred path
+ * still reports its epoch once: the server waits for both sides in every transition, including one this
+ * side never had to switch for.
  */
 export const selectSource = (view: PeerRouteView, paths: Record<Path, PathObservation>): SelectionResult => {
-    if (view.shown === view.preferred) return reportOnce(view);
+    if (view.shown === view.preferred) {
+        const reported = reportOnce(view);
+        return { view: recoverDeadPath(reported.view, paths), report: reported.report };
+    }
     const shown = paths[view.shown];
     const preferred = paths[view.preferred];
     const preferredCarriesShown = shown.flowing.every((kind) => preferred.flowing.includes(kind));
     if (preferred.connected && preferred.flowing.length > 0 && preferredCarriesShown) {
         return reportOnce({ ...view, shown: view.preferred });
     }
-    if (shown.flowing.length === 0 && paths[otherPath(view.shown)].flowing.length > 0) {
-        return { view: { ...view, shown: otherPath(view.shown) }, report: null };
-    }
-    return { view, report: null };
+    return { view: recoverDeadPath(view, paths), report: null };
 };

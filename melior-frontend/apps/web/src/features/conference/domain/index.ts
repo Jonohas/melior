@@ -25,6 +25,8 @@ export {
     type InboundCounters,
     type InboundEntry,
     type MediaKind,
+    peerForTrack,
+    type ReceiverSection,
     updateFlow,
 } from './path-flow';
 export {
@@ -65,6 +67,7 @@ export { CLOSE_REASONS, PATHS } from './signalling-message';
 export {
     applyRoute,
     initialRouteView,
+    NO_OBSERVATION,
     type PathObservation,
     type PeerRouteView,
     type SelectionResult,

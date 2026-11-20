@@ -14,7 +14,7 @@ type RemoteVideoProps = {
 export const RemoteVideo = ({ forwarded, direct, shownPath, username }: RemoteVideoProps) => {
     return (
         <div className="border-2 rounded border-green-500">
-            <div className="relative">
+            <div className="relative aspect-video bg-black">
                 {forwarded && <PathVideo stream={forwarded} shown={shownPath === 'forwarded'} />}
                 {direct && <PathVideo stream={direct} shown={shownPath === 'direct'} />}
             </div>

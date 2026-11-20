@@ -36,7 +36,7 @@ export const PathVideo = ({ stream, shown }: PathVideoProps) => {
             playsInline
             muted={!shown}
             data-shown={shown}
-            className={`w-full aspect-video bg-black ${shown ? '' : 'absolute inset-0 opacity-0 pointer-events-none'}`}
+            className={`absolute inset-0 h-full w-full bg-black ${shown ? '' : 'opacity-0 pointer-events-none'}`}
         />
     );
 };

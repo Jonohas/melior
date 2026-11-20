@@ -4,14 +4,14 @@ import {
     type IceServer,
     initialRouteView,
     isOfferer,
+    NO_OBSERVATION,
     type Path,
-    type PathObservation,
     type PeerRouteView,
     type ServerMessage,
     type SessionId,
     selectSource,
 } from '@/features/conference/domain';
-import { createDirectLink, type DirectLink } from './direct-link';
+import { createLinkRegistry } from './link-registry';
 import { createStatsSampler, type Observations, type StatsSource } from './stats-sampler';
 
 /** The server messages the mesh handles; the hook passes exactly these on. */
@@ -39,89 +39,60 @@ export type Mesh = {
     close: () => void;
 };
 
-const NOTHING: PathObservation = { connected: false, flowing: [] };
-
 /**
- * The client half of the mesh: one direct link per peer with an open link, the route each peer was last
- * told, and the path each peer is shown over. Every stats sample runs the pure source selection rule and
- * reports `route_live` when it says so.
+ * The client half of the mesh: the route each peer was last told and the path each peer is shown over. The
+ * direct links live in the registry. Every stats sample runs the pure source selection rule and reports
+ * `route_live` when it says so.
  */
-export const createMesh = ({
-    selfId,
-    iceServers,
-    forceRelay,
-    localStream,
-    sfu,
-    send,
-    onDirectMedia,
-    onShownPath,
-}: MeshOptions): Mesh => {
+export const createMesh = (options: MeshOptions): Mesh => {
+    const { selfId, sfu, send, onShownPath } = options;
     const views = new Map<SessionId, PeerRouteView>();
-    const links = new Map<SessionId, DirectLink>();
-    const sources = new Map<SessionId, StatsSource>();
 
     const storeView = (peer: SessionId, view: PeerRouteView) => {
         if (views.get(peer)?.shown !== view.shown) onShownPath(peer, view.shown);
         views.set(peer, view);
     };
 
-    const closeLink = (peer: SessionId) => {
-        links.get(peer)?.close();
-        links.delete(peer);
-        sources.delete(peer);
-        onDirectMedia(peer, null);
+    const showForwarded = (peer: SessionId) => {
+        const view = views.get(peer);
+        if (view) storeView(peer, { ...view, shown: 'forwarded' });
     };
 
-    const openLink = (peer: SessionId): DirectLink => {
-        const existing = links.get(peer);
-        if (existing) return existing;
-        const link: DirectLink = createDirectLink({
-            peerId: peer,
-            offerer: isOfferer(selfId, peer),
-            iceServers,
-            forceRelay,
-            localStream,
-            send,
-            onMedia: (stream) => onDirectMedia(peer, stream),
-            // Close it and tell the server, which moves the room to forwarding. The guard makes it once per link.
-            onFailed: () => {
-                if (links.get(peer) !== link) return;
-                closeLink(peer);
-                send({ channel: 'link_failed', payload: { peer } });
-            },
-        });
-        links.set(peer, link);
-        sources.set(peer, { connection: link.connection, isConnected: link.isConnected, peerOfMid: () => peer });
-        return link;
-    };
+    const registry = createLinkRegistry({
+        ...options,
+        onMedia: options.onDirectMedia,
+        onFailed: (peer) => {
+            showForwarded(peer);
+            send({ channel: 'link_failed', payload: { peer } });
+        },
+    });
 
     const onRoute = async (peer: SessionId, path: Path, epoch: number) => {
         storeView(peer, applyRoute(views.get(peer) ?? initialRouteView(), { path, epoch }));
-        if (path === 'direct') await openLink(peer).start();
+        if (path === 'direct') await registry.open(peer).start();
     };
 
     const onLinkClose = (peer: SessionId) => {
-        closeLink(peer);
-        const view = views.get(peer);
-        if (view) storeView(peer, { ...view, shown: 'forwarded' });
+        registry.close(peer);
+        showForwarded(peer);
     };
 
     // An offer may beat the route; the offerer is the other side, so only that side's offer opens a link.
     const onOffer = async (from: SessionId, sdp: string) => {
         if (isOfferer(selfId, from)) return;
-        await openLink(from).handleOffer(sdp);
+        await registry.open(from).handleOffer(sdp);
     };
 
     const onSample = (observations: Observations) => {
         for (const [peer, view] of views) {
-            const paths = observations.get(peer) ?? { forwarded: NOTHING, direct: NOTHING };
+            const paths = observations.get(peer) ?? { forwarded: NO_OBSERVATION, direct: NO_OBSERVATION };
             const result = selectSource(view, paths);
             storeView(peer, result.view);
             if (result.report !== null) send({ channel: 'route_live', payload: { peer, epoch: result.report } });
         }
     };
 
-    const sampler = createStatsSampler({ sfu, direct: () => [...sources.values()], onSample });
+    const sampler = createStatsSampler({ sfu, direct: registry.statsSources, onSample });
 
     const dispatch = async (message: MeshMessage) => {
         switch (message.channel) {
@@ -132,9 +103,9 @@ export const createMesh = ({
             case 'peer_offer':
                 return onOffer(message.payload.from, message.payload.sdp);
             case 'peer_answer':
-                return links.get(message.payload.from)?.handleAnswer(message.payload.sdp);
+                return registry.get(message.payload.from)?.handleAnswer(message.payload.sdp);
             case 'peer_ice':
-                return links.get(message.payload.from)?.addIceCandidate(message.payload.candidate);
+                return registry.get(message.payload.from)?.addIceCandidate(message.payload.candidate);
         }
     };
 
@@ -147,12 +118,12 @@ export const createMesh = ({
             }
         },
         peerLeft: (peer) => {
-            closeLink(peer);
+            registry.close(peer);
             views.delete(peer);
         },
         close: () => {
             sampler.stop();
-            for (const peer of [...links.keys()]) closeLink(peer);
+            registry.closeAll();
             views.clear();
         },
     };

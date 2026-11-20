@@ -45,6 +45,21 @@ describe('selectSource', () => {
         expect(result.report).toBeNull();
     });
 
+    test('falls back when the shown path is the preferred one and it died (failed direct link)', () => {
+        const onDirect = { ...toDirect, shown: 'direct' as const, reportedEpoch: 1 };
+        const result = selectSource(onDirect, { direct: obs(false, []), forwarded: obs(true, both) });
+        expect(result.view.shown).toBe('forwarded');
+        expect(result.report).toBeNull();
+    });
+
+    test('keeps the preferred path while it still flows or nothing else does', () => {
+        const onDirect = { ...toDirect, shown: 'direct' as const, reportedEpoch: 1 };
+        expect(selectSource(onDirect, { direct: obs(true, both), forwarded: obs(true, both) }).view.shown).toBe(
+            'direct',
+        );
+        expect(selectSource(onDirect, { direct: obs(false, []), forwarded: obs(false, []) }).view.shown).toBe('direct');
+    });
+
     test('keeps the shown path when nothing flows anywhere', () => {
         const result = selectSource(toDirect, { forwarded: obs(true, []), direct: obs(true, []) });
         expect(result).toEqual({ view: toDirect, report: null });

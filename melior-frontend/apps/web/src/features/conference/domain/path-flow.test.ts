@@ -1,18 +1,41 @@
 import { describe, expect, test } from 'vitest';
-import { countInbound, FLOW_WINDOW_MS, flowingKinds, updateFlow } from './path-flow';
+import { countInbound, FLOW_WINDOW_MS, flowingKinds, peerForTrack, updateFlow } from './path-flow';
+
+describe('peerForTrack', () => {
+    const sections = [
+        { mid: '0', trackId: 't0' },
+        { mid: '1', trackId: 't1' },
+        { mid: null, trackId: 't2' },
+    ];
+    const assignments = [
+        { mid: '0', session_id: 'a' },
+        { mid: '2', session_id: 'b' },
+    ];
+
+    test('follows track id to mid to publisher', () => {
+        expect(peerForTrack('t0', sections, assignments)).toBe('a');
+    });
+
+    test('is undefined when a link of the chain is missing', () => {
+        expect(peerForTrack('t1', sections, assignments)).toBeUndefined();
+        expect(peerForTrack('t2', sections, assignments)).toBeUndefined();
+        expect(peerForTrack('nope', sections, assignments)).toBeUndefined();
+        expect(peerForTrack(undefined, sections, assignments)).toBeUndefined();
+    });
+});
 
 describe('countInbound', () => {
-    test('maps entries to peers through their mid and sums per kind', () => {
-        const peers: Record<string, string> = { '0': 'a', '1': 'a', '2': 'b' };
+    test('maps entries to peers and sums per kind', () => {
+        const peers: Record<string, string> = { t0: 'a', t1: 'a', t2: 'b' };
         const result = countInbound(
             [
-                { kind: 'video', mid: '0', framesDecoded: 10 },
-                { kind: 'audio', mid: '1', packetsReceived: 7 },
-                { kind: 'video', mid: '2', framesDecoded: 3 },
-                { kind: 'video', mid: '9', framesDecoded: 99 },
-                { kind: 'video', mid: null, framesDecoded: 99 },
+                { kind: 'video', trackIdentifier: 't0', framesDecoded: 10 },
+                { kind: 'audio', trackIdentifier: 't1', packetsReceived: 7 },
+                { kind: 'video', trackIdentifier: 't2', framesDecoded: 3 },
+                { kind: 'video', trackIdentifier: 't9', framesDecoded: 99 },
+                { kind: 'video', framesDecoded: 99 },
             ],
-            (mid) => (mid ? peers[mid] : undefined),
+            (entry) => (entry.trackIdentifier ? peers[entry.trackIdentifier] : undefined),
         );
         expect(result.get('a')).toEqual({ video: 10, audio: 7 });
         expect(result.get('b')).toEqual({ video: 3, audio: 0 });

@@ -1,4 +1,5 @@
 import type { ClientMessage, IceCandidate, IceServer, SessionId } from '@/features/conference/domain';
+import { createIceCandidateQueue } from './ice-candidate-queue';
 
 type DirectLinkOptions = {
     peerId: SessionId;
@@ -38,7 +39,9 @@ export const createDirectLink = ({
 }: DirectLinkOptions): DirectLink => {
     const connection = new RTCPeerConnection({ iceServers, iceTransportPolicy: forceRelay ? 'relay' : 'all' });
     const remote = new MediaStream();
-    let candidateQueue: IceCandidate[] = [];
+    const candidates = createIceCandidateQueue(connection, 'direct');
+    // The link is negotiated once: a repeated start or offer is ignored.
+    let started = false;
 
     const addLocalTracks = () => {
         if (!localStream) return;
@@ -57,25 +60,12 @@ export const createDirectLink = ({
         if (connection.connectionState === 'failed') onFailed();
     };
 
-    const addCandidate = async (candidate: IceCandidate) => {
-        try {
-            await connection.addIceCandidate(candidate);
-        } catch (error) {
-            console.warn('direct addIceCandidate failed', error);
-        }
-    };
-
-    const flushCandidates = async () => {
-        const queued = candidateQueue;
-        candidateQueue = [];
-        for (const candidate of queued) await addCandidate(candidate);
-    };
-
     return {
         connection,
         isConnected: () => connection.connectionState === 'connected',
         start: async () => {
-            if (!offerer) return;
+            if (!offerer || started) return;
+            started = true;
             addLocalTracks();
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
@@ -83,10 +73,12 @@ export const createDirectLink = ({
             send({ channel: 'peer_offer', payload: { to: peerId, sdp } });
         },
         handleOffer: async (sdp) => {
+            if (started) return;
+            started = true;
             await connection.setRemoteDescription({ type: 'offer', sdp });
             // After the offer, so the tracks reuse the offer's transceivers.
             addLocalTracks();
-            await flushCandidates();
+            await candidates.flush();
             const answer = await connection.createAnswer();
             await connection.setLocalDescription(answer);
             const answerSdp = connection.localDescription?.sdp ?? answer.sdp ?? '';
@@ -94,15 +86,9 @@ export const createDirectLink = ({
         },
         handleAnswer: async (sdp) => {
             await connection.setRemoteDescription({ type: 'answer', sdp });
-            await flushCandidates();
+            await candidates.flush();
         },
-        addIceCandidate: async (candidate) => {
-            if (!connection.remoteDescription) {
-                candidateQueue.push(candidate);
-                return;
-            }
-            await addCandidate(candidate);
-        },
+        addIceCandidate: (candidate: IceCandidate) => candidates.add(candidate),
         close: () => {
             connection.onicecandidate = null;
             connection.ontrack = null;
