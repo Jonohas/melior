@@ -1,4 +1,9 @@
 export {
+    type CallPreferences,
+    DEFAULT_CALL_PREFERENCES,
+    parseCallPreferences,
+} from './call-preferences';
+export {
     CHANNEL_ID_PATTERN,
     type ChannelId,
     DEFAULT_CHANNEL_ID,
@@ -14,6 +19,16 @@ export {
     type StreamRef,
 } from './conference-state';
 export type { ConferenceStatus } from './conference-status';
+export {
+    type DeviceInfo,
+    type DeviceKind,
+    type DeviceLists,
+    type DeviceOption,
+    type DevicePreferences,
+    groupDevices,
+    parseDevicePreferences,
+    selectedDevice,
+} from './devices';
 export { parseForceRelay } from './force-relay';
 export { parseServerMessage } from './parse-server-message';
 export {
@@ -31,7 +46,11 @@ export {
 } from './reconnect';
 export {
     diffTracks,
+    parseStreamKey,
+    partitionStreams,
     reconcileTracks,
+    type StreamKey,
+    streamKey,
     type TrackChange,
     type TrackDiff,
     type TrackRef,
@@ -39,6 +58,7 @@ export {
 } from './remote-tracks';
 export type { SessionId } from './session-id';
 export type {
+    ChatPayload,
     ClientMessage,
     CloseReason,
     IceCandidate,
@@ -48,5 +68,6 @@ export type {
     ServerOffer,
     SessionDescription,
     TrackAssignment,
+    TrackSource,
 } from './signalling-message';
-export { CLOSE_REASONS } from './signalling-message';
+export { CLOSE_REASONS, TRACK_SOURCES } from './signalling-message';

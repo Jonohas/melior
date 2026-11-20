@@ -1,11 +1,19 @@
-export const NoAccessPage = () => {
-    return (
-        <div className="flex flex-col items-center gap-4 p-8">
-            <h1 className="text-heading3">No access</h1>
-            <p>You are signed in, but this account has no Melior role (member or admin). Ask an administrator.</p>
-            <a href="/signout" className="underline">
-                Sign out
-            </a>
-        </div>
-    );
-};
+import { UserRound } from 'lucide-react';
+import { Button } from '@/components/ui';
+import { StatePage } from './state-page';
+
+export const NoAccessPage = () => (
+    <StatePage
+        standalone
+        icon={UserRound}
+        title="No access"
+        actions={
+            <Button asChild variant="outline">
+                {/* A plain anchor: sign-out is a full-page navigation through the BFF, not a client route. */}
+                <a href="/signout">Sign out</a>
+            </Button>
+        }
+    >
+        You are signed in, but this account has no Melior role (member or admin). Ask an administrator.
+    </StatePage>
+);

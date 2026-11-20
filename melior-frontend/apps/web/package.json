@@ -21,9 +21,15 @@
         "@tanstack/react-query": "catalog:tanstack",
         "@tanstack/react-router": "catalog:tanstack",
         "@tanstack/react-start": "catalog:tanstack",
+        "class-variance-authority": "catalog:ui",
+        "clsx": "catalog:ui",
+        "lucide-react": "catalog:ui",
+        "radix-ui": "catalog:ui",
         "react": "catalog:react",
         "react-dom": "catalog:react",
-        "tailwindcss": "catalog:styling"
+        "tailwind-merge": "catalog:ui",
+        "tailwindcss": "catalog:styling",
+        "tw-animate-css": "catalog:ui"
     },
     "devDependencies": {
         "@biomejs/biome": "catalog:tooling",

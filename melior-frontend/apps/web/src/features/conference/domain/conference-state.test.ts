@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { type ConferenceAction, conferenceReducer, createInitialConferenceState } from './conference-state';
+import { streamKey } from './remote-tracks';
 
 type Stream = { id: string };
 
@@ -14,6 +15,7 @@ describe('conferenceReducer', () => {
             participants: {},
             localStream: null,
             remoteStreams: {},
+            screenStreams: {},
             status: 'starting',
             reconnectAttempt: 0,
             stopReason: null,
@@ -67,6 +69,32 @@ describe('conferenceReducer', () => {
         });
         expect(state.username).toBe('alice');
         expect(state.participants).toEqual({ s2: 'bob' });
+    });
+
+    test('a shared screen is kept apart from the camera of the same participant', () => {
+        const state = run({
+            type: 'remote_media_updated',
+            streams: { s2: { id: 'cam' }, [streamKey('s2', 'screen')]: { id: 'scr' } },
+        });
+        expect(state.remoteStreams).toEqual({ s2: { id: 'cam' } });
+        expect(state.screenStreams).toEqual({ s2: { id: 'scr' } });
+    });
+
+    test('the screen goes away when sharing stops, and when the participant leaves', () => {
+        const sharing = run(
+            { type: 'peer_joined', sessionId: 's2', username: 'bob' },
+            {
+                type: 'remote_media_updated',
+                streams: { s2: { id: 'cam' }, [streamKey('s2', 'screen')]: { id: 'scr' } },
+            },
+        );
+        const stopped = conferenceReducer(sharing, { type: 'remote_media_updated', streams: { s2: { id: 'cam' } } });
+        expect(stopped.screenStreams).toEqual({});
+        expect(stopped.remoteStreams).toEqual({ s2: { id: 'cam' } });
+
+        const left = conferenceReducer(sharing, { type: 'peer_left', sessionId: 's2' });
+        expect(left.screenStreams).toEqual({});
+        expect(left.remoteStreams).toEqual({});
     });
 
     test('peer_joined adds to the roster and peer_left removes the entry and its stream', () => {

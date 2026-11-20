@@ -1,3 +1,19 @@
-export { captureLocalMedia, ENABLE_AUDIO, stopMedia } from './local-media';
+export {
+    canChooseSpeaker,
+    canShareScreen,
+    captureInput,
+    captureLocalMedia,
+    captureScreen,
+    ENABLE_AUDIO,
+    isScreenShareCancelled,
+    listDevices,
+    loadCallPreferences,
+    loadDevicePreferences,
+    saveCallPreferences,
+    saveDevicePreference,
+    setSpeaker,
+    stopMedia,
+    watchDevices,
+} from './local-media';
 export { createPeerSession, type PeerSession } from './peer-session';
 export { createSignallingClient, type SignallingClient } from './signalling-client';

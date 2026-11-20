@@ -93,8 +93,8 @@ describe('parseServerMessage', () => {
 
     test('parses the media section assignments of an offer', () => {
         const tracks = [
-            { mid: '2', session_id: 'a' },
-            { mid: '3', session_id: 'a' },
+            { mid: '2', session_id: 'a', source: 'camera' },
+            { mid: '3', session_id: 'a', source: 'screen' },
         ];
         expect(parseServerMessage(msg('sdp_offer', { type: 'offer', sdp: 'v=0', tracks }))).toEqual({
             channel: 'sdp_offer',
@@ -105,9 +105,22 @@ describe('parseServerMessage', () => {
         });
         expect(parseServerMessage(msg('sdp_offer', { type: 'offer', sdp: 'v=0', tracks: 'x' }))).toBeNull();
         expect(
-            parseServerMessage(msg('sdp_offer', { type: 'offer', sdp: 'v=0', tracks: [{ mid: 2, session_id: 'a' }] })),
+            parseServerMessage(
+                msg('sdp_offer', {
+                    type: 'offer',
+                    sdp: 'v=0',
+                    tracks: [{ mid: 2, session_id: 'a', source: 'camera' }],
+                }),
+            ),
         ).toBeNull();
         expect(parseServerMessage(msg('sdp_offer', { type: 'offer', sdp: 'v=0', tracks: [{ mid: '2' }] }))).toBeNull();
+    });
+
+    test('refuses an assignment without a known source', () => {
+        for (const source of [undefined, 'webcam', 3, null]) {
+            const tracks = [{ mid: '2', session_id: 'a', source }];
+            expect(parseServerMessage(msg('sdp_offer', { type: 'offer', sdp: 'v=0', tracks }))).toBeNull();
+        }
     });
 
     test('parses ice candidates in camelCase', () => {
@@ -142,5 +155,44 @@ describe('parseServerMessage', () => {
         expect(parseServerMessage('{}')).toBeNull();
         expect(parseServerMessage(JSON.stringify({ channel: 5, payload: {} }))).toBeNull();
         expect(parseServerMessage(msg('unknown', {}))).toBeNull();
+    });
+});
+
+describe('parseServerMessage chat', () => {
+    const chat = { id: 7, username: 'alice', text: 'hello', sent_at_ms: 1_700_000_000_000 };
+
+    test('parses a chat message with and without the author-only client id', () => {
+        expect<unknown>(parseServerMessage(msg('chat', chat))).toEqual({ channel: 'chat', payload: chat });
+        expect<unknown>(parseServerMessage(msg('chat', { ...chat, client_id: 'c1' }))).toEqual({
+            channel: 'chat',
+            payload: { ...chat, client_id: 'c1' },
+        });
+    });
+
+    test('rejects a chat message with a missing or mistyped field', () => {
+        for (const bad of [
+            { ...chat, id: '7' },
+            { ...chat, id: 1.5 },
+            { ...chat, id: undefined },
+            { ...chat, username: 1 },
+            { ...chat, text: null },
+            { ...chat, sent_at_ms: 'now' },
+            { ...chat, client_id: 5 },
+        ]) {
+            expect(parseServerMessage(msg('chat', bad))).toBeNull();
+        }
+        expect(parseServerMessage(msg('chat', 'hello'))).toBeNull();
+    });
+
+    test('parses a refusal with and without the client id', () => {
+        expect<unknown>(parseServerMessage(msg('chat_error', { message: 'too fast', client_id: 'c1' }))).toEqual({
+            channel: 'chat_error',
+            payload: { message: 'too fast', client_id: 'c1' },
+        });
+        expect<unknown>(parseServerMessage(msg('chat_error', { message: 'too fast' }))).toEqual({
+            channel: 'chat_error',
+            payload: { message: 'too fast' },
+        });
+        expect(parseServerMessage(msg('chat_error', { client_id: 'c1' }))).toBeNull();
     });
 });

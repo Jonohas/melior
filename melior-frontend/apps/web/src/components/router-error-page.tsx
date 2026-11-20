@@ -1,5 +1,8 @@
 import { Link } from '@tanstack/react-router';
+import { TriangleAlert } from 'lucide-react';
+import { Button } from '@/components/ui';
 import { SessionRejectedError } from '@/lib/auth';
+import { StatePage } from './state-page';
 
 type RouterErrorPageProps = {
     error: Error;
@@ -9,19 +12,25 @@ export const RouterErrorPage = ({ error }: RouterErrorPageProps) => {
     const retryable = error instanceof SessionRejectedError && error.retryable;
 
     return (
-        <div className="flex flex-col items-center gap-4 p-8">
-            <h1 className="text-heading3">Something went wrong</h1>
-            <p className="text-red-500" role="alert">
-                {error.message}
-            </p>
-            {retryable && (
-                <button type="button" className="underline" onClick={() => window.location.reload()}>
-                    Try again
-                </button>
-            )}
-            <Link to="/" className="underline">
-                Back to the lobby
-            </Link>
-        </div>
+        <StatePage
+            standalone
+            alert
+            icon={TriangleAlert}
+            title="Something went wrong"
+            actions={
+                <>
+                    {retryable && (
+                        <Button type="button" onClick={() => window.location.reload()}>
+                            Try again
+                        </Button>
+                    )}
+                    <Button asChild variant="outline">
+                        <Link to="/">Back to the lobby</Link>
+                    </Button>
+                </>
+            }
+        >
+            {error.message}
+        </StatePage>
     );
 };

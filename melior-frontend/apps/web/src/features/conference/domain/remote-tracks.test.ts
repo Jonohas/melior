@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { diffTracks, reconcileTracks } from './remote-tracks';
+import { diffTracks, parseStreamKey, partitionStreams, reconcileTracks, streamKey } from './remote-tracks';
 
 const track = (name: string) => ({ name });
 
@@ -13,9 +13,9 @@ describe('reconcileTracks', () => {
         ]);
         const result = reconcileTracks(
             [
-                { mid: '2', session_id: 'a' },
-                { mid: '1', session_id: 'b' },
-                { mid: '3', session_id: 'a' },
+                { mid: '2', session_id: 'a', source: 'camera' },
+                { mid: '1', session_id: 'b', source: 'camera' },
+                { mid: '3', session_id: 'a', source: 'camera' },
             ],
             receivers,
         );
@@ -31,9 +31,9 @@ describe('reconcileTracks', () => {
         const t1 = track('t1');
         const result = reconcileTracks(
             [
-                { mid: '9', session_id: 'a' },
-                { mid: '1', session_id: 'a' },
-                { mid: '1', session_id: 'b' },
+                { mid: '9', session_id: 'a', source: 'camera' },
+                { mid: '1', session_id: 'a', source: 'camera' },
+                { mid: '1', session_id: 'b', source: 'camera' },
             ],
             new Map([['1', t1]]),
         );
@@ -59,5 +59,50 @@ describe('diffTracks', () => {
     test('no change gives an empty diff', () => {
         const t1 = track('t1');
         expect(diffTracks({ a: [t1] }, { a: [t1] })).toEqual({ removed: [], added: [] });
+    });
+});
+
+describe('stream keys', () => {
+    test('a camera is named by the session id and a screen has a name of its own', () => {
+        expect(streamKey('a', 'camera')).toBe('a');
+        expect(streamKey('a', 'screen')).not.toBe('a');
+    });
+
+    test('a key splits back into the participant and the source', () => {
+        expect(parseStreamKey(streamKey('abc-1', 'camera'))).toEqual({ sessionId: 'abc-1', source: 'camera' });
+        expect(parseStreamKey(streamKey('abc-1', 'screen'))).toEqual({ sessionId: 'abc-1', source: 'screen' });
+    });
+
+    test('streams are partitioned into cameras and screens by participant', () => {
+        const [camera, screen, other] = [{ n: 1 }, { n: 2 }, { n: 3 }];
+        expect(
+            partitionStreams({ [streamKey('a', 'camera')]: camera, [streamKey('a', 'screen')]: screen, b: other }),
+        ).toEqual({ camera: { a: camera, b: other }, screen: { a: screen } });
+    });
+});
+
+describe('reconcileTracks with screens', () => {
+    test('a participant who shares a screen has two streams', () => {
+        const [cam, scr] = [track('cam'), track('scr')];
+        const result = reconcileTracks(
+            [
+                { mid: '0', session_id: 'a', source: 'camera' },
+                { mid: '1', session_id: 'a', source: 'screen' },
+            ],
+            new Map([
+                ['0', cam],
+                ['1', scr],
+            ]),
+        );
+        expect(result).toEqual({ [streamKey('a', 'camera')]: [cam], [streamKey('a', 'screen')]: [scr] });
+    });
+
+    test('a reused section that changes from a screen to a camera moves between streams', () => {
+        const reused = track('reused');
+        const before = reconcileTracks([{ mid: '1', session_id: 'a', source: 'screen' }], new Map([['1', reused]]));
+        const after = reconcileTracks([{ mid: '1', session_id: 'b', source: 'camera' }], new Map([['1', reused]]));
+        const diff = diffTracks(before, after);
+        expect(diff.removed).toEqual([{ sessionId: streamKey('a', 'screen'), track: reused }]);
+        expect(diff.added).toEqual([{ sessionId: 'b', track: reused }]);
     });
 });

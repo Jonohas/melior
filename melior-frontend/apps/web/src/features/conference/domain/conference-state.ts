@@ -1,5 +1,6 @@
 import type { ConferenceStatus } from './conference-status';
 import type { StopReason } from './reconnect';
+import { partitionStreams, type StreamKey } from './remote-tracks';
 import type { SessionId } from './session-id';
 import type { Participant } from './signalling-message';
 
@@ -15,6 +16,8 @@ export type ConferenceState<TStream extends StreamRef> = {
     localStream: TStream | null;
     /** One stream per remote participant that has media, keyed by session id. */
     remoteStreams: Record<SessionId, TStream>;
+    /** Screens that participants share, by the session id of the one sharing. */
+    screenStreams: Record<SessionId, TStream>;
     status: ConferenceStatus;
     /** Consecutive reconnect attempts so far; 0 while a connection is healthy. */
     reconnectAttempt: number;
@@ -33,7 +36,7 @@ export type ConferenceAction<TStream extends StreamRef> =
     | { type: 'failed'; message: string }
     | { type: 'reconnecting'; attempt: number }
     | { type: 'stopped'; reason: StopReason }
-    | { type: 'remote_media_updated'; streams: Record<SessionId, TStream> }
+    | { type: 'remote_media_updated'; streams: Record<StreamKey, TStream> }
     | { type: 'peer_left'; sessionId: SessionId };
 
 export const createInitialConferenceState = <TStream extends StreamRef>(): ConferenceState<TStream> => ({
@@ -42,6 +45,7 @@ export const createInitialConferenceState = <TStream extends StreamRef>(): Confe
     participants: {},
     localStream: null,
     remoteStreams: {},
+    screenStreams: {},
     status: 'starting',
     reconnectAttempt: 0,
     stopReason: null,
@@ -86,6 +90,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 sessionId: null,
                 participants: {},
                 remoteStreams: {},
+                screenStreams: {},
                 status: 'reconnecting',
                 reconnectAttempt: action.attempt,
                 error: null,
@@ -96,15 +101,19 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 sessionId: null,
                 participants: {},
                 remoteStreams: {},
+                screenStreams: {},
                 status: 'stopped',
                 stopReason: action.reason,
             };
-        case 'remote_media_updated':
-            return { ...state, remoteStreams: action.streams };
+        case 'remote_media_updated': {
+            const { camera, screen } = partitionStreams(action.streams);
+            return { ...state, remoteStreams: camera, screenStreams: screen };
+        }
         case 'peer_left': {
             const { [action.sessionId]: _left, ...participants } = state.participants;
             const { [action.sessionId]: _media, ...remoteStreams } = state.remoteStreams;
-            return { ...state, participants, remoteStreams };
+            const { [action.sessionId]: _screen, ...screenStreams } = state.screenStreams;
+            return { ...state, participants, remoteStreams, screenStreams };
         }
     }
 };

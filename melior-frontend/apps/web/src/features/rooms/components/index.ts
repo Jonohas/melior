@@ -1,3 +1,2 @@
-export { RoomAccessPanel } from './room-access-panel';
-export { RoomAccessSummary } from './room-access-summary';
+export { RoomAccessDialog } from './room-access-dialog';
 export { RoomList } from './room-list';

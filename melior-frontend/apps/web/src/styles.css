@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 :root {
     --bg-color: hsl(44.7, 5%, 10%);
@@ -6,14 +7,50 @@
     --border-color: hsl(44.7, 5%, 20%);
     --card-bg-color: hsl(44.7, 5%, 15%);
     --fg-color-primary: hsl(44.7, 20%, 10%);
-    --color-primary: hsl(44.7, 100%, 48.4%);
-    --color-primary-hover: hsl(44.7, 100%, 40%);
-    --color-primary-dark: hsl(45, 100%, 25%);
+    --brand: hsl(44.7, 100%, 48.4%);
+    --brand-hover: hsl(44.7, 100%, 40%);
+    --brand-dark: hsl(45, 100%, 25%);
     --input-background-color: hsl(44.7, 5%, 20%);
     --input-background-color-hover: hsl(44.7, 5%, 25%);
     --shadow-color: hsl(44.7, 5%, 8%);
 
     --space: 1rem; /* your base unit */
+
+    /* Tailwind's red and green, as the app already uses them (error text, remote tile border). */
+    --danger: oklch(63.7% 0.237 25.331);
+    --success: oklch(72.3% 0.219 149.579);
+    --radius: 0.5rem;
+}
+
+/*
+ * The component primitives in components/ui use shadcn-style token names. They are mapped here onto the
+ * tokens above, so the palette stays defined in one place and the app stays dark.
+ */
+@theme inline {
+    --color-background: var(--bg-color);
+    --color-foreground: var(--fg-color);
+    --color-card: var(--card-bg-color);
+    --color-card-foreground: var(--fg-color);
+    --color-popover: var(--card-bg-color);
+    --color-popover-foreground: var(--fg-color);
+    --color-primary: var(--brand);
+    --color-primary-foreground: var(--fg-color-primary);
+    --color-secondary: var(--input-background-color);
+    --color-secondary-foreground: var(--fg-color);
+    --color-muted: var(--input-background-color);
+    --color-muted-foreground: color-mix(in oklch, var(--fg-color) 62%, var(--bg-color));
+    --color-accent: var(--input-background-color-hover);
+    --color-accent-foreground: var(--fg-color);
+    --color-destructive: var(--danger);
+    --color-success: var(--success);
+    --color-border: var(--border-color);
+    --color-input: var(--border-color);
+    --color-ring: var(--brand);
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --font-sans: "FiraSans", system-ui, sans-serif;
 }
 
 @font-face {
@@ -78,12 +115,6 @@
     .text-caption {
         @apply text-sm leading-normal tracking-wider;
     }
-}
-
-* {
-    box-sizing: border-box;
-    padding: 0;
-    margin: 0;
 }
 
 body {

@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react';
+import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label } from '@/components/ui';
 import { type ChannelId, DEFAULT_CHANNEL_ID, normalizeChannelInput } from '@/features/conference/domain';
 
 type ChannelFormProps = {
@@ -17,30 +18,33 @@ export const ChannelForm = ({ onSubmit }: ChannelFormProps) => {
     };
 
     return (
-        <form onSubmit={handleSubmit} className="flex flex-col items-center gap-2">
-            <label htmlFor="channel" className="text-body1">
-                Channel name
-            </label>
-            <div className="flex gap-2">
-                <input
-                    id="channel"
-                    name="channel"
-                    type="text"
-                    value={value}
-                    placeholder={DEFAULT_CHANNEL_ID}
-                    onChange={(event) => setValue(event.target.value)}
-                    aria-invalid={invalid}
-                    className="rounded border border-(--border-color) bg-(--input-background-color) px-3 py-2"
-                />
-                <button type="submit" className="rounded bg-(--color-primary) px-4 py-2 text-(--fg-color-primary)">
-                    Join
-                </button>
-            </div>
-            {invalid && (
-                <p className="text-red-500" role="alert">
-                    Use 1 to 64 letters, digits, dashes or underscores.
-                </p>
-            )}
-        </form>
+        <Card>
+            <CardHeader>
+                <CardTitle>Join or create a room</CardTitle>
+                <CardDescription>A room that does not exist yet is created, and you own it.</CardDescription>
+            </CardHeader>
+            <CardContent>
+                <form onSubmit={handleSubmit} className="flex max-w-md flex-col gap-2">
+                    <Label htmlFor="channel">Channel name</Label>
+                    <div className="flex gap-2">
+                        <Input
+                            id="channel"
+                            name="channel"
+                            type="text"
+                            value={value}
+                            placeholder={DEFAULT_CHANNEL_ID}
+                            onChange={(event) => setValue(event.target.value)}
+                            aria-invalid={invalid}
+                        />
+                        <Button type="submit">Join</Button>
+                    </div>
+                    {invalid && (
+                        <p className="text-sm text-destructive" role="alert">
+                            Use 1 to 64 letters, digits, dashes or underscores.
+                        </p>
+                    )}
+                </form>
+            </CardContent>
+        </Card>
     );
 };
