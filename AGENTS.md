@@ -18,10 +18,10 @@ infrastructure in `docker/`. Read this file first, then `README.md`.
 ```text
 melior-server/                 Cargo workspace
   crates/
-    melior-domain          L0  rooms, participants, negotiation rules, room access, users. Pure and synchronous
-    melior-application     L1  use cases (ConferenceService, AuthService, RoomAccessService) and their ports
+    melior-domain          L0  rooms, participants, negotiation rules, communities and permissions, users. Pure and synchronous
+    melior-application     L1  use cases (ConferenceService, CommunityService, AuthService, ChatService) and their ports
     melior-infrastructure  L2  driven adapters: webrtc-rs, OIDC, Redis, Postgres, TURN credentials, telemetry, env config
-    melior-interfaces      L2  driving adapters: login and room endpoints, signalling WebSocket
+    melior-interfaces      L2  driving adapters: login and community endpoints, signalling WebSocket, community feed
     melior-sfu             L3  the binary: composition root, plus the integration tests
   xtask/                       cargo xtask layers
 melior-frontend/               Bun workspace + Turborepo
@@ -86,8 +86,9 @@ caller can act on, never a panic.
    end-to-end test with real WebRTC clients when media paths change.
 4. **Assume several instances.** Anything that must be true across server
    instances goes through shared storage: sessions and token-refresh claims in
-   Redis, the room registry in Postgres, and the per-room lease that keeps a
-   room on one instance. In-process locks only order work inside one instance.
+   Redis, the community registry in Postgres, the voice roster and community
+   events (pub/sub) in Redis, and the per-room lease that keeps a room on one
+   instance. In-process locks only order work inside one instance.
    Only a definite answer may end a user's connection: when a store cannot be
    asked, the connection stays.
 5. **One room, one lock.** Every change to a room and the media operations that
@@ -182,9 +183,13 @@ What only a run of the stack proves, and how to check it:
   rising on every video).
 - **Section reuse**: let a user leave and rejoin a few times; the others'
   videos must keep playing.
-- **Access and sessions**: restrict the room with `PUT /api/rooms/<id>` and
-  check the uninvited user is told `removed`; end a session and check its
-  socket closes. Set `SESSION_RECHECK_SECONDS=3` to keep this short.
+- **Access and sessions**: give a voice channel an override that denies
+  `view_channel` or `connect` to a member (`PATCH /api/channels/<id>`), or kick
+  them from the community, and check they are told `removed`; end a session and
+  check its socket closes. Set `SESSION_RECHECK_SECONDS=3` to keep this short.
+- **Community feed**: with one user in a voice channel, a second member's
+  channel list must show them under that channel, and follow their speaking,
+  camera, `LIVE` (screen) and muted state.
 - **Several instances**: two servers with different `MELIOR_BIND` and
   `MELIOR_INSTANCE_ID`, `MELIOR_SERVER_URLS` on the frontend; a room must be
   refused (503) by the instance that does not host it and taken over after the
