@@ -80,3 +80,59 @@ describe('createUplink', () => {
         expect(one.encodings[0]?.active).toBe(true);
     });
 });
+
+type Pending = { value: boolean; settle: () => void };
+
+/** A sender whose `setParameters` calls stay pending until the test settles them; a settled call commits. */
+const manualSender = (pending: Pending[], committed: { value: boolean | null }) => ({
+    track: {},
+    getParameters: () => ({ encodings: [{ active: true }] }),
+    setParameters: (parameters: { encodings: Array<{ active: boolean }> }) =>
+        new Promise<void>((resolve) => {
+            const value = parameters.encodings[0]?.active ?? true;
+            pending.push({
+                value,
+                settle: () => {
+                    committed.value = value;
+                    resolve();
+                },
+            });
+        }),
+});
+
+describe('createUplink ordering', () => {
+    test('reapply does nothing until a value was set (a room without mesh never touches the senders)', async () => {
+        const setParameters = vi.fn();
+        const connection = {
+            getSenders: () => [{ track: {}, getParameters: () => ({ encodings: [{ active: true }] }), setParameters }],
+        } as unknown as RTCPeerConnection;
+        const uplink = createUplink(connection);
+        await uplink.reapply();
+        expect(setParameters).not.toHaveBeenCalled();
+    });
+
+    test('an older apply that finishes late does not write over a newer one', async () => {
+        const pending: Pending[][] = [[], []];
+        const committed = [{ value: null as boolean | null }, { value: null as boolean | null }];
+        const first = manualSender(pending[0] ?? [], committed[0] ?? { value: null });
+        const second = manualSender(pending[1] ?? [], committed[1] ?? { value: null });
+        const connection = { getSenders: () => [first, second] } as unknown as RTCPeerConnection;
+        const uplink = createUplink(connection);
+
+        const paused = uplink.set(false);
+        const resumed = uplink.set(true);
+        // The newer apply gets through the first sender and reaches the second before the older one is done.
+        pending[0]?.[1]?.settle();
+        await Promise.resolve();
+        await Promise.resolve();
+        pending[1]?.[0]?.settle();
+        pending[0]?.[0]?.settle();
+        await Promise.resolve();
+        await Promise.resolve();
+        pending[1]?.at(-1)?.settle();
+        await Promise.all([paused, resumed]);
+
+        expect(committed[1]?.value).toBe(true);
+        expect(pending[1]?.map((call) => call.value)).toEqual([true]);
+    });
+});

@@ -48,9 +48,24 @@ export const createDirectLink = ({
         for (const track of localStream.getTracks()) connection.addTrack(track, localStream);
     };
 
+    // Local candidates wait until this link's offer or answer went out: the peer has no link yet before it,
+    // and would drop a candidate that overtook its description.
+    let descriptionSent = false;
+    const heldCandidates: IceCandidate[] = [];
+    const sendCandidate = (candidate: IceCandidate) =>
+        send({ channel: 'peer_ice', payload: { to: peerId, candidate } });
+
+    const sendDescription = (channel: 'peer_offer' | 'peer_answer', sdp: string) => {
+        send({ channel, payload: { to: peerId, sdp } });
+        descriptionSent = true;
+        for (const candidate of heldCandidates.splice(0)) sendCandidate(candidate);
+    };
+
     connection.onicecandidate = (event) => {
-        if (event.candidate)
-            send({ channel: 'peer_ice', payload: { to: peerId, candidate: event.candidate.toJSON() } });
+        if (!event.candidate) return;
+        const candidate = event.candidate.toJSON();
+        if (descriptionSent) sendCandidate(candidate);
+        else heldCandidates.push(candidate);
     };
     connection.ontrack = (event) => {
         remote.addTrack(event.track);
@@ -70,7 +85,7 @@ export const createDirectLink = ({
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
             const sdp = connection.localDescription?.sdp ?? offer.sdp ?? '';
-            send({ channel: 'peer_offer', payload: { to: peerId, sdp } });
+            sendDescription('peer_offer', sdp);
         },
         handleOffer: async (sdp) => {
             if (started) return;
@@ -82,7 +97,7 @@ export const createDirectLink = ({
             const answer = await connection.createAnswer();
             await connection.setLocalDescription(answer);
             const answerSdp = connection.localDescription?.sdp ?? answer.sdp ?? '';
-            send({ channel: 'peer_answer', payload: { to: peerId, sdp: answerSdp } });
+            sendDescription('peer_answer', answerSdp);
         },
         handleAnswer: async (sdp) => {
             await connection.setRemoteDescription({ type: 'answer', sdp });

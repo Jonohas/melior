@@ -11,7 +11,9 @@ export class FakePeerConnection {
     tracksAdded = 0;
     offersCreated = 0;
     statsEntries: Record<string, unknown>[] = [];
-    onicecandidate: unknown = null;
+    onicecandidate: ((event: { candidate: { toJSON: () => object } | null }) => void) | null = null;
+    /** Runs inside `setLocalDescription`, before it resolves: where the browser fires its first candidates. */
+    duringSetLocalDescription: (() => void) | null = null;
     ontrack: unknown = null;
     onconnectionstatechange: (() => void) | null = null;
 
@@ -34,6 +36,7 @@ export class FakePeerConnection {
 
     async setLocalDescription(description: { type: string; sdp: string }) {
         this.localDescription = description;
+        this.duringSetLocalDescription?.();
     }
 
     async setRemoteDescription(description: { type: string; sdp: string }) {
@@ -56,6 +59,11 @@ export class FakePeerConnection {
 
     close() {
         this.closed = true;
+    }
+
+    /** Fires a local ICE candidate, as the browser does. */
+    fireCandidate(candidate: string) {
+        this.onicecandidate?.({ candidate: { toJSON: () => ({ candidate }) } });
     }
 
     /** Moves the connection to a state and fires the handler, as the browser does. */

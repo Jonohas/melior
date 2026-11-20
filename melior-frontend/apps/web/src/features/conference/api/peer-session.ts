@@ -6,6 +6,7 @@ import {
     reconcileTracks,
     type SessionId,
     type TrackAssignment,
+    type TrackDiff,
     type TracksBySession,
 } from '@/features/conference/domain';
 import { createIceCandidateQueue } from './ice-candidate-queue';
@@ -37,6 +38,45 @@ export type PeerSession = {
     close: () => void;
 };
 
+/**
+ * One MediaStream per participant, alive across renegotiations. A stream's id means nothing: a reused media
+ * section keeps the msid of its first user, so who publishes a track comes from the server's
+ * `mid -> session_id` list alone, never from `event.streams`.
+ */
+const createRemoteStreams = (onRemoteMedia: (streams: Record<SessionId, MediaStream>) => void) => {
+    const streams = new Map<SessionId, MediaStream>();
+
+    return {
+        apply: ({ removed, added }: TrackDiff<MediaStreamTrack>, next: TracksBySession<MediaStreamTrack>) => {
+            if (removed.length === 0 && added.length === 0) return;
+            // Removals first: a reused section hands the same track object to another participant, and it
+            // must leave the old participant's stream before it joins the new one.
+            for (const { sessionId, track } of removed) streams.get(sessionId)?.removeTrack(track);
+            for (const { sessionId, track } of added) {
+                const stream = streams.get(sessionId) ?? new MediaStream();
+                streams.set(sessionId, stream);
+                stream.addTrack(track);
+            }
+            for (const sessionId of [...streams.keys()]) {
+                if (!next[sessionId]) streams.delete(sessionId);
+            }
+            onRemoteMedia(Object.fromEntries(streams));
+        },
+    };
+};
+
+/** The SFU connection as the stats sampler reads it: an entry's receiving track leads to its publisher. */
+const createSfuStatsSource = (connection: RTCPeerConnection, assignments: () => TrackAssignment[]): StatsSource => ({
+    connection,
+    isConnected: () => connection.connectionState === 'connected',
+    peerOf: (entry) =>
+        peerForTrack(
+            entry.trackIdentifier,
+            connection.getTransceivers().map((t) => ({ mid: t.mid, trackId: t.receiver.track.id })),
+            assignments(),
+        ),
+});
+
 export const createPeerSession = ({
     iceServers,
     forceRelay = false,
@@ -49,13 +89,11 @@ export const createPeerSession = ({
     const connection = new RTCPeerConnection({ iceServers, iceTransportPolicy: forceRelay ? 'relay' : 'all' });
     const candidates = createIceCandidateQueue(connection, 'sfu');
     const uplink = createUplink(connection);
+    let uplinkTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // One MediaStream per participant, alive across renegotiations. A stream's id means nothing: a reused
-    // media section keeps the msid of its first user, so who publishes a track comes from the server's
-    // `mid -> session_id` list alone, never from `event.streams`.
-    const streams = new Map<SessionId, MediaStream>();
     let assignments: TrackAssignment[] = [];
     let current: TracksBySession<MediaStreamTrack> = {};
+    const remoteStreams = createRemoteStreams(onRemoteMedia);
 
     const reconcile = () => {
         const receivers = new Map<string, MediaStreamTrack>();
@@ -63,25 +101,9 @@ export const createPeerSession = ({
             if (transceiver.mid !== null) receivers.set(transceiver.mid, transceiver.receiver.track);
         }
         const next = reconcileTracks(assignments, receivers);
-        const { removed, added } = diffTracks(current, next);
+        const changes = diffTracks(current, next);
         current = next;
-        if (removed.length === 0 && added.length === 0) return;
-
-        // Removals first: a reused section hands the same track object to another participant, and it must
-        // leave the old participant's stream before it joins the new one.
-        for (const { sessionId, track } of removed) streams.get(sessionId)?.removeTrack(track);
-        for (const { sessionId, track } of added) {
-            let stream = streams.get(sessionId);
-            if (!stream) {
-                stream = new MediaStream();
-                streams.set(sessionId, stream);
-            }
-            stream.addTrack(track);
-        }
-        for (const sessionId of [...streams.keys()]) {
-            if (!next[sessionId]) streams.delete(sessionId);
-        }
-        onRemoteMedia(Object.fromEntries(streams));
+        remoteStreams.apply(changes, next);
     };
 
     connection.onicecandidate = (event) => {
@@ -93,21 +115,17 @@ export const createPeerSession = ({
         else if (connection.connectionState === 'failed') onFailed();
     };
 
+    // After the negotiation's own messages went out: the caller sends the answer once we return.
+    const reapplyUplinkSoon = () => {
+        uplinkTimer = setTimeout(() => void uplink.reapply(), 0);
+    };
+
     if (localStream) {
         for (const track of localStream.getTracks()) connection.addTrack(track, localStream);
     }
 
     return {
-        statsSource: {
-            connection,
-            isConnected: () => connection.connectionState === 'connected',
-            peerOf: (entry) =>
-                peerForTrack(
-                    entry.trackIdentifier,
-                    connection.getTransceivers().map((t) => ({ mid: t.mid, trackId: t.receiver.track.id })),
-                    assignments,
-                ),
-        },
+        statsSource: createSfuStatsSource(connection, () => assignments),
         setUplinkActive: uplink.set,
         createOffer: async () => {
             const offer = await connection.createOffer();
@@ -118,7 +136,7 @@ export const createPeerSession = ({
             await connection.setRemoteDescription({ type: 'answer', sdp });
             reconcile();
             await candidates.flush();
-            await uplink.reapply();
+            reapplyUplinkSoon();
         },
         answerOffer: async (sdp, tracks) => {
             await connection.setRemoteDescription({ type: 'offer', sdp });
@@ -128,13 +146,14 @@ export const createPeerSession = ({
             await candidates.flush();
             const answer = await connection.createAnswer();
             await connection.setLocalDescription(answer);
-            await uplink.reapply();
+            reapplyUplinkSoon();
             return connection.localDescription?.sdp ?? answer.sdp ?? '';
         },
         addIceCandidate: candidates.add,
         close: () => {
             connection.onicecandidate = null;
             connection.onconnectionstatechange = null;
+            if (uplinkTimer) clearTimeout(uplinkTimer);
             uplink.stop();
             connection.close();
         },
