@@ -73,6 +73,7 @@ export type ClientMessage =
     | { channel: 'sdp_answer'; payload: SessionDescription<'answer'> }
     | { channel: 'ice'; payload: IceCandidate }
     | { channel: 'route_live'; payload: { peer: SessionId; epoch: number } }
+    | { channel: 'link_failed'; payload: { peer: SessionId } }
     | { channel: 'peer_offer'; payload: { to: SessionId; sdp: string } }
     | { channel: 'peer_answer'; payload: { to: SessionId; sdp: string } }
     | { channel: 'peer_ice'; payload: { to: SessionId; candidate: IceCandidate } };

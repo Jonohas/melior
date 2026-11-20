@@ -83,9 +83,11 @@ export const createMesh = ({
             localStream,
             send,
             onMedia: (stream) => onDirectMedia(peer, stream),
-            // The server's 10 s timeout moves the room to forwarding; nothing else happens here.
+            // Close it and tell the server, which moves the room to forwarding. The guard makes it once per link.
             onFailed: () => {
-                if (links.get(peer) === link) closeLink(peer);
+                if (links.get(peer) !== link) return;
+                closeLink(peer);
+                send({ channel: 'link_failed', payload: { peer } });
             },
         });
         links.set(peer, link);
