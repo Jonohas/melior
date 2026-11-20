@@ -3,7 +3,8 @@
 
 use async_trait::async_trait;
 use melior_domain::{
-    ChannelId, IceCandidate, IceServer, ParticipantInfo, Sdp, SessionId, Track, TrackId, User,
+    ChannelId, ChatMessage, IceCandidate, IceServer, ParticipantInfo, Sdp, SessionId, Track,
+    TrackId, TrackSource, User,
 };
 use std::sync::{Arc, Weak};
 
@@ -70,6 +71,8 @@ pub struct TrackOwner {
     pub mid: String,
     /// The participant who publishes the track.
     pub session_id: SessionId,
+    /// What the track shows: the participant's camera or its screen.
+    pub source: TrackSource,
 }
 
 /// Events the media plane raises towards the application.
@@ -106,6 +109,12 @@ pub enum Signal {
     },
     IceCandidate(IceCandidate),
     PeerLeft(SessionId),
+    /// Someone said something in the room. `client_id` is set only for the
+    /// author, so its client can tell which of its pending messages this is.
+    Chat {
+        message: ChatMessage,
+        client_id: Option<String>,
+    },
     Error(String),
 }
 

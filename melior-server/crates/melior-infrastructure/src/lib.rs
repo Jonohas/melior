@@ -3,7 +3,7 @@
 //! - [`webrtc`]: the media plane (`MediaEngine`, `MediaSession`) on webrtc-rs.
 //! - [`oidc`]: the identity provider (`IdentityProvider`) over OpenID Connect.
 //! - [`redis`]: the session store (`SessionStore`) and the room leases (`RoomLeases`).
-//! - [`postgres`]: the room registry (`RoomRepository`).
+//! - [`postgres`]: the room registry (`RoomRepository`) and the chat history (`ChatRepository`).
 //! - [`telemetry`]: logging and OpenTelemetry trace export.
 //! - [`turn`]: per-user, expiring TURN credentials (`IceServerProvider`).
 //! - [`config`]: runtime configuration from environment variables.

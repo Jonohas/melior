@@ -6,7 +6,7 @@
 use melior_application::Signal;
 #[cfg(test)]
 use melior_application::TrackOwner;
-use melior_domain::{IceCandidate, IceServer, ParticipantInfo, Sdp};
+use melior_domain::{ChatMessage, IceCandidate, IceServer, ParticipantInfo, Sdp, TrackSource};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -16,6 +16,7 @@ pub enum ClientMessage {
     SdpAnswer(SessionDescriptionDto),
     Ice(IceCandidateDto),
     Echo(String),
+    ChatSend(ChatSendDto),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -43,6 +44,48 @@ pub enum ServerMessage {
         reason: CloseReason,
     },
     Echo(String),
+    Chat(ChatMessageDto),
+    /// A message the server did not accept. `client_id` names it when the client gave one.
+    ChatError {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
+        message: String,
+    },
+}
+
+/// What a client says to the room. `client_id` is the client's own name for the
+/// message; the author's copy of it comes back carrying the same one.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ChatSendDto {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    pub text: String,
+}
+
+/// A saved chat message, as it is sent to the room and in the history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChatMessageDto {
+    pub id: i64,
+    pub username: String,
+    pub text: String,
+    /// Milliseconds since the Unix epoch.
+    pub sent_at_ms: i64,
+    /// Set only on the author's own copy of a message it just sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+}
+
+impl ChatMessageDto {
+    #[must_use]
+    pub fn new(message: ChatMessage, client_id: Option<String>) -> Self {
+        Self {
+            id: message.id.value(),
+            username: message.author,
+            text: message.text.to_string(),
+            sent_at_ms: message.sent_at_ms,
+            client_id,
+        }
+    }
 }
 
 /// Why the server ends a connection that the client did not close.
@@ -93,6 +136,24 @@ pub struct OfferDto {
 pub struct TrackOwnerDto {
     pub mid: String,
     pub session_id: String,
+    /// What the track shows.
+    pub source: TrackSourceDto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackSourceDto {
+    Camera,
+    Screen,
+}
+
+impl From<TrackSource> for TrackSourceDto {
+    fn from(source: TrackSource) -> Self {
+        match source {
+            TrackSource::Camera => Self::Camera,
+            TrackSource::Screen => Self::Screen,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -183,11 +244,15 @@ impl From<Signal> for ServerMessage {
                     .map(|owner| TrackOwnerDto {
                         mid: owner.mid,
                         session_id: owner.session_id.to_string(),
+                        source: owner.source.into(),
                     })
                     .collect(),
             }),
             Signal::IceCandidate(candidate) => Self::Ice(candidate.into()),
             Signal::PeerLeft(session_id) => Self::PeerLeft { session_id: session_id.to_string() },
+            Signal::Chat { message, client_id } => {
+                Self::Chat(ChatMessageDto::new(message, client_id))
+            }
             Signal::Error(message) => Self::Error { message },
         }
     }
@@ -238,6 +303,80 @@ mod tests {
         let echo: ClientMessage =
             serde_json::from_value(json!({ "channel": "echo", "payload": "hi" })).unwrap();
         assert_eq!(echo, ClientMessage::Echo("hi".into()));
+    }
+
+    #[test]
+    fn parses_a_chat_message_with_and_without_a_client_id() {
+        let with: ClientMessage = serde_json::from_value(
+            json!({ "channel": "chat_send", "payload": { "client_id": "c1", "text": "hi" } }),
+        )
+        .unwrap();
+        assert_eq!(
+            with,
+            ClientMessage::ChatSend(ChatSendDto {
+                client_id: Some("c1".into()),
+                text: "hi".into()
+            })
+        );
+
+        let without: ClientMessage =
+            serde_json::from_value(json!({ "channel": "chat_send", "payload": { "text": "hi" } }))
+                .unwrap();
+        assert_eq!(
+            without,
+            ClientMessage::ChatSend(ChatSendDto { client_id: None, text: "hi".into() })
+        );
+    }
+
+    #[test]
+    fn a_chat_message_needs_a_text() {
+        for bad in [
+            json!({ "channel": "chat_send", "payload": {} }),
+            json!({ "channel": "chat_send", "payload": { "text": 5 } }),
+            json!({ "channel": "chat_send", "payload": "hi" }),
+        ] {
+            assert!(serde_json::from_value::<ClientMessage>(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn serializes_chat_messages_and_refusals() {
+        let message = ChatMessage {
+            id: melior_domain::MessageId::new(7),
+            channel_id: ChannelId::parse("general").unwrap(),
+            author: "alice".into(),
+            text: melior_domain::ChatText::parse("hello").unwrap(),
+            sent_at_ms: 1_700_000_000_000,
+        };
+
+        assert_eq!(
+            serde_json::to_value(ServerMessage::from(Signal::Chat {
+                message: message.clone(),
+                client_id: Some("c1".into()),
+            }))
+            .unwrap(),
+            json!({
+                "channel": "chat",
+                "payload": { "id": 7, "username": "alice", "text": "hello", "sent_at_ms": 1_700_000_000_000_i64, "client_id": "c1" }
+            })
+        );
+        // Everyone but the author sees no client id.
+        assert_eq!(
+            serde_json::to_value(ServerMessage::from(Signal::Chat { message, client_id: None }))
+                .unwrap(),
+            json!({
+                "channel": "chat",
+                "payload": { "id": 7, "username": "alice", "text": "hello", "sent_at_ms": 1_700_000_000_000_i64 }
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ServerMessage::ChatError {
+                client_id: Some("c1".into()),
+                message: "a message cannot be empty".into(),
+            })
+            .unwrap(),
+            json!({ "channel": "chat_error", "payload": { "client_id": "c1", "message": "a message cannot be empty" } })
+        );
     }
 
     #[test]
@@ -302,7 +441,11 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ServerMessage::from(Signal::Offer {
                 sdp: Sdp::new("v=0"),
-                tracks: vec![TrackOwner { mid: "1".into(), session_id: session_id.clone() }],
+                tracks: vec![TrackOwner {
+                    mid: "1".into(),
+                    session_id: session_id.clone(),
+                    source: TrackSource::Screen
+                },],
             }))
             .unwrap(),
             json!({
@@ -310,7 +453,7 @@ mod tests {
                 "payload": {
                     "type": "offer",
                     "sdp": "v=0",
-                    "tracks": [{ "mid": "1", "session_id": session_id.as_str() }]
+                    "tracks": [{ "mid": "1", "session_id": session_id.as_str(), "source": "screen" }]
                 }
             })
         );

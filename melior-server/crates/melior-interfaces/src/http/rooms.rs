@@ -149,7 +149,7 @@ async fn remove(
 
 /// The response for a refused or failed room request. Storage errors are logged
 /// here and not shown: they can carry connection details.
-fn rejected(error: &RoomsError) -> Response {
+pub(super) fn rejected(error: &RoomsError) -> Response {
     match error {
         RoomsError::NotFound => StatusCode::NOT_FOUND.into_response(),
         RoomsError::Forbidden => StatusCode::FORBIDDEN.into_response(),

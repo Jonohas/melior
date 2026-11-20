@@ -143,9 +143,12 @@ impl OutletTrack {
         let local = TrackLocalStaticRTP::new(
             codec,
             TrackId::generate().as_str().to_owned(),
-            // Clients are told whose track a section carries next to each offer;
-            // this stream id never changes and says nothing.
-            "melior".to_owned(),
+            // Clients are told whose track a section carries next to each offer, so
+            // this stream id says nothing. It is unique per section on purpose: a
+            // browser lines up the audio and video of one stream with each other, and
+            // with one shared id it holds every participant's video back to match
+            // whichever audio plays latest, which adds hundreds of milliseconds.
+            TrackId::generate().as_str().to_owned(),
         );
         Self { local: Arc::new(local), continuity: Mutex::new(Continuity::default()) }
     }

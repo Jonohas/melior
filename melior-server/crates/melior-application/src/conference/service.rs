@@ -254,6 +254,47 @@ impl ConferenceService {
         Ok(())
     }
 
+    /// The room a participant is in and the username it joined with.
+    pub async fn whereabouts(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(ChannelId, String), ConferenceError> {
+        let session = self.require_session(session_id)?;
+        let room = session.room.lock().await;
+        let username = room
+            .roster()
+            .into_iter()
+            .find(|participant| &participant.session_id == session_id)
+            .map(|participant| participant.username)
+            .ok_or(ConferenceError::UnknownSession)?;
+        Ok((session.channel_id.clone(), username))
+    }
+
+    /// Tells everyone in a participant's room something: `for_sender` to the
+    /// participant, `for_others` to the rest. Runs under the room lock, so the
+    /// room's participants hear it in the same order as its other signals.
+    pub async fn tell_room(
+        &self,
+        session_id: &SessionId,
+        for_sender: Signal,
+        for_others: Signal,
+    ) -> Result<(), ConferenceError> {
+        let session = self.require_session(session_id)?;
+        let room = session.room.lock().await;
+        for participant in room.roster() {
+            let Some(target) = self.session(&participant.session_id) else {
+                continue;
+            };
+            let signal = if &participant.session_id == session_id {
+                for_sender.clone()
+            } else {
+                for_others.clone()
+            };
+            target.signals.send(signal);
+        }
+        Ok(())
+    }
+
     /// Sends the participant a fresh offer if its negotiation allows one right now;
     /// otherwise the negotiation remembers that one is due.
     async fn renegotiate(&self, room: &mut Room, session: &Session) {
@@ -270,7 +311,8 @@ impl ConferenceService {
                     .into_iter()
                     .filter_map(|(mid, track_id)| {
                         let session_id = room.publisher_of(&track_id)?.clone();
-                        Some(TrackOwner { mid, session_id })
+                        let source = room.source_of(&track_id)?;
+                        Some(TrackOwner { mid, session_id, source })
                     })
                     .collect();
                 session.signals.send(Signal::Offer { sdp: offer.sdp, tracks });
@@ -405,7 +447,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
     use super::*;
     use crate::conference::{MediaOffer, SingleInstance, StaticIceServers};
-    use melior_domain::{MediaKind, UserId};
+    use melior_domain::{MediaKind, TrackSource, UserId};
 
     /// Records what the application asks of the media plane.
     #[derive(Default)]
@@ -618,11 +660,48 @@ mod tests {
         assert_eq!(
             *tracks,
             [
-                TrackOwner { mid: "0".into(), session_id: alice.id.clone() },
-                TrackOwner { mid: "1".into(), session_id: bob.id.clone() },
+                TrackOwner {
+                    mid: "0".into(),
+                    session_id: alice.id.clone(),
+                    source: TrackSource::Camera
+                },
+                TrackOwner {
+                    mid: "1".into(),
+                    session_id: bob.id.clone(),
+                    source: TrackSource::Camera
+                },
             ],
             "the complete list, not only what changed"
         );
+    }
+
+    #[tokio::test]
+    async fn a_screen_is_offered_with_its_source_and_a_stopped_one_is_retracted() {
+        let h = Harness::new();
+        let alice = h.join_ready("general").await;
+        let bob = h.join_ready("general").await;
+        h.publish(&alice).await;
+        h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
+        bob.sink.take_all();
+
+        let screen = h.publish(&alice).await;
+
+        let signals = bob.sink.take_all();
+        let [Signal::Offer { tracks, .. }] = signals.as_slice() else {
+            panic!("expected one offer, got {signals:?}");
+        };
+        let sources: Vec<TrackSource> = tracks.iter().map(|owner| owner.source).collect();
+        assert_eq!(sources, [TrackSource::Camera, TrackSource::Screen]);
+
+        h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
+        bob.sink.take_all();
+        h.service.track_ended(&alice.id, &screen.id).await;
+        let signals = bob.sink.take_all();
+        let [Signal::Offer { tracks, .. }] = signals.as_slice() else {
+            panic!("expected one offer, got {signals:?}");
+        };
+        assert_eq!(tracks.len(), 1, "only the camera is left");
+        assert_eq!(tracks[0].source, TrackSource::Camera);
     }
 
     #[tokio::test]
@@ -727,9 +806,11 @@ mod tests {
         let alice = h.join_ready("general").await;
         let bob = h.join_ready("general").await;
 
+        // A camera, a screen and a microphone: a third video would be refused.
         h.publish(&alice).await;
         h.publish(&alice).await;
-        h.publish(&alice).await;
+        let microphone = Track::new(TrackId::generate(), MediaKind::Audio);
+        h.service.track_published(&alice.id, microphone).await;
         assert_eq!(bob.sink.take(), vec![offer("offer-1")], "no overlapping offers");
 
         h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();

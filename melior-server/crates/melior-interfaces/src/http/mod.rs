@@ -1,7 +1,8 @@
-//! The backend-for-frontend endpoints: login round trip, identity, health and the
-//! room registry.
+//! The backend-for-frontend endpoints: login round trip, identity, health, the room
+//! registry and the chat history.
 
 mod auth;
+mod chat;
 mod rooms;
 mod session;
 
@@ -15,5 +16,5 @@ use axum::Router;
 
 /// The login round trip, identity, health and the room registry.
 pub fn routes() -> Router<AppState> {
-    auth::routes().merge(rooms::routes())
+    auth::routes().merge(rooms::routes()).merge(chat::routes())
 }

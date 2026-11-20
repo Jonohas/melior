@@ -1,4 +1,7 @@
-use super::{ChannelId, ClientOffer, DomainError, Negotiation, SessionId, Track, TrackId};
+use super::{
+    ChannelId, ClientOffer, DomainError, MediaKind, Negotiation, SessionId, Track, TrackId,
+    TrackSource,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A participant inside a [`Room`].
@@ -126,16 +129,39 @@ impl Room {
         Ok(departure)
     }
 
+    /// Where a track comes from, if it is still published.
+    #[must_use]
+    pub fn source_of(&self, track_id: &TrackId) -> Option<TrackSource> {
+        self.participants
+            .values()
+            .flat_map(|participant| participant.published.iter())
+            .find(|track| &track.id == track_id)
+            .map(|track| track.source)
+    }
+
     /// Adds a published track. Returns the participants that now have to receive it.
+    ///
+    /// A client does not say what a track shows, so the room works it out: a participant's
+    /// first video is its camera, and a video it publishes next to that one is its screen.
+    /// A third video is refused, so one participant shows at most one screen at a time.
     pub fn publish(
         &mut self,
         publisher: &SessionId,
-        track: Track,
+        mut track: Track,
     ) -> Result<Vec<SessionId>, DomainError> {
         if self.participants.values().any(|p| p.published.iter().any(|t| t.id == track.id)) {
             return Err(DomainError::DuplicateTrack(track.id));
         }
-        self.participant_mut(publisher)?.published.push(track.clone());
+        let participant = self.participant_mut(publisher)?;
+        if track.kind == MediaKind::Video {
+            let videos = participant.published.iter().filter(|t| t.kind == MediaKind::Video);
+            track.source = match videos.count() {
+                0 => TrackSource::Camera,
+                1 => TrackSource::Screen,
+                _ => return Err(DomainError::TooManyVideoTracks(publisher.clone())),
+            };
+        }
+        participant.published.push(track.clone());
 
         let mut subscribers = Vec::new();
         for (id, participant) in &mut self.participants {
@@ -383,5 +409,79 @@ mod tests {
         room.publish(&alice, track.clone()).unwrap();
 
         assert_eq!(room.publish(&bob, track.clone()), Err(DomainError::DuplicateTrack(track.id)));
+    }
+
+    fn audio() -> Track {
+        Track::new(TrackId::generate(), MediaKind::Audio)
+    }
+
+    #[test]
+    fn the_first_video_is_the_camera_and_the_next_one_is_the_screen() {
+        let mut room = room();
+        let (alice, _) = join_ready(&mut room);
+        let (camera, screen) = (video(), video());
+
+        room.publish(&alice, camera.clone()).unwrap();
+        room.publish(&alice, screen.clone()).unwrap();
+
+        assert_eq!(room.source_of(&camera.id), Some(TrackSource::Camera));
+        assert_eq!(room.source_of(&screen.id), Some(TrackSource::Screen));
+    }
+
+    #[test]
+    fn audio_belongs_to_the_camera_whatever_is_published_around_it() {
+        let mut room = room();
+        let (alice, _) = join_ready(&mut room);
+        let (voice, camera, screen) = (audio(), video(), video());
+
+        room.publish(&alice, voice.clone()).unwrap();
+        room.publish(&alice, camera).unwrap();
+        room.publish(&alice, screen).unwrap();
+
+        assert_eq!(room.source_of(&voice.id), Some(TrackSource::Camera));
+    }
+
+    #[test]
+    fn a_participant_shows_one_screen_at_a_time() {
+        let mut room = room();
+        let (alice, _) = join_ready(&mut room);
+        room.publish(&alice, video()).unwrap();
+        room.publish(&alice, video()).unwrap();
+
+        assert_eq!(
+            room.publish(&alice, video()),
+            Err(DomainError::TooManyVideoTracks(alice.clone()))
+        );
+    }
+
+    #[test]
+    fn a_screen_can_be_shared_again_after_it_stopped() {
+        let mut room = room();
+        let (alice, _) = join_ready(&mut room);
+        room.publish(&alice, video()).unwrap();
+        let first = video();
+        room.publish(&alice, first.clone()).unwrap();
+        room.unpublish(&alice, &first.id);
+
+        let second = video();
+        room.publish(&alice, second.clone()).unwrap();
+
+        assert_eq!(room.source_of(&second.id), Some(TrackSource::Screen));
+        assert_eq!(room.source_of(&first.id), None);
+    }
+
+    #[test]
+    fn everyone_ready_receives_a_screen_and_a_late_joiner_gets_it_with_its_source() {
+        let mut room = room();
+        let (alice, _) = join_ready(&mut room);
+        let (bob, _) = join_ready(&mut room);
+        room.publish(&alice, video()).unwrap();
+        let screen = video();
+
+        assert_eq!(room.publish(&alice, screen.clone()).unwrap(), vec![bob]);
+
+        let (_carol, existing) = join_ready(&mut room);
+        let sources: Vec<TrackSource> = existing.iter().map(|t| t.source).collect();
+        assert_eq!(sources, [TrackSource::Camera, TrackSource::Screen]);
     }
 }
