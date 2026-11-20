@@ -147,8 +147,9 @@ impl Client {
         let section_count = media_sections.clone();
 
         let offer = connection.create_offer(None).await.unwrap();
-        connection.set_local_description(offer.clone()).await.unwrap();
+        // Queue the offer before gathering starts: no candidate may overtake it.
         out_tx.send(json!({ "channel": "sdp_offer", "payload": offer })).unwrap();
+        connection.set_local_description(offer).await.unwrap();
 
         // The signalling loop: one message at a time, like the browser client.
         let pc = connection.clone();
@@ -420,4 +421,35 @@ async fn invalid_channel_ids_are_refused_and_bad_messages_get_an_error() {
 
     socket.send(Message::Text("nonsense".into())).await.unwrap();
     assert_eq!(next_json(&mut socket).await["channel"], "error");
+}
+
+#[tokio::test]
+async fn an_oversized_message_ends_that_connection_and_nothing_else() {
+    let server = TestServer::start().await;
+    let cookie = server.login("alice", &["member"]).await;
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(server.ws_request(Some("big"), Some(&cookie)))
+            .await
+            .unwrap();
+    next_json(&mut socket).await;
+    let bob = server.login("bob", &["member"]).await;
+    let (mut other, _) =
+        tokio_tungstenite::connect_async(server.ws_request(Some("big"), Some(&bob))).await.unwrap();
+    next_json(&mut other).await;
+
+    let frame = format!(r#"{{"channel":"echo","payload":"{}"}}"#, "a".repeat(200 * 1024));
+    let _ = socket.send(Message::Text(frame.into())).await;
+    // The server closes that socket: what follows is a close, an error or the end.
+    let ended = timeout(STEP, async {
+        while let Some(Ok(message)) = socket.next().await {
+            assert!(!message.is_text() || !message.to_text().unwrap().contains("echo"));
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "the oversized message must end the connection");
+
+    // The others carry on: bob is told that alice left, and can still talk.
+    assert_eq!(next_json(&mut other).await["channel"], "peer_left");
+    other.send(Message::Text(r#"{"channel":"echo","payload":"ping"}"#.into())).await.unwrap();
+    assert_eq!(next_json(&mut other).await, json!({ "channel": "echo", "payload": "ping" }));
 }

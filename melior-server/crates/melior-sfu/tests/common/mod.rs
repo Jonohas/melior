@@ -190,15 +190,11 @@ impl TestServer {
     }
 }
 
-/// A WebRTC peer connection that speaks every default codec, like a browser's.
+/// A WebRTC peer connection that speaks every default codec, like a browser's. It
+/// gathers candidates on the loopback interface only: clients on one machine then
+/// connect at once instead of probing every address of the host, which keeps a
+/// negotiation well inside the server's timeouts and the tests' own.
 pub async fn new_peer_connection() -> RTCPeerConnection {
-    build_peer_connection(SettingEngine::default()).await
-}
-
-/// Like [`new_peer_connection`], but it gathers candidates on the loopback interface
-/// only. Two clients on one machine then connect at once instead of probing every
-/// address of the host, which keeps a direct link well inside the server's timeout.
-pub async fn new_loopback_peer_connection() -> RTCPeerConnection {
     let mut settings = SettingEngine::default();
     settings.set_include_loopback_candidate(true);
     settings.set_network_types(vec![NetworkType::Udp4]);

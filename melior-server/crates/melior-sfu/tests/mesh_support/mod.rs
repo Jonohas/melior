@@ -4,7 +4,7 @@
 //! decision (when to report a route as live, what to send) to the test.
 #![allow(dead_code)]
 
-use crate::common::{STEP, TestServer, new_loopback_peer_connection, next_json};
+use crate::common::{STEP, TestServer, new_peer_connection, next_json};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -46,9 +46,10 @@ pub enum Event {
     SfuMedia {
         owner: String,
     },
-    /// A relayed `peer_*` message arrived (its channel name).
+    /// A relayed `peer_*` message arrived: its channel name and its SDP or candidate text.
     PeerSignal {
         channel: String,
+        body: String,
     },
     PeerLeft {
         session_id: String,
@@ -84,7 +85,7 @@ impl MeshClient {
         let (outgoing, out_rx) = mpsc::unbounded_channel::<Value>();
         let (hangup, hangup_rx) = mpsc::unbounded_channel::<()>();
 
-        let anchor = Arc::new(new_loopback_peer_connection().await);
+        let anchor = Arc::new(new_peer_connection().await);
         publish_camera(&anchor).await;
         let candidates = queue_candidates(&anchor, "ice", None);
         let arrivals = watch_sfu_arrivals(&anchor);
@@ -186,6 +187,13 @@ impl MeshClient {
             |event| matches!(event, Event::LinkClose { peer: p } if p == peer),
         )
         .await;
+    }
+
+    /// Whether a relayed message whose text contains `marker` has arrived.
+    pub fn saw_relay_containing(&mut self, marker: &str) -> bool {
+        self.unclaimed()
+            .iter()
+            .any(|event| matches!(event, Event::PeerSignal { body, .. } if body.contains(marker)))
     }
 
     /// Round-trips an `echo`: the server handles a socket's messages in order, so
@@ -363,7 +371,7 @@ impl Signalling {
     }
 
     async fn open_link(&mut self, peer: &str) {
-        let connection = Arc::new(new_loopback_peer_connection().await);
+        let connection = Arc::new(new_peer_connection().await);
         let candidates = queue_candidates(&connection, "peer_ice", Some(peer.to_owned()));
         let (events, remote) = (self.events.clone(), peer.to_owned());
         connection.on_track(Box::new(move |track, _, _| {
@@ -405,7 +413,11 @@ impl Signalling {
 
     /// Handles a relayed message tolerantly: a late one for a closed link is normal.
     async fn on_peer_signal(&mut self, channel: &str, payload: &Value) {
-        self.emit(Event::PeerSignal { channel: channel.to_owned() });
+        let body = payload["sdp"].as_str().or(payload["candidate"]["candidate"].as_str());
+        self.emit(Event::PeerSignal {
+            channel: channel.to_owned(),
+            body: body.unwrap_or_default().to_owned(),
+        });
         let from = text_of(&payload["from"]);
         match channel {
             "peer_offer" => self.answer(&from, text_of(&payload["sdp"])).await,

@@ -24,6 +24,14 @@ pub enum ClientMessage {
     Echo(String),
 }
 
+impl ClientMessage {
+    /// Whether the message asks the server to relay something to another participant.
+    #[must_use]
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::PeerOffer(_) | Self::PeerAnswer(_) | Self::PeerIce(_))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "channel", content = "payload", rename_all = "snake_case")]
 pub enum ServerMessage {

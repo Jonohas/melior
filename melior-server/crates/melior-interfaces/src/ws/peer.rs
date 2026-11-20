@@ -8,8 +8,12 @@ use serde::Deserialize;
 
 /// The largest session description a client may relay.
 pub const MAX_SDP_BYTES: usize = 64 * 1024;
-/// The longest ICE candidate string a client may relay.
+/// The longest ICE candidate string a client may send.
 pub const MAX_CANDIDATE_BYTES: usize = 1024;
+/// The longest `sdpMid` a client may send with an ICE candidate.
+pub const MAX_SDP_MID_BYTES: usize = 256;
+/// The longest `usernameFragment` a client may send with an ICE candidate.
+pub const MAX_USERNAME_FRAGMENT_BYTES: usize = 256;
 
 /// `{ "peer": <session id>, "epoch": <u64> }`: I now play `peer`'s media over the
 /// path of route `epoch`.
@@ -56,6 +60,7 @@ pub enum Rejection {
     BadSessionId,
     SdpTooLarge,
     CandidateTooLarge,
+    CandidateFieldTooLarge,
 }
 
 fn session(raw: &str) -> Result<SessionId, Rejection> {
@@ -99,15 +104,33 @@ impl PeerDescriptionDto {
     }
 }
 
+impl IceCandidateDto {
+    /// The candidate as the application takes it, provided no field is oversized.
+    ///
+    /// # Errors
+    /// [`Rejection::CandidateTooLarge`] or [`Rejection::CandidateFieldTooLarge`].
+    pub fn into_checked(self) -> Result<IceCandidate, Rejection> {
+        if self.candidate.len() > MAX_CANDIDATE_BYTES {
+            return Err(Rejection::CandidateTooLarge);
+        }
+        let too_long = |field: &Option<String>, max: usize| {
+            field.as_ref().is_some_and(|text| text.len() > max)
+        };
+        if too_long(&self.sdp_mid, MAX_SDP_MID_BYTES)
+            || too_long(&self.username_fragment, MAX_USERNAME_FRAGMENT_BYTES)
+        {
+            return Err(Rejection::CandidateFieldTooLarge);
+        }
+        Ok(self.into())
+    }
+}
+
 impl PeerIceDto {
     /// # Errors
     /// A bad target id or an oversized candidate.
     pub fn validate(self) -> Result<PeerCommand, Rejection> {
         let to = session(&self.to)?;
-        if self.candidate.candidate.len() > MAX_CANDIDATE_BYTES {
-            return Err(Rejection::CandidateTooLarge);
-        }
-        Ok(PeerCommand::Ice { to, candidate: self.candidate.into() })
+        Ok(PeerCommand::Ice { to, candidate: self.candidate.into_checked()? })
     }
 }
 
@@ -231,6 +254,37 @@ mod tests {
         assert!(with(MAX_SDP_BYTES).validate_offer().is_ok());
         assert_eq!(with(MAX_SDP_BYTES + 1).validate_offer(), Err(Rejection::SdpTooLarge));
         assert_eq!(with(MAX_SDP_BYTES + 1).validate_answer(), Err(Rejection::SdpTooLarge));
+    }
+
+    #[test]
+    fn candidate_fields_are_limited() {
+        let candidate =
+            |sdp_mid: Option<String>, username_fragment: Option<String>| IceCandidateDto {
+                candidate: "c".into(),
+                sdp_mid,
+                sdp_mline_index: None,
+                username_fragment,
+            };
+        let long = |max: usize| Some("a".repeat(max));
+        let over = |max: usize| Some("a".repeat(max + 1));
+        assert!(
+            candidate(long(MAX_SDP_MID_BYTES), long(MAX_USERNAME_FRAGMENT_BYTES))
+                .into_checked()
+                .is_ok()
+        );
+        assert_eq!(
+            candidate(over(MAX_SDP_MID_BYTES), None).into_checked(),
+            Err(Rejection::CandidateFieldTooLarge)
+        );
+        assert_eq!(
+            candidate(None, over(MAX_USERNAME_FRAGMENT_BYTES)).into_checked(),
+            Err(Rejection::CandidateFieldTooLarge)
+        );
+        let relayed = PeerIceDto {
+            to: SessionId::generate().to_string(),
+            candidate: candidate(over(MAX_SDP_MID_BYTES), None),
+        };
+        assert_eq!(relayed.validate(), Err(Rejection::CandidateFieldTooLarge));
     }
 
     #[test]

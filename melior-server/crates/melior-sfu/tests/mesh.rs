@@ -69,9 +69,10 @@ async fn a_direct_link_that_fails_returns_the_pair_to_the_sfu() {
     bob.expect_link_close(&a).await;
 }
 
-fn relays(events: &[Event]) -> usize {
-    events.iter().filter(|event| matches!(event, Event::PeerSignal { .. })).count()
-}
+/// Text that only the messages this test drops carry.
+const DROPPED: &str = "dropped-marker";
+/// Text of the one valid relay this test sends, to show relaying works at all.
+const DELIVERED: &str = "delivered-marker";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn relays_outside_the_room_or_over_the_limits_are_dropped_silently() {
@@ -79,32 +80,47 @@ async fn relays_outside_the_room_or_over_the_limits_are_dropped_silently() {
     let (mut alice, mut bob) = direct_pair(&server, "mesh").await;
     let mut erin = MeshClient::join(&server, "elsewhere", "erin").await;
     let (b, e) = (bob.session_id.clone(), erin.session_id.clone());
-    // The pair's own negotiation is over; count what is relayed from here on.
-    let (bob_before, erin_before) = (relays(&bob.unclaimed()), relays(&erin.unclaimed()));
 
-    let ice = json!({ "candidate": "candidate:1 1 udp 1 127.0.0.1 9 typ host", "sdpMid": "0" });
+    let ice = |candidate: String| json!({ "candidate": candidate, "sdpMid": "0" });
+    let marked = |text: &str| format!("{DROPPED}-{text}");
     let unknown = SessionId::generate().to_string();
     for to in [e.as_str(), unknown.as_str(), "nobody"] {
-        alice.send(&json!({ "channel": "peer_offer", "payload": { "to": to, "sdp": "v=0" } }));
-        alice.send(&json!({ "channel": "peer_answer", "payload": { "to": to, "sdp": "v=0" } }));
-        alice.send(&json!({ "channel": "peer_ice", "payload": { "to": to, "candidate": ice } }));
+        let sdp = marked("sdp");
+        alice.send(&json!({ "channel": "peer_offer", "payload": { "to": to, "sdp": sdp } }));
+        alice.send(&json!({ "channel": "peer_answer", "payload": { "to": to, "sdp": sdp } }));
+        let candidate = ice(marked("candidate"));
+        alice.send(
+            &json!({ "channel": "peer_ice", "payload": { "to": to, "candidate": candidate } }),
+        );
     }
     // Over the limits, to a peer of the same room.
-    let huge_candidate = json!({ "candidate": "a".repeat(1025), "sdpMid": "0" });
-    let huge_sdp = "a".repeat(64 * 1024 + 1);
+    let huge_sdp = format!("{}{}", marked("sdp"), "a".repeat(64 * 1024));
     alice.send(&json!({ "channel": "peer_offer", "payload": { "to": b, "sdp": huge_sdp } }));
+    let huge_candidate = ice(format!("{}{}", marked("candidate"), "a".repeat(1024)));
     alice.send(
         &json!({ "channel": "peer_ice", "payload": { "to": b, "candidate": huge_candidate } }),
     );
+    let long_field = json!({ "candidate": marked("mid"), "sdpMid": "m".repeat(257) });
+    alice.send(&json!({ "channel": "peer_ice", "payload": { "to": b, "candidate": long_field } }));
+    let long_fragment =
+        json!({ "candidate": marked("ufrag"), "usernameFragment": "u".repeat(257) });
+    alice.send(
+        &json!({ "channel": "peer_ice", "payload": { "to": b, "candidate": long_fragment } }),
+    );
+    // A valid one last: when it arrives, everything sent before it has been handled.
+    let control = ice(DELIVERED.to_owned());
+    alice.send(&json!({ "channel": "peer_ice", "payload": { "to": b, "candidate": control } }));
 
-    // The server handles one socket's messages in order, so the echo returns after
-    // all of the above was processed; a relay would already be queued at its target.
     alice.sync().await;
-    bob.sync().await;
+    bob.expect(
+        DELIVERED,
+        |event| matches!(event, Event::PeerSignal { body, .. } if body == DELIVERED),
+    )
+    .await;
     erin.sync().await;
 
-    assert_eq!(relays(&erin.unclaimed()), erin_before, "the outsider received a relay");
-    assert_eq!(relays(&bob.unclaimed()), bob_before, "a dropped relay reached the room mate");
+    assert!(!bob.saw_relay_containing(DROPPED), "a dropped relay reached the room mate");
+    assert!(!erin.saw_relay_containing(DROPPED), "the outsider received a relay");
     assert!(
         !alice.unclaimed().iter().any(|event| matches!(event, Event::ServerError { .. })),
         "the sender must not be told about a dropped relay"

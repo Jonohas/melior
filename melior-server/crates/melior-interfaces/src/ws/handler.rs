@@ -1,3 +1,4 @@
+use super::limiter::TokenBucket;
 use super::messages::{ClientMessage, CloseReason, SdpType, ServerMessage};
 use super::peer::{PeerCommand, Rejection};
 use crate::AppState;
@@ -16,12 +17,15 @@ use melior_application::{
 use melior_domain::{AuthSessionId, ChannelId, SessionId, User};
 use serde::Deserialize;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 
 const DEFAULT_CHANNEL: &str = "general";
+
+/// The largest WebSocket message the server accepts, above the largest SDP it relays.
+pub const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 
 /// `GET /ws?channel_id=<room>`: conference signalling for logged-in users.
 pub fn routes() -> Router<AppState> {
@@ -78,7 +82,10 @@ async fn upgrade(
     }
 
     let guest = Guest { state: state.clone(), auth_session: session_id, channel_id, user };
-    let response = upgrade.on_upgrade(move |socket| connection(socket, guest));
+    let response = upgrade
+        .max_message_size(MAX_MESSAGE_BYTES)
+        .max_frame_size(MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| connection(socket, guest));
     (jar, response).into_response()
 }
 
@@ -164,13 +171,15 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                 tokio::time::interval_at(tokio::time::Instant::now() + period, period);
             recheck.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+            let mut relay_limit = TokenBucket::for_relay(Instant::now());
+
             // The session id is bound to this socket: nothing a client sends can
             // make its messages act on another participant.
             loop {
                 tokio::select! {
                     message = stream.next() => match message {
                         Some(Ok(Message::Text(text))) => {
-                            dispatch(&service, &session_id, &outbox, text.as_str()).await;
+                            dispatch(&service, &session_id, &outbox, &mut relay_limit, text.as_str()).await;
                         }
                         Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                         Some(Ok(_)) => {}
@@ -204,6 +213,7 @@ async fn dispatch(
     service: &ConferenceService,
     session_id: &SessionId,
     outbox: &Outbox,
+    relay_limit: &mut TokenBucket,
     text: &str,
 ) {
     let message = match serde_json::from_str::<ClientMessage>(text) {
@@ -215,6 +225,11 @@ async fn dispatch(
         }
     };
 
+    if message.is_relay() && !relay_limit.try_take(Instant::now()) {
+        debug!(session = %session_id, "relay message over the rate limit dropped");
+        return;
+    }
+
     let result = match message {
         ClientMessage::SdpOffer(description) => match description.into_sdp(SdpType::Offer) {
             Some(offer) => service.handle_offer(session_id, offer).await,
@@ -224,9 +239,13 @@ async fn dispatch(
             Some(answer) => service.handle_answer(session_id, answer).await,
             None => return wrong_type(outbox, "sdp_answer", "answer"),
         },
-        ClientMessage::Ice(candidate) => {
-            service.add_ice_candidate(session_id, candidate.into()).await
-        }
+        ClientMessage::Ice(candidate) => match candidate.into_checked() {
+            Ok(candidate) => service.add_ice_candidate(session_id, candidate).await,
+            Err(rejection) => {
+                debug!(session = %session_id, ?rejection, "ice candidate dropped");
+                Ok(())
+            }
+        },
         ClientMessage::RouteLive(dto) => peer(service, session_id, dto.validate()).await,
         ClientMessage::LinkFailed(dto) => peer(service, session_id, dto.validate()).await,
         ClientMessage::PeerOffer(dto) => peer(service, session_id, dto.validate_offer()).await,
