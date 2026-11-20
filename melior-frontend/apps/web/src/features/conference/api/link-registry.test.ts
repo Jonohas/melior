@@ -100,4 +100,37 @@ describe('createLinkRegistry', () => {
         expect(source?.sourceOf({ kind: 'video', trackIdentifier: 'x' })).toBeUndefined();
         expect(source?.sourceOf({ kind: 'video', trackIdentifier: 'remote-2' })?.peer).toBe('b');
     });
+
+    test('one link that cannot take a new track does not hurt the others or reject', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        registry = create();
+        await registry.open('b').start();
+        await registry.open('c').start();
+        const failing = sections(0)[1]?.sender;
+        if (!failing) throw new Error('no camera section');
+        failing.failing = true;
+        await expect(registry.replaceInput(asTrack(NEW_CAMERA))).resolves.toBeUndefined();
+        expect(tracksOf(0)).toEqual(['mic', 'cam', null]);
+        expect(tracksOf(1)).toEqual(['mic', 'cam2', null]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        await registry.open('d').start();
+        expect(tracksOf(2)).toEqual(['mic', 'cam2', null]);
+        warn.mockRestore();
+    });
+
+    test('one link that cannot take the screen does not stop the others, on start and on stop', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        registry = create();
+        await registry.open('b').start();
+        await registry.open('c').start();
+        const failing = sections(0)[2]?.sender;
+        if (!failing) throw new Error('no screen section');
+        failing.failing = true;
+        await expect(registry.setScreen(asTrack(SCREEN))).resolves.toBeUndefined();
+        expect(tracksOf(1)).toEqual(['mic', 'cam', 'scr']);
+        await expect(registry.setScreen(null)).resolves.toBeUndefined();
+        expect(tracksOf(1)).toEqual(['mic', 'cam', null]);
+        expect(warn).toHaveBeenCalledTimes(2);
+        warn.mockRestore();
+    });
 });

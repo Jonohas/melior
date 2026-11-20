@@ -32,9 +32,13 @@ export type LinkRegistry = {
     get: (peer: SessionId) => DirectLink | undefined;
     close: (peer: SessionId) => void;
     closeAll: () => void;
-    /** Sends the screen (or none) on every open link, and on every link opened later. */
+    /** Sends the screen (or none) on every open link, and on every link opened later. Never rejects. */
     setScreen: (track: MediaStreamTrack | null) => Promise<void>;
-    /** Sends another microphone or camera track on every open link, and on every link opened later. */
+    /**
+     * Sends another microphone or camera track on every open link, and on every link opened later. Call it once
+     * the server connection has taken the track. A link that cannot take it is logged and keeps its old track;
+     * the others are not affected. Never rejects.
+     */
     replaceInput: (track: MediaStreamTrack) => Promise<void>;
     statsSources: () => StatsSource[];
 };
@@ -58,6 +62,16 @@ export const createLinkRegistry = ({
     };
     const links = new Map<SessionId, DirectLink>();
     const sources = new Map<SessionId, StatsSource>();
+
+    /** Runs `act` on every open link; one that fails is logged and does not stop the others. */
+    const onEveryLink = async (what: string, act: (link: DirectLink) => Promise<void>) => {
+        const open = [...links.entries()];
+        const results = await Promise.allSettled(open.map(([, link]) => act(link)));
+        results.forEach((result, index) => {
+            if (result.status === 'rejected')
+                console.warn(`direct link to ${open[index]?.[0]}: ${what} failed`, result.reason);
+        });
+    };
 
     const close = (peer: SessionId) => {
         links.get(peer)?.close();
@@ -108,11 +122,11 @@ export const createLinkRegistry = ({
         statsSources: () => [...sources.values()],
         setScreen: async (track) => {
             local.screen = track;
-            await Promise.all([...links.values()].map((link) => link.setScreen(track)));
+            await onEveryLink('sharing the screen', (link) => link.setScreen(track));
         },
         replaceInput: async (track) => {
             local[sectionOf(track)] = track;
-            await Promise.all([...links.values()].map((link) => link.replaceInput(track)));
+            await onEveryLink('switching the device', (link) => link.replaceInput(track));
         },
     };
 };

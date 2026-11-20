@@ -172,4 +172,33 @@ describe('the sections of a direct link', () => {
         await answerer.handleOffer('offer');
         expect(answerer.sectionTrackIds()).toEqual(['remote-0', 'remote-1', 'remote-2']);
     });
+
+    test('a screen change while the answerer attaches its sections is not lost', async () => {
+        const answerer = link(false);
+        const newCamera = track('cam2', 'video');
+        connection().afterSetRemoteOffer = () => {
+            const audio = sections()[0];
+            if (!audio) throw new Error('no audio section');
+            // The device is switched and a share starts while the first track is being attached.
+            audio.sender.duringReplace = () => {
+                local = { audio: MIC, video: newCamera, screen: SCREEN };
+            };
+        };
+        await answerer.handleOffer('offer');
+        expect(sections().map((t) => t.sender.track?.id ?? null)).toEqual(['mic', 'cam2', 'scr']);
+    });
+
+    test('a failing screen section still tells the peer the new state, on start and on stop', async () => {
+        const offerer = link(true);
+        await offerer.start();
+        channel().open();
+        const screenSender = sections()[2]?.sender;
+        if (!screenSender) throw new Error('no screen section');
+        screenSender.failing = true;
+        local = { ...local, screen: SCREEN };
+        await expect(offerer.setScreen(SCREEN)).rejects.toThrow('replaceTrack failed');
+        local = { ...local, screen: null };
+        await expect(offerer.setScreen(null)).rejects.toThrow('replaceTrack failed');
+        expect(channel().sent).toEqual(['{"screen":false}', '{"screen":true}', '{"screen":false}']);
+    });
 });

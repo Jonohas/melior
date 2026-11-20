@@ -3,6 +3,7 @@ import {
     canShareScreen,
     captureScreen,
     isScreenShareCancelled,
+    type Mesh,
     type PeerSession,
     stopMedia,
 } from '@/features/conference/api';
@@ -26,6 +27,11 @@ export type ScreenShare = {
     release: () => void;
 };
 
+/** Puts the screen (or none) on the direct links; a failure is logged, never left unhandled. */
+const sendToLinks = (mesh: Mesh | null, track: MediaStreamTrack | null) => {
+    mesh?.setScreen(track).catch((error) => console.warn('could not send the screen on the direct links', error));
+};
+
 /** The screen this participant shares. It outlives a connection: after a reconnect it is offered again. */
 export const useScreenShare = (connection: RefObject<ConferenceConnection>): ScreenShare => {
     const screenRef = useRef<MediaStream | null>(null);
@@ -40,7 +46,7 @@ export const useScreenShare = (connection: RefObject<ConferenceConnection>): Scr
 
     const stop = useCallback(() => {
         connection.current.peer?.stopScreen();
-        void connection.current.mesh?.setScreen(null);
+        sendToLinks(connection.current.mesh, null);
         release();
     }, [connection, release]);
 
@@ -61,7 +67,7 @@ export const useScreenShare = (connection: RefObject<ConferenceConnection>): Scr
                 if (screenRef.current === screen) stop();
             });
             peer.shareScreen(screen);
-            void connection.current.mesh?.setScreen(screen.getVideoTracks()[0] ?? null);
+            sendToLinks(connection.current.mesh, screen.getVideoTracks()[0] ?? null);
             setSharing(true);
         } catch (failure) {
             if (isScreenShareCancelled(failure)) return;

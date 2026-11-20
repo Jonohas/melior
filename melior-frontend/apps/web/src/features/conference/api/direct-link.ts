@@ -5,8 +5,17 @@ import {
     type IceServer,
     type SessionId,
 } from '@/features/conference/domain';
-import { addOfferedSections, attachAnsweredSections, type LocalTracks, NO_SENDERS, sectionOf } from './direct-sections';
+import {
+    addOfferedSections,
+    attachAnsweredSections,
+    type LocalTracks,
+    NO_SENDERS,
+    type SectionSenders,
+    sectionOf,
+} from './direct-sections';
+import { createDirectSignals, makeAnswer, makeOffer } from './direct-signals';
 import { createIceCandidateQueue } from './ice-candidate-queue';
+import { createPeerScreen } from './peer-screen';
 import { createScreenChannel } from './screen-channel';
 
 type DirectLinkOptions = {
@@ -60,56 +69,26 @@ export const createDirectLink = ({
 }: DirectLinkOptions): DirectLink => {
     const connection = new RTCPeerConnection({ iceServers, iceTransportPolicy: forceRelay ? 'relay' : 'all' });
     const remote = new MediaStream();
-    const remoteScreen = new MediaStream();
-    let senders = NO_SENDERS;
-    let peerShares = false;
-    let screenArrived = false;
+    const peerScreen = createPeerScreen(onScreen);
+    const signals = createDirectSignals(peerId, send);
     const candidates = createIceCandidateQueue(connection, 'direct');
+    // Filled in as the sections are attached, so a change during the attach finds the senders already there.
+    const senders: SectionSenders = { ...NO_SENDERS };
     // The link is negotiated once: a repeated start or offer is ignored.
     let started = false;
-
-    // The peer's screen is shown only while it says it shares one, and its section has delivered a track.
-    let published: MediaStream | null = null;
-    const publishScreen = () => {
-        const next = peerShares && screenArrived ? remoteScreen : null;
-        if (next === published) return;
-        published = next;
-        onScreen(next);
-    };
 
     // Both sides create the data channel before negotiation; it opens with the transport.
     const channel = createScreenChannel(connection, {
         isSharing: () => local().screen !== null,
-        onPeerScreen: (sharing) => {
-            peerShares = sharing;
-            publishScreen();
-        },
+        onPeerScreen: peerScreen.setSharing,
     });
 
-    // Local candidates wait until this link's offer or answer went out: the peer has no link yet before it,
-    // and would drop a candidate that overtook its description.
-    let descriptionSent = false;
-    const heldCandidates: IceCandidate[] = [];
-    const sendCandidate = (candidate: IceCandidate) =>
-        send({ channel: 'peer_ice', payload: { to: peerId, candidate } });
-
-    const sendDescription = (channel: 'peer_offer' | 'peer_answer', sdp: string) => {
-        send({ channel, payload: { to: peerId, sdp } });
-        descriptionSent = true;
-        for (const candidate of heldCandidates.splice(0)) sendCandidate(candidate);
-    };
-
     connection.onicecandidate = (event) => {
-        if (!event.candidate) return;
-        const candidate = event.candidate.toJSON();
-        if (descriptionSent) sendCandidate(candidate);
-        else heldCandidates.push(candidate);
+        if (event.candidate) signals.localCandidate(event.candidate.toJSON());
     };
     connection.ontrack = (event) => {
         if (DIRECT_SECTIONS[connection.getTransceivers().indexOf(event.transceiver)] === 'screen') {
-            remoteScreen.addTrack(event.track);
-            screenArrived = true;
-            publishScreen();
+            peerScreen.trackArrived(event.track);
             return;
         }
         remote.addTrack(event.track);
@@ -125,23 +104,17 @@ export const createDirectLink = ({
         start: async () => {
             if (!offerer || started) return;
             started = true;
-            senders = addOfferedSections(connection, local(), localStream);
-            const offer = await connection.createOffer();
-            await connection.setLocalDescription(offer);
-            const sdp = connection.localDescription?.sdp ?? offer.sdp ?? '';
-            sendDescription('peer_offer', sdp);
+            Object.assign(senders, addOfferedSections(connection, local(), localStream));
+            signals.sendDescription('peer_offer', await makeOffer(connection));
         },
         handleOffer: async (sdp) => {
             if (started) return;
             started = true;
             await connection.setRemoteDescription({ type: 'offer', sdp });
             // After the offer, so the tracks ride the offer's transceivers.
-            senders = await attachAnsweredSections(connection, local());
+            await attachAnsweredSections(connection, local, senders);
             await candidates.flush();
-            const answer = await connection.createAnswer();
-            await connection.setLocalDescription(answer);
-            const answerSdp = connection.localDescription?.sdp ?? answer.sdp ?? '';
-            sendDescription('peer_answer', answerSdp);
+            signals.sendDescription('peer_answer', await makeAnswer(connection));
         },
         handleAnswer: async (sdp) => {
             await connection.setRemoteDescription({ type: 'answer', sdp });
@@ -150,8 +123,12 @@ export const createDirectLink = ({
         addIceCandidate: (candidate: IceCandidate) => candidates.add(candidate),
         sectionTrackIds: () => connection.getTransceivers().map((t) => t.receiver.track.id),
         setScreen: async (track) => {
-            await senders.screen?.replaceTrack(track);
-            channel.announce();
+            try {
+                await senders.screen?.replaceTrack(track);
+            } finally {
+                // The peer learns the new state even when this link's sender could not take the track.
+                channel.announce();
+            }
         },
         replaceInput: async (track) => {
             await senders[sectionOf(track)]?.replaceTrack(track);

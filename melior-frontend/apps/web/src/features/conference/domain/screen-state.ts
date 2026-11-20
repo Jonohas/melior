@@ -1,4 +1,6 @@
 import { isObject } from './parse-primitives';
+import type { SessionId } from './session-id';
+import type { Path } from './signalling-message';
 
 /** What the sharer tells a peer on a direct link's data channel when it starts or stops sharing. */
 export const screenStateMessage = (sharing: boolean): string => JSON.stringify({ screen: sharing });
@@ -17,3 +19,16 @@ export const parseScreenState = (data: unknown): boolean | null => {
     }
     return isObject(value) && typeof value.screen === 'boolean' ? value.screen : null;
 };
+
+/**
+ * The participants whose screen gets a tile: those whose screen exists on the path their media is shown over.
+ * A screen that exists only on the other path waits, so the tile never appears empty.
+ */
+export const sharingPeers = (
+    screens: Record<SessionId, object>,
+    directScreens: Record<SessionId, object>,
+    shownPaths: Record<SessionId, Path>,
+): SessionId[] =>
+    [...new Set([...Object.keys(screens), ...Object.keys(directScreens)])].filter(
+        (peer) => ((shownPaths[peer] ?? 'forwarded') === 'direct' ? directScreens : screens)[peer] !== undefined,
+    );

@@ -9,7 +9,10 @@ import {
     stopMedia,
 } from '@/features/conference/api';
 import { type CallPreferences, trackEnabled } from '@/features/conference/domain';
+import { createSerialByKey } from './serial-by-key';
 import type { ConferenceConnection } from './session-messages';
+
+type InputKind = 'audioinput' | 'videoinput';
 
 export type ActiveDevices = { audioinput: string | null; videoinput: string | null };
 
@@ -23,7 +26,7 @@ export type CallMedia = {
     setMicrophoneMuted: (muted: boolean) => void;
     setCameraOff: (off: boolean) => void;
     /** Switches to another microphone or camera during the call. Rejects when the device cannot be opened. */
-    changeInput: (kind: 'audioinput' | 'videoinput', deviceId: string) => Promise<void>;
+    changeInput: (kind: InputKind, deviceId: string) => Promise<void>;
     /** Opens the camera and microphone the person chose last, with their mute switches applied. */
     open: () => Promise<MediaStream>;
     /** Makes an opened stream the one in use. */
@@ -67,8 +70,8 @@ export const useCallMedia = (connection: RefObject<ConferenceConnection>): CallM
         localRef.current = null;
     }, []);
 
-    const changeInput = useCallback(
-        async (kind: 'audioinput' | 'videoinput', deviceId: string) => {
+    const switchInput = useCallback(
+        async (kind: InputKind, deviceId: string) => {
             const stream = localRef.current;
             if (!stream) return;
             const track = await captureInput(kind, deviceId);
@@ -77,11 +80,13 @@ export const useCallMedia = (connection: RefObject<ConferenceConnection>): CallM
             track.enabled = trackEnabled(track.kind, preferencesRef.current);
             const { peer, mesh } = connection.current;
             try {
-                await Promise.all([peer?.replaceInput(track), mesh?.replaceInput(track)]);
+                await peer?.replaceInput(track);
             } catch (error) {
                 track.stop();
                 throw error;
             }
+            // The direct links take it after the server connection; one that cannot is logged, not fatal.
+            await mesh?.replaceInput(track);
             if (old) {
                 stream.removeTrack(old);
                 old.stop();
@@ -93,6 +98,14 @@ export const useCallMedia = (connection: RefObject<ConferenceConnection>): CallM
             setActiveDevices(devicesOf(stream));
         },
         [connection],
+    );
+
+    // One switch at a time per kind: a second one starts only once the first has put its track in the stream,
+    // so each reads the track the other left and none is orphaned or stopped twice.
+    const inOrder = useRef(createSerialByKey<InputKind>());
+    const changeInput = useCallback(
+        (kind: InputKind, deviceId: string) => inOrder.current(kind, () => switchInput(kind, deviceId)),
+        [switchInput],
     );
 
     const update = useCallback((change: Partial<CallPreferences>) => {

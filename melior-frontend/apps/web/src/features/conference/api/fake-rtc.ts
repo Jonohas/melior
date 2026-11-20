@@ -10,7 +10,14 @@ export class FakeSender {
         this.track = track;
     }
 
+    /** Makes the next `replaceTrack` calls fail, as a sender that cannot take the track does. */
+    failing = false;
+    /** Runs while a `replaceTrack` is in flight, before it settles. */
+    duringReplace: (() => void) | null = null;
+
     async replaceTrack(track: FakeTrack | null) {
+        this.duringReplace?.();
+        if (this.failing) throw new Error('replaceTrack failed');
         this.replaced.push(track);
         this.track = track;
     }
@@ -77,6 +84,8 @@ export class FakePeerConnection {
     onicecandidate: ((event: { candidate: { toJSON: () => object } | null }) => void) | null = null;
     /** Runs inside `setLocalDescription`, before it resolves: where the browser fires its first candidates. */
     duringSetLocalDescription: (() => void) | null = null;
+    /** Runs after `setRemoteDescription` applied an offer, once the transceivers exist. */
+    afterSetRemoteOffer: (() => void) | null = null;
     ontrack: ((event: { track: FakeTrack; transceiver: FakeTransceiver }) => void) | null = null;
     transceivers: FakeTransceiver[] = [];
     dataChannels: FakeDataChannel[] = [];
@@ -124,6 +133,7 @@ export class FakePeerConnection {
         if (description.type === 'offer' && this.transceivers.length === 0) {
             // The offer's sections arrive as receive-only transceivers.
             for (const kind of OFFERED_SECTIONS) this.addTransceiver(kind, { direction: 'recvonly' });
+            this.afterSetRemoteOffer?.();
         }
     }
 

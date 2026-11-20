@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { parseScreenState, screenStateMessage } from './screen-state';
+import { parseScreenState, screenStateMessage, sharingPeers } from './screen-state';
 
 describe('parseScreenState', () => {
     test('reads the sharing state a peer sends', () => {
@@ -26,5 +26,24 @@ describe('parseScreenState', () => {
         ]) {
             expect(parseScreenState(hostile)).toBeNull();
         }
+    });
+});
+
+describe('sharingPeers', () => {
+    const stream = {};
+
+    test('lists a screen that exists on the path its sharer is shown over', () => {
+        expect(sharingPeers({ a: stream }, {}, {})).toEqual(['a']);
+        expect(sharingPeers({}, { b: stream }, { b: 'direct' })).toEqual(['b']);
+    });
+
+    test('a screen that exists only on the other path waits, so no tile is empty', () => {
+        expect(sharingPeers({ a: stream }, {}, { a: 'direct' })).toEqual([]);
+        expect(sharingPeers({}, { b: stream }, {})).toEqual([]);
+        expect(sharingPeers({}, { b: stream }, { b: 'forwarded' })).toEqual([]);
+    });
+
+    test('lists a peer once when both paths carry its screen', () => {
+        expect(sharingPeers({ a: stream }, { a: stream }, { a: 'direct' })).toEqual(['a']);
     });
 });

@@ -73,7 +73,7 @@ export {
     type TrackRef,
     type TracksBySession,
 } from './remote-tracks';
-export { parseScreenState, screenStateMessage } from './screen-state';
+export { parseScreenState, screenStateMessage, sharingPeers } from './screen-state';
 export type { SessionId } from './session-id';
 export type {
     ChatPayload,

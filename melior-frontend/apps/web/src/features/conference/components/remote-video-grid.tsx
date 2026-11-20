@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Path } from '@/features/conference/domain';
+import { type Path, sharingPeers } from '@/features/conference/domain';
 import { cn } from '@/lib/utils';
 import { RemoteVideo } from './remote-video';
 import { ScreenVideo } from './screen-video';
@@ -39,7 +39,7 @@ export const RemoteVideoGrid = ({
     ];
     const alone = sessionIds.length === 0;
 
-    const sharing = [...new Set([...Object.keys(screens), ...Object.keys(directScreens)])];
+    const sharing = sharingPeers(screens, directScreens, shownPaths);
     const gridClass = sharing.length > 0 ? 'max-w-6xl grid-cols-2 sm:grid-cols-3 xl:grid-cols-4' : null;
 
     return (

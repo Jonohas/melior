@@ -1,4 +1,4 @@
-import type { MediaKind } from '@/features/conference/domain';
+import { DIRECT_SECTIONS, type MediaKind } from '@/features/conference/domain';
 
 /** The tracks this side sends on a link: microphone, camera and, while sharing, the screen. */
 export type LocalTracks = Record<MediaKind, MediaStreamTrack | null>;
@@ -32,26 +32,33 @@ export const addOfferedSections = (
 /**
  * The answerer's sections, after the offer was applied: the first audio and first video transceiver carry the
  * microphone and the camera, the second video transceiver the screen. All three send as well as receive.
+ * The senders are stored in `senders` as they are attached. The local tracks may change while a
+ * `replaceTrack` is awaited, so they are read again afterwards and any section that is behind is replaced
+ * again, until every section carries the current track.
  */
 export const attachAnsweredSections = async (
     connection: RTCPeerConnection,
-    tracks: LocalTracks,
-): Promise<SectionSenders> => {
+    local: () => LocalTracks,
+    senders: SectionSenders,
+): Promise<void> => {
     const transceivers = connection.getTransceivers();
     const audio = transceivers.find((t) => t.receiver.track.kind === 'audio');
     const [video, screen] = transceivers.filter((t) => t.receiver.track.kind === 'video');
-    const senders: SectionSenders = { ...NO_SENDERS };
-    for (const [kind, transceiver] of [
-        ['audio', audio],
-        ['video', video],
-        ['screen', screen],
-    ] as const) {
-        if (!transceiver) continue;
-        transceiver.direction = 'sendrecv';
-        await transceiver.sender.replaceTrack(tracks[kind]);
-        senders[kind] = transceiver.sender;
+    const found = { audio, video, screen };
+    const attached: Partial<LocalTracks> = {};
+    for (;;) {
+        const wanted = local();
+        const behind = DIRECT_SECTIONS.filter((kind) => found[kind] && attached[kind] !== wanted[kind]);
+        if (behind.length === 0) return;
+        for (const kind of behind) {
+            const transceiver = found[kind];
+            if (!transceiver) continue;
+            transceiver.direction = 'sendrecv';
+            attached[kind] = wanted[kind];
+            senders[kind] = transceiver.sender;
+            await transceiver.sender.replaceTrack(wanted[kind]);
+        }
     }
-    return senders;
 };
 
 /** Which fixed section a local microphone or camera track belongs to. */
