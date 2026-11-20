@@ -15,6 +15,7 @@ export {
     useUpdateRole,
 } from './community-mutations';
 export type { FeedStatus } from './feed-connection';
+export { MemberListProvider, type MemberListToggle, useMemberList } from './member-list-context';
 export {
     communityQueryOptions,
     useCommunitiesQuery,
@@ -33,4 +34,5 @@ export {
 } from './structure-mutations';
 export { useRemovalRedirect } from './use-removal-redirect';
 export { type TextChannelChat, useTextChannelChat } from './use-text-channel-chat';
-export { useVoiceCall, type VoiceCall } from './use-voice-call';
+export type { VoiceCall } from './use-voice-call';
+export { useVoiceSession, VoiceSessionProvider, type VoiceSessionValue } from './voice-session-context';

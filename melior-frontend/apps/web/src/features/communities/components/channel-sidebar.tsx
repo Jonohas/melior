@@ -2,7 +2,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui';
 import { abilitiesOf, buildChannelTree, type CommunityView } from '@/features/communities/domain';
-import { useCommunityFeed, useCreateCategory, useLeaveCommunity } from '@/features/communities/hooks';
+import { useCommunityFeed, useCreateCategory, useLeaveCommunity, useVoiceSession } from '@/features/communities/hooks';
 import { CategorySettingsDialog } from './category-settings-dialog';
 import { ChannelSettingsDialog } from './channel-settings-dialog';
 import { ChannelTree } from './channel-tree';
@@ -12,6 +12,7 @@ import { InviteDialog } from './invite-dialog';
 import { NameForm } from './name-form';
 import { ServerMenu, type SidebarDialog } from './server-menu';
 import { ServerSettingsDialog } from './server-settings-dialog';
+import { VoicePanel } from './voice-panel';
 
 type ChannelSidebarProps = {
     view: CommunityView;
@@ -43,6 +44,11 @@ const CreateCategoryDialog = ({ view, onClose }: DialogProps) => {
 const LeaveDialog = ({ view, onClose }: DialogProps) => {
     const navigate = useNavigate();
     const leave = useLeaveCommunity(view.id, view.me.userId);
+    const { exitCommunity } = useVoiceSession();
+    const onLeft = () => {
+        exitCommunity(view.id, 'left');
+        void navigate({ to: '/' });
+    };
     return (
         <ConfirmDialog
             open
@@ -51,7 +57,7 @@ const LeaveDialog = ({ view, onClose }: DialogProps) => {
             confirmLabel="Leave server"
             pending={leave.isPending}
             error={leave.error?.message ?? null}
-            onConfirm={() => leave.mutate(undefined, { onSuccess: () => void navigate({ to: '/' }) })}
+            onConfirm={() => leave.mutate(undefined, { onSuccess: onLeft })}
         >
             You can only come back with a new invite.
         </ConfirmDialog>
@@ -85,7 +91,7 @@ const SidebarDialogs = ({ view, dialog, onClose }: DialogProps & { dialog: Sideb
     }
 };
 
-/** The server's column: its menu, the channel list with who is in each voice channel, and the dialogs. */
+/** The server's column: its menu, the channel list with who is in each voice channel, the call panel, and the dialogs. */
 export const ChannelSidebar = ({ view, activeChannelId }: ChannelSidebarProps) => {
     const { roster } = useCommunityFeed();
     const [dialog, setDialog] = useState<SidebarDialog>({ kind: 'none' });
@@ -111,6 +117,7 @@ export const ChannelSidebar = ({ view, activeChannelId }: ChannelSidebarProps) =
                     <p className="px-4 text-sm text-muted-foreground">There are no channels you can see.</p>
                 )}
             </nav>
+            <VoicePanel />
             <SidebarDialogs view={view} dialog={dialog} onClose={() => setDialog({ kind: 'none' })} />
         </aside>
     );

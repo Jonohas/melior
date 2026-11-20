@@ -1,6 +1,7 @@
 export { ConferenceStatusBadges } from './conference-status-badges';
 export { DeviceSettingsDialog } from './device-settings-dialog';
 export { LocalPreview } from './local-preview';
+export { RemoteAudio } from './remote-audio';
 export { RemoteVideo } from './remote-video';
 export { RemoteVideoGrid } from './remote-video-grid';
 export { RoomDock } from './room-dock';

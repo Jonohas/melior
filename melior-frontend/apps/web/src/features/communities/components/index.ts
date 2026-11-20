@@ -1,6 +1,9 @@
 export { ChannelSidebar } from './channel-sidebar';
 export { CommunityHome } from './community-home';
 export { InviteLanding } from './invite-landing';
+export { MemberList } from './member-list';
 export { ServerRail } from './server-rail';
 export { TextChannelView } from './text-channel-view';
+export { VoiceCallAudio } from './voice-call-audio';
 export { VoiceChannelView } from './voice-channel-view';
+export { VoicePanel } from './voice-panel';

@@ -1,19 +1,26 @@
 import { useNavigate } from '@tanstack/react-router';
-import { MonitorUp, TriangleAlert, Users } from 'lucide-react';
-import { useState } from 'react';
-import { TopBar } from '@/components';
+import { MonitorUp, PhoneCall, TriangleAlert, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { StatePage, TopBar } from '@/components';
 import { Alert, AlertDescription, Badge, Button, Card, CardContent } from '@/components/ui';
 import { ChatPanel } from '@/features/chat/components';
 import {
     type Channel,
     type CommunityView,
+    decideVoiceOpen,
     firstChannel,
     hasPermission,
+    isInCall,
     mediaSummary,
     occupantsOf,
+    type VoiceTarget,
 } from '@/features/communities/domain';
-import { useCommunityFeed, useVoiceCall, type VoiceCall } from '@/features/communities/hooks';
-import { loadDevicePreferences } from '@/features/conference/api';
+import {
+    useCommunityFeed,
+    useVoiceSession,
+    type VoiceCall,
+    type VoiceSessionValue,
+} from '@/features/communities/hooks';
 import {
     ConferenceStatusBadges,
     LocalPreview,
@@ -23,6 +30,7 @@ import {
 } from '@/features/conference/components';
 import { CallDeviceSettings } from './call-device-settings';
 import { ChannelIcon } from './channel-tree';
+import { MemberListButton } from './member-list';
 
 type VoiceChannelViewProps = {
     view: CommunityView;
@@ -57,7 +65,7 @@ const CallNotices = ({ call }: { call: VoiceCall }) => {
     );
 };
 
-const CallStage = ({ call, speakerId }: { call: VoiceCall; speakerId: string }) => {
+const CallStage = ({ call }: { call: VoiceCall }) => {
     const { conference } = call;
     const alone = Object.keys(conference.participants).length === 0;
     return (
@@ -71,7 +79,6 @@ const CallStage = ({ call, speakerId }: { call: VoiceCall; speakerId: string }) 
                 usernames={conference.participants}
                 screens={conference.screenStreams}
                 voices={conference.voices}
-                speakerId={speakerId}
                 local={
                     <LocalPreview
                         stream={conference.localStream}
@@ -95,32 +102,38 @@ const CallStage = ({ call, speakerId }: { call: VoiceCall; speakerId: string }) 
     );
 };
 
-/** A voice channel: the call, its chat beside it, and the controls. */
-export const VoiceChannelView = ({ view, channel, relay }: VoiceChannelViewProps) => {
+/** Opening a voice channel joins its call, leaving another one first; a later leave on this page does not rejoin. */
+const useJoinOnOpen = (voice: VoiceSessionValue, target: VoiceTarget) => {
+    const sessionRef = useRef(voice.session);
+    sessionRef.current = voice.session;
+    const { join } = voice;
+    useEffect(() => {
+        const decision = decideVoiceOpen(sessionRef.current, target);
+        if (decision === 'join' || decision === 'switch') join(target);
+    }, [join, target]);
+};
+
+/** Leaving goes to another channel of the server, preferably a text one, never back into this call. */
+const useGoElsewhere = (view: CommunityView, channel: Channel): (() => void) => {
     const navigate = useNavigate();
-    const { roster } = useCommunityFeed();
-    const call = useVoiceCall(channel.id, relay);
-    const { conference, chat, chatOpen, setChatOpen } = call;
-    const [devicesOpen, setDevicesOpen] = useState(false);
-    const [speakerId, setSpeakerId] = useState(() => loadDevicePreferences().audiooutput ?? '');
-    const summary = mediaSummary(channel, occupantsOf(roster, channel.id).length);
-    const connected = conference.status === 'connected';
-    const mayWrite = hasPermission(channel.myPermissions, 'send_messages');
-    // Leaving goes to another channel of the server, preferably a text one, never back into this call.
-    const leave = () => {
+    return () => {
         const next = firstChannel(view, channel.id);
         if (!next) return void navigate({ to: '/' });
         void navigate({ to: '/c/$communityId/$channelId', params: { communityId: view.id, channelId: next.id } });
     };
+};
 
-    if (conference.stopReason) {
-        const back = (
-            <Button type="button" onClick={leave}>
-                Back to {view.name}
-            </Button>
-        );
-        return <StoppedNotice reason={conference.stopReason} actions={back} />;
-    }
+type CallViewProps = { channel: Channel; voice: VoiceSessionValue; onLeave: () => void };
+
+/** The call you are in: the grid, its chat beside it, and the controls. */
+const CallView = ({ channel, voice, onLeave }: CallViewProps) => {
+    const { roster } = useCommunityFeed();
+    const { call } = voice;
+    const { conference, chat, chatOpen, setChatOpen } = call;
+    const [devicesOpen, setDevicesOpen] = useState(false);
+    const summary = mediaSummary(channel, occupantsOf(roster, channel.id).length);
+    const connected = conference.status === 'connected';
+    const mayWrite = hasPermission(channel.myPermissions, 'send_messages');
 
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -141,10 +154,11 @@ export const VoiceChannelView = ({ view, channel, relay }: VoiceChannelViewProps
                     shownPaths={conference.shownPaths}
                 />
                 {summary && <Badge variant="outline">{summary}</Badge>}
+                <MemberListButton />
             </TopBar>
             <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                    <CallStage call={call} speakerId={speakerId} />
+                    <CallStage call={call} />
                     <RoomDock
                         chatOpen={chatOpen}
                         onToggleChat={() => setChatOpen(!chatOpen)}
@@ -160,7 +174,7 @@ export const VoiceChannelView = ({ view, channel, relay }: VoiceChannelViewProps
                         onToggleScreenShare={() =>
                             conference.screenSharing ? conference.stopScreenShare() : void conference.startScreenShare()
                         }
-                        onLeave={leave}
+                        onLeave={onLeave}
                     />
                 </div>
                 {chatOpen && (
@@ -183,9 +197,63 @@ export const VoiceChannelView = ({ view, channel, relay }: VoiceChannelViewProps
                 onOpenChange={setDevicesOpen}
                 activeDevices={conference.activeDevices}
                 changeInput={conference.changeInput}
-                speakerId={speakerId}
-                onSpeakerChange={setSpeakerId}
+                speakerId={voice.speakerId}
+                onSpeakerChange={voice.setSpeakerId}
             />
         </div>
+    );
+};
+
+/**
+ * A voice channel. Opening it joins its call (the call itself lives above the routes, so it goes on elsewhere);
+ * the page shows the call while you are in it, why the server ended it, or a way to join again.
+ */
+export const VoiceChannelView = ({ view, channel, relay }: VoiceChannelViewProps) => {
+    const voice = useVoiceSession();
+    const target = useMemo(
+        () => ({
+            communityId: view.id,
+            channelId: channel.id,
+            relay,
+            communityName: view.name,
+            channelName: channel.name,
+        }),
+        [view.id, channel.id, relay, view.name, channel.name],
+    );
+    useJoinOnOpen(voice, target);
+    const goElsewhere = useGoElsewhere(view, channel);
+    const { ended } = voice.session;
+
+    if (isInCall(voice.session, channel.id)) {
+        const leave = () => {
+            voice.leave();
+            goElsewhere();
+        };
+        return <CallView channel={channel} voice={voice} onLeave={leave} />;
+    }
+    const rejoin = (
+        <Button type="button" variant="outline" onClick={() => voice.join(target)}>
+            <PhoneCall /> Join the call
+        </Button>
+    );
+    if (ended?.target.channelId === channel.id) {
+        const back = () => {
+            voice.dismiss();
+            goElsewhere();
+        };
+        const actions = (
+            <>
+                <Button type="button" onClick={back}>
+                    Back to {view.name}
+                </Button>
+                {rejoin}
+            </>
+        );
+        return <StoppedNotice reason={ended.reason} actions={actions} />;
+    }
+    return (
+        <StatePage icon={PhoneCall} title={`You are not in ${channel.name}`} actions={rejoin}>
+            Join to see and hear everyone in this channel.
+        </StatePage>
     );
 };

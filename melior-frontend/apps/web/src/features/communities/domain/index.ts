@@ -76,6 +76,15 @@ export {
     USER_LIMIT_MIN,
 } from './media';
 export { type Member, parseMembers } from './member';
+export {
+    groupMembers,
+    highestRole,
+    initialMemberListOpen,
+    type MemberGroup,
+    nameColor,
+    parseMemberListOpen,
+    usersInVoice,
+} from './member-list';
 export { checkName, checkTopic, type TextCheck } from './names';
 export {
     addTarget,
@@ -104,3 +113,19 @@ export {
     toRoleBody,
 } from './roles';
 export { EMPTY_ROSTER, occupantsOf, type VoiceEntry, type VoiceRoster } from './voice-roster';
+export {
+    type CallStatusLabel,
+    type CallTone,
+    decideVoiceOpen,
+    describeCallStatus,
+    type EndedCall,
+    IDLE_VOICE_SESSION,
+    isInCall,
+    type VoiceOpenDecision,
+    type VoicePanelView,
+    type VoiceSession,
+    type VoiceSessionAction,
+    type VoiceTarget,
+    voicePanelView,
+    voiceSessionReducer,
+} from './voice-session';

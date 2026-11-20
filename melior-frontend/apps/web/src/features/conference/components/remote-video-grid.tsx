@@ -19,8 +19,6 @@ type RemoteVideoGridProps = {
     screens: Record<string, MediaStream>;
     /** Mute and speaking per participant. */
     voices: Record<string, VoiceState>;
-    /** The speaker everyone's sound plays on; empty means the browser's default. */
-    speakerId?: string;
     /** Your own tile, shown after the others. */
     local: ReactNode;
 };
@@ -34,7 +32,6 @@ export const RemoteVideoGrid = ({
     usernames,
     screens,
     voices,
-    speakerId,
     local,
 }: RemoteVideoGridProps) => {
     const sessionIds = [
@@ -74,7 +71,6 @@ export const RemoteVideoGrid = ({
                         direct={directStreams[sessionId]}
                         shownPath={shownPaths[sessionId] ?? 'forwarded'}
                         username={usernames[sessionId]}
-                        speakerId={speakerId}
                         voice={voices[sessionId]}
                     />
                 ))}

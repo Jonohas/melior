@@ -13,7 +13,7 @@ import {
     TabsTrigger,
 } from '@/components/ui';
 import { abilitiesOf, type CommunityView } from '@/features/communities/domain';
-import { useDeleteCommunity, useRenameCommunity } from '@/features/communities/hooks';
+import { useDeleteCommunity, useRenameCommunity, useVoiceSession } from '@/features/communities/hooks';
 import { ConfirmDialog } from './confirm-dialog';
 import { InvitesTab } from './invites-tab';
 import { MembersTab } from './members-tab';
@@ -30,6 +30,12 @@ const OverviewTab = ({ view }: { view: CommunityView }) => {
     const navigate = useNavigate();
     const rename = useRenameCommunity(view.id);
     const remove = useDeleteCommunity(view.id);
+    const { exitCommunity } = useVoiceSession();
+    const onDeleted = () => {
+        // The owner chose this, like leaving: the call there ends without a notice.
+        exitCommunity(view.id, 'left');
+        void navigate({ to: '/' });
+    };
     const [confirmDelete, setConfirmDelete] = useState(false);
     const abilities = abilitiesOf(view.me);
 
@@ -58,7 +64,7 @@ const OverviewTab = ({ view }: { view: CommunityView }) => {
                 confirmLabel="Delete server"
                 pending={remove.isPending}
                 error={remove.error?.message ?? null}
-                onConfirm={() => remove.mutate(undefined, { onSuccess: () => void navigate({ to: '/' }) })}
+                onConfirm={() => remove.mutate(undefined, { onSuccess: onDeleted })}
             >
                 Every channel and every message goes with it. This cannot be undone.
             </ConfirmDialog>

@@ -15,6 +15,8 @@ export type FeedMessage =
     | { channel: 'voice_left'; channelId: string; sessionId: string }
     | { channel: 'message'; channelId: string; message: ChatMessage }
     | { channel: 'structure_changed' }
+    /** Someone joined through an invite, left or was kicked: the member list is out of date. */
+    | { channel: 'members_changed' }
     | { channel: 'removed'; reason: RemovedReason }
     /** The login session ended (`session_ended`); the server closes the feed next. */
     | { channel: 'closed'; reason: CloseReason };
@@ -65,6 +67,8 @@ const parseEnvelope = (value: unknown): FeedMessage | null => {
             return parseChannelMessage(payload);
         case 'structure_changed':
             return { channel: 'structure_changed' };
+        case 'members_changed':
+            return { channel: 'members_changed' };
         case 'removed': {
             const reason = isObject(payload) ? oneOf(REMOVED_REASONS, payload.reason) : null;
             return reason ? { channel: 'removed', reason } : null;

@@ -34,7 +34,7 @@ relay (diagnostics). Audio is on, so use headphones.
 | --- | --- |
 | `/` | your servers, create a server, join one by invite link or code; `?removed=kicked\|left\|deleted` says why you were sent here |
 | `/c/$communityId` | redirects to the first channel you can see (a text channel if there is one) |
-| `/c/$communityId/$channelId` | a text channel's messages, or a voice channel's call with its chat |
+| `/c/$communityId/$channelId` | a text channel's messages, or a voice channel's call with its chat (opening a voice channel joins it) |
 | `/invite/$code` | invite preview (server name, member count) and the join button |
 
 ## Environment variables
@@ -94,6 +94,13 @@ per server, plus "create or join"), the server's channel column (its menu, categ
 channels, and under each voice channel who is in it: a green ring while speaking, a camera icon, a `LIVE` badge while
 sharing a screen, a crossed-out microphone while muted), and the channel on the right.
 
+The **member list** on the right of every channel page (toggled by the header's members button; open or closed is
+remembered in `localStorage`, and below 1100 px it starts closed and lies over the channel) groups the members under
+their highest role, highest first, with "Members" for those without one and a count per group. Names take the colour of
+their highest coloured role; the owner has a crown, and a speaker icon marks who is in a voice channel. Clicking a member
+shows their roles and, if the hierarchy allows, the same role and kick actions as the settings' members tab. The
+grouping is `groupMembers` in `features/communities/domain/member-list.ts`.
+
 Management UI is shown only to those who may use it (the server checks again regardless): the server menu offers
 invites (`create_invite`), server settings (overview: rename for `administrator`/owner, delete for the owner; roles with
 permission switches, ordering and deletion below the caller's rank; members with role assignment and kick; invites
@@ -104,8 +111,9 @@ deny per channel permission and the switch back to the category's permissions. C
 that synced channels use.
 
 The **community feed** (`/ws/communities/{id}`) is opened by the `/c/$communityId` layout (`CommunityFeedProvider`) and
-drives the voice roster in the channel list, the live messages of text channels, a refetch of the community on
-`structure_changed` (and after every reconnect, for what was missed), and the redirect home on `removed`. It reconnects
+drives the voice roster in the channel list, the live messages of text channels, a refetch of the community and its
+members on `structure_changed` (and after every reconnect, for what was missed), a refetch of the members on
+`members_changed`, and the redirect home on `removed`. It reconnects
 like the conference (1 s doubling to 15 s with jitter); a socket that closes before it opens re-fetches the community
 first, and a 403 or 404 there ends it as `kicked` or `deleted`.
 
@@ -128,6 +136,19 @@ functions there with tests.
 | `GET /api/channels/{id}/admission` | the call's reconnect probe: 204, 403, 404, 409 |
 | `POST/GET /api/communities/{id}/invites`, `DELETE /api/invites/{code}` | invites |
 | `GET/POST /api/invites/{code}` | invite preview and join |
+
+## The call
+
+As in Discord, the call is not tied to the page. `VoiceSessionProvider` (mounted by the `_authenticated` layout) holds
+at most one call, so it goes on while the user reads a text channel, opens another server or goes home. Opening a voice
+channel joins it, leaving the call in progress first; opening the channel you are in shows its grid and chat. Elsewhere,
+the "Voice connected" panel at the bottom of the channel column (in the bottom-left corner on pages without one) shows
+the channel, the server and the connection state, with mute, camera, screen share and leave; the channel name leads
+back to the call. Remote sound plays from `<audio>` elements rendered beside the routes (`VoiceCallAudio`), never from
+the grid's videos, which are always muted. When the server ends the call (`removed`, channel gone, session over) or the
+user is removed from the community, the panel says why (the stop texts below) until dismissed, and opening that
+channel again shows the reason instead of walking back in. The rules (join, switch or show; what the panel shows) are
+pure functions in `features/communities/domain/voice-session.ts`.
 
 ## Voice state
 
@@ -212,7 +233,7 @@ apps/web/
     router-context.ts      router context type (query client, auth)
     routes/                file-based routes (routeTree.gen.ts is generated and committed)
       __root.tsx             document shell, QueryClientProvider
-      _authenticated.tsx     pathless layout: session gate, server rail, account menu with sign-out
+      _authenticated.tsx     pathless layout: session gate, server rail, account menu with sign-out, the voice call
       _authenticated/index.tsx                       home: your servers, create, join by invite
       _authenticated/c/$communityId.tsx              a server: channel column and community feed
       _authenticated/c/$communityId/index.tsx        redirect to the first visible channel

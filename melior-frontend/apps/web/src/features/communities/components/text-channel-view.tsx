@@ -3,6 +3,7 @@ import { ChatPanel } from '@/features/chat/components';
 import { type Channel, hasPermission } from '@/features/communities/domain';
 import { useTextChannelChat } from '@/features/communities/hooks';
 import { ChannelIcon } from './channel-tree';
+import { MemberListButton } from './member-list';
 
 type TextChannelViewProps = {
     channel: Channel;
@@ -29,7 +30,9 @@ export const TextChannelView = ({ channel, username }: TextChannelViewProps) => 
                     </>
                 }
                 subtitle={channel.topic || undefined}
-            />
+            >
+                <MemberListButton />
+            </TopBar>
             <ChatPanel
                 fill
                 state={chat.state}

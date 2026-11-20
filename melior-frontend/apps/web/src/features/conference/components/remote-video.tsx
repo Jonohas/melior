@@ -12,14 +12,12 @@ type RemoteVideoProps = {
     direct?: MediaStream;
     shownPath: Path;
     username?: string;
-    /** The speaker to play this participant's sound on; empty or missing means the browser's default. */
-    speakerId?: string;
     /** Mute and speaking, as the server relays them. */
     voice?: VoiceState;
 };
 
-/** One remote participant: their video, or their initials until it arrives. Both paths stay attached and playing; only the shown one is visible and audible. */
-export const RemoteVideo = ({ forwarded, direct, shownPath, username, speakerId, voice }: RemoteVideoProps) => {
+/** One remote participant: their video, or their initials until it arrives. Both paths stay attached and playing; only the shown one is visible. Their sound plays from `RemoteAudio`. */
+export const RemoteVideo = ({ forwarded, direct, shownPath, username, voice }: RemoteVideoProps) => {
     const hasMedia = forwarded !== undefined || direct !== undefined;
     const path = tilePathLabel(shownPath, username);
     return (
@@ -30,8 +28,8 @@ export const RemoteVideo = ({ forwarded, direct, shownPath, username, speakerId,
                 voice?.speaking && 'border-success',
             )}
         >
-            {forwarded && <PathVideo stream={forwarded} shown={shownPath === 'forwarded'} speakerId={speakerId} />}
-            {direct && <PathVideo stream={direct} shown={shownPath === 'direct'} speakerId={speakerId} />}
+            {forwarded && <PathVideo stream={forwarded} shown={shownPath === 'forwarded'} />}
+            {direct && <PathVideo stream={direct} shown={shownPath === 'direct'} />}
             {!forwarded && !direct && (
                 <div className="grid size-full place-items-center">
                     <Avatar className="size-16">

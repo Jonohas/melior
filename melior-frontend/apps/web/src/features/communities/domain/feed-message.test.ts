@@ -47,6 +47,7 @@ describe('parseFeedMessage', () => {
             message: { id: 3, username: 'bob', text: 'hi', sentAtMs: 10 },
         });
         expect(parseFeedMessage(msg('structure_changed', {}))).toEqual({ channel: 'structure_changed' });
+        expect(parseFeedMessage(msg('members_changed', {}))).toEqual({ channel: 'members_changed' });
         for (const reason of ['kicked', 'left', 'deleted']) {
             expect(parseFeedMessage(msg('removed', { reason }))).toEqual({ channel: 'removed', reason });
         }
@@ -81,6 +82,7 @@ describe('applyToRoster', () => {
         const snapshot = applyToRoster(left, { channel: 'snapshot', voice: [entry, { ...entry, sessionId: 's2' }] });
         expect(occupantsOf(snapshot, 'v1').map((e) => e.sessionId)).toEqual(['s1', 's2']);
         expect(applyToRoster(snapshot, { channel: 'structure_changed' })).toBe(snapshot);
+        expect(applyToRoster(snapshot, { channel: 'members_changed' })).toBe(snapshot);
         expect(applyToRoster(snapshot, { channel: 'removed', reason: 'kicked' })).toEqual({});
     });
 

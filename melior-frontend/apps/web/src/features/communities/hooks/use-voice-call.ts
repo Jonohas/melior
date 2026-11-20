@@ -16,11 +16,15 @@ export type VoiceCall = {
     authNotice: string | null;
 };
 
+// Without a call there is no connection, so the chat never loads anything for this placeholder.
+const NO_CHANNEL = '';
+
 /**
- * A voice channel's call and its chat. After a lost connection the conference re-checks the session (401 runs
- * the login gate, 403 shows the no-access page) and asks the channel's admission endpoint whether to go on.
+ * A voice channel's call and its chat; no channel means no call. After a lost connection the conference
+ * re-checks the session (401 runs the login gate, 403 shows the no-access page) and asks the channel's
+ * admission endpoint whether to go on.
  */
-export const useVoiceCall = (channelId: ChannelId, forceRelay: boolean): VoiceCall => {
+export const useVoiceCall = (channelId: ChannelId | null, forceRelay: boolean): VoiceCall => {
     const router = useRouter();
     const queryClient = useQueryClient();
     const [authNotice, setAuthNotice] = useState<string | null>(null);
@@ -34,11 +38,12 @@ export const useVoiceCall = (channelId: ChannelId, forceRelay: boolean): VoiceCa
             if (result === 'forbidden') void router.invalidate();
             return result;
         },
-        checkChannelAccess: () => probeVoiceChannel(channelId),
+        checkChannelAccess: async () => (channelId === null ? 'unknown' : probeVoiceChannel(channelId)),
         onChat: (event) => chatInbox.current(event),
     });
-    const chat = useChat(channelId, {
-        connected: conference.status === 'connected',
+    const chat = useChat(channelId ?? NO_CHANNEL, {
+        // The status still names the old call in the render that changes the channel.
+        connected: channelId !== null && conference.status === 'connected',
         username: conference.username,
         open: chatOpen,
     });

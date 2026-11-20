@@ -2,11 +2,16 @@ import { createFileRoute, Link, Outlet, useParams } from '@tanstack/react-router
 import { ServerOff } from 'lucide-react';
 import { StatePage } from '@/components';
 import { Button, Skeleton } from '@/components/ui';
-import { ChannelSidebar } from '@/features/communities/components';
+import { ChannelSidebar, MemberList } from '@/features/communities/components';
 import { isRequestFailure } from '@/features/communities/domain';
-import { CommunityFeedProvider, useCommunityQuery, useRemovalRedirect } from '@/features/communities/hooks';
+import {
+    CommunityFeedProvider,
+    MemberListProvider,
+    useCommunityQuery,
+    useRemovalRedirect,
+} from '@/features/communities/hooks';
 
-/** One server: its channel column, the live feed for everything below, and the channel on the right. */
+/** One server: its channel column, the live feed for everything below, the channel, and the member list on the right. */
 export const Route = createFileRoute('/_authenticated/c/$communityId')({
     component: CommunityLayout,
 });
@@ -46,8 +51,11 @@ function CommunityLayout() {
 
     return (
         <CommunityFeedProvider communityId={communityId} onRemoved={onRemoved}>
-            <ChannelSidebar view={community.data} activeChannelId={channelId ?? null} />
-            <Outlet />
+            <MemberListProvider>
+                <ChannelSidebar view={community.data} activeChannelId={channelId ?? null} />
+                <Outlet />
+                <MemberList view={community.data} />
+            </MemberListProvider>
         </CommunityFeedProvider>
     );
 }

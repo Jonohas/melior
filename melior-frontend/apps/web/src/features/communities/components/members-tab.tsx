@@ -6,24 +6,16 @@ import {
     Badge,
     Button,
     DropdownMenu,
-    DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuLabel,
     DropdownMenuTrigger,
     Skeleton,
 } from '@/components/ui';
-import {
-    type CommunityView,
-    canAssignRole,
-    canKick,
-    type Member,
-    type RoleId,
-    rolesByRank,
-} from '@/features/communities/domain';
-import { useKickMember, useMembersQuery, useSetMemberRoles } from '@/features/communities/hooks';
+import { type CommunityView, canKick, type Member, type RoleId, rolesByRank } from '@/features/communities/domain';
+import { useMembersQuery, useSetMemberRoles } from '@/features/communities/hooks';
 import { initialsOf } from '@/lib/utils';
-import { ConfirmDialog } from './confirm-dialog';
 import { FormError } from './form-error';
+import { assignableRoles, KickMemberDialog, RoleChecklist } from './member-actions';
 import { RoleDot } from './roles-tab';
 
 type MemberRowProps = {
@@ -33,12 +25,9 @@ type MemberRowProps = {
     onKick: () => void;
 };
 
-const toggled = (roleIds: RoleId[], roleId: RoleId, on: boolean): RoleId[] =>
-    on ? [...roleIds, roleId] : roleIds.filter((id) => id !== roleId);
-
 const MemberRow = ({ view, member, onSetRoles, onKick }: MemberRowProps) => {
     const roles = rolesByRank(view.roles).filter((role) => member.roleIds.includes(role.id));
-    const assignable = rolesByRank(view.roles).filter((role) => canAssignRole(view, role));
+    const assignable = assignableRoles(view);
     return (
         <li className="flex flex-wrap items-center gap-2 py-2">
             <Avatar className="size-8">
@@ -66,15 +55,7 @@ const MemberRow = ({ view, member, onSetRoles, onKick }: MemberRowProps) => {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                         <DropdownMenuLabel>Roles</DropdownMenuLabel>
-                        {assignable.map((role) => (
-                            <DropdownMenuCheckboxItem
-                                key={role.id}
-                                checked={member.roleIds.includes(role.id)}
-                                onCheckedChange={(on) => onSetRoles(toggled(member.roleIds, role.id, on))}
-                            >
-                                {role.name}
-                            </DropdownMenuCheckboxItem>
-                        ))}
+                        <RoleChecklist view={view} member={member} onSetRoles={onSetRoles} />
                     </DropdownMenuContent>
                 </DropdownMenu>
             )}
@@ -97,7 +78,6 @@ const MemberRow = ({ view, member, onSetRoles, onKick }: MemberRowProps) => {
 export const MembersTab = ({ view }: { view: CommunityView }) => {
     const members = useMembersQuery(view.id, true);
     const setRoles = useSetMemberRoles(view.id);
-    const kick = useKickMember(view.id);
     const [kicking, setKicking] = useState<Member | null>(null);
 
     if (members.isPending) return <Skeleton className="h-40" />;
@@ -115,21 +95,7 @@ export const MembersTab = ({ view }: { view: CommunityView }) => {
                     />
                 ))}
             </ul>
-            <ConfirmDialog
-                open={kicking !== null}
-                onOpenChange={(open) => {
-                    if (!open) setKicking(null);
-                }}
-                title={`Kick ${kicking?.username ?? ''}?`}
-                confirmLabel="Kick"
-                pending={kick.isPending}
-                error={kick.error?.message ?? null}
-                onConfirm={() => {
-                    if (kicking) kick.mutate(kicking.userId, { onSuccess: () => setKicking(null) });
-                }}
-            >
-                They leave the server at once and can only come back with a new invite.
-            </ConfirmDialog>
+            <KickMemberDialog view={view} member={kicking} onClose={() => setKicking(null)} />
         </div>
     );
 };

@@ -51,7 +51,11 @@ const useFeedConnection = (communityId: CommunityId, onRemoved: (reason: Removed
         };
         const onMessage = (message: FeedMessage) => {
             setRoster((current) => applyToRoster(current, message));
+            // Role changes come as `structure_changed`, which refetches the members too.
             if (message.channel === 'structure_changed') refetch();
+            if (message.channel === 'members_changed') {
+                void queryClient.invalidateQueries({ queryKey: queryKeys.communities.members(communityId) });
+            }
             if (message.channel === 'removed') onRemovedRef.current(message.reason);
             if (message.channel !== 'message') return;
             for (const listener of listeners.current) listener(message.channelId, message.message);

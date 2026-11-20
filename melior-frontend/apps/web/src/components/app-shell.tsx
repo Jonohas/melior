@@ -19,6 +19,8 @@ type AppShellProps = {
     username: string;
     /** The server rail: one entry per server the user is in. */
     rail: ReactNode;
+    /** Shown over the bottom left of the page, beside the rail: the call panel on pages without a channel column. */
+    corner?: ReactNode;
     children: ReactNode;
 };
 
@@ -47,7 +49,7 @@ const UserMenu = ({ username }: { username: string }) => (
 );
 
 /** The frame of every signed-in page: the server rail with the user menu, and the page beside it. */
-export const AppShell = ({ username, rail, children }: AppShellProps) => (
+export const AppShell = ({ username, rail, corner, children }: AppShellProps) => (
     <div className="flex h-screen overflow-hidden">
         <aside
             aria-label="Servers"
@@ -60,6 +62,11 @@ export const AppShell = ({ username, rail, children }: AppShellProps) => (
             <nav className="flex min-h-0 w-full flex-1 flex-col items-center gap-2 overflow-y-auto">{rail}</nav>
             <UserMenu username={username} />
         </aside>
-        <div className="flex min-w-0 flex-1">{children}</div>
+        <div className="relative flex min-w-0 flex-1">
+            {children}
+            {corner && (
+                <div className="absolute bottom-3 left-3 z-40 w-60 overflow-hidden rounded-lg shadow-lg">{corner}</div>
+            )}
+        </div>
     </div>
 );

@@ -55,9 +55,10 @@ type UseConferenceOptions = {
 /**
  * Orchestrates one conference: camera once, then a signalling socket plus peer connection per
  * connection, replaced automatically after an unexpected loss. The decisions (what a close means, how
- * long to wait) are pure functions in the domain; this hook only executes them.
+ * long to wait) are pure functions in the domain; this hook only executes them. With no channel there is
+ * no call: nothing is opened, and a change of channel ends the old call before the new one starts.
  */
-export const useConference = (channelId: ChannelId, options: UseConferenceOptions = {}): UseConferenceReturn => {
+export const useConference = (channelId: ChannelId | null, options: UseConferenceOptions = {}): UseConferenceReturn => {
     const { forceRelay = false, checkSession, checkChannelAccess, onChat } = options;
     const checkSessionRef = useRef(checkSession);
     const checkChannelAccessRef = useRef(checkChannelAccess);
@@ -98,6 +99,8 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
         let generation = 0;
 
         dispatch({ type: 'reset' });
+        if (channelId === null) return;
+        const room = channelId;
 
         const teardown = () => {
             generation += 1;
@@ -152,7 +155,7 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
             if (disposed) return;
             const mine = generation;
             connection.signalling = createSignallingClient({
-                channelId,
+                channelId: room,
                 onMessage: (message) => handle(message, mine),
                 onClose: ({ opened }) => {
                     if (disposed || mine !== generation) return;
