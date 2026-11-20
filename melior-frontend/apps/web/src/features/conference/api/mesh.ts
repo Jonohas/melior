@@ -41,6 +41,8 @@ export type Mesh = {
     peerLeft: (peer: SessionId) => void;
     /** Starts (a track) or stops (null) sending the screen on every direct link, without renegotiation. */
     setScreen: (track: MediaStreamTrack | null) => Promise<void>;
+    /** Sends another microphone or camera track on every direct link, without renegotiation. */
+    replaceInput: (track: MediaStreamTrack) => Promise<void>;
     close: () => void;
 };
 
@@ -128,6 +130,7 @@ export const createMesh = (options: MeshOptions): Mesh => {
             views.delete(peer);
         },
         setScreen: registry.setScreen,
+        replaceInput: registry.replaceInput,
         close: () => {
             sampler.stop();
             registry.closeAll();

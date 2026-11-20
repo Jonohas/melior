@@ -6,7 +6,7 @@ import {
     type SessionId,
 } from '@/features/conference/domain';
 import { createDirectLink, type DirectLink } from './direct-link';
-import type { LocalTracks } from './direct-sections';
+import { type LocalTracks, sectionOf } from './direct-sections';
 import type { StatsSource } from './stats-sampler';
 
 type LinkRegistryOptions = {
@@ -34,6 +34,8 @@ export type LinkRegistry = {
     closeAll: () => void;
     /** Sends the screen (or none) on every open link, and on every link opened later. */
     setScreen: (track: MediaStreamTrack | null) => Promise<void>;
+    /** Sends another microphone or camera track on every open link, and on every link opened later. */
+    replaceInput: (track: MediaStreamTrack) => Promise<void>;
     statsSources: () => StatsSource[];
 };
 
@@ -107,6 +109,10 @@ export const createLinkRegistry = ({
         setScreen: async (track) => {
             local.screen = track;
             await Promise.all([...links.values()].map((link) => link.setScreen(track)));
+        },
+        replaceInput: async (track) => {
+            local[sectionOf(track)] = track;
+            await Promise.all([...links.values()].map((link) => link.replaceInput(track)));
         },
     };
 };

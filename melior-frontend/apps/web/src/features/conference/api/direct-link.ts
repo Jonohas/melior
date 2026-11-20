@@ -5,7 +5,7 @@ import {
     type IceServer,
     type SessionId,
 } from '@/features/conference/domain';
-import { addOfferedSections, attachAnsweredSections, type LocalTracks, NO_SENDERS } from './direct-sections';
+import { addOfferedSections, attachAnsweredSections, type LocalTracks, NO_SENDERS, sectionOf } from './direct-sections';
 import { createIceCandidateQueue } from './ice-candidate-queue';
 import { createScreenChannel } from './screen-channel';
 
@@ -37,6 +37,8 @@ export type DirectLink = {
     addIceCandidate: (candidate: IceCandidate) => Promise<void>;
     /** Sends the screen track (or none) from now on, in place of the previous one; no renegotiation. */
     setScreen: (track: MediaStreamTrack | null) => Promise<void>;
+    /** Sends another microphone or camera track from now on; no renegotiation. */
+    replaceInput: (track: MediaStreamTrack) => Promise<void>;
     connection: RTCPeerConnection;
     /** The ids of the receiving tracks in section order (audio, camera, screen), for the stats. */
     sectionTrackIds: () => string[];
@@ -150,6 +152,9 @@ export const createDirectLink = ({
         setScreen: async (track) => {
             await senders.screen?.replaceTrack(track);
             channel.announce();
+        },
+        replaceInput: async (track) => {
+            await senders[sectionOf(track)]?.replaceTrack(track);
         },
         close: () => {
             connection.onicecandidate = null;

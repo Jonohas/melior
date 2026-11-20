@@ -7,6 +7,8 @@ const asTrack = (value: { id: string }) => value as unknown as MediaStreamTrack;
 const MIC = track('mic', 'audio');
 const CAMERA = track('cam', 'video');
 const SCREEN = track('scr', 'video');
+const NEW_MIC = track('mic2', 'audio');
+const NEW_CAMERA = track('cam2', 'video');
 
 // 'a' sorts below 'b' and 'c', so this side offers to both.
 describe('createLinkRegistry', () => {
@@ -57,6 +59,34 @@ describe('createLinkRegistry', () => {
         expect(FakePeerConnection.instances[0]?.offersCreated).toBe(1);
         await registry.open('c').start();
         expect(tracksOf(1)).toEqual(['mic', 'cam', null]);
+    });
+
+    test('a device switch replaces the matching track on every open link before anything is stopped', async () => {
+        registry = create();
+        await registry.open('b').start();
+        await registry.open('c').start();
+        await registry.replaceInput(asTrack(NEW_CAMERA));
+        await registry.replaceInput(asTrack(NEW_MIC));
+        expect(tracksOf(0)).toEqual(['mic2', 'cam2', null]);
+        expect(tracksOf(1)).toEqual(['mic2', 'cam2', null]);
+        expect(FakePeerConnection.instances.every((c) => c.offersCreated === 1)).toBe(true);
+    });
+
+    test('a replaced track keeps the mute state it was given, and so does one on a later link', async () => {
+        registry = create();
+        await registry.open('b').start();
+        const muted = { ...NEW_MIC, enabled: false };
+        await registry.replaceInput(asTrack(muted));
+        expect(sections(0)[0]?.sender.track?.enabled).toBe(false);
+        await registry.open('c').start();
+        expect(sections(1)[0]?.sender.track?.enabled).toBe(false);
+    });
+
+    test('a link opened after a switch uses the current tracks', async () => {
+        registry = create();
+        await registry.replaceInput(asTrack(NEW_CAMERA));
+        await registry.open('b').start();
+        expect(tracksOf(0)).toEqual(['mic', 'cam2', null]);
     });
 
     test('maps direct-link stats entries to the peer and the kind of their section', async () => {

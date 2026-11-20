@@ -2,6 +2,7 @@ export {
     type CallPreferences,
     DEFAULT_CALL_PREFERENCES,
     parseCallPreferences,
+    trackEnabled,
 } from './call-preferences';
 export {
     CHANNEL_ID_PATTERN,

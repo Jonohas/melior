@@ -53,3 +53,6 @@ export const attachAnsweredSections = async (
     }
     return senders;
 };
+
+/** Which fixed section a local microphone or camera track belongs to. */
+export const sectionOf = (track: MediaStreamTrack): 'audio' | 'video' => (track.kind === 'audio' ? 'audio' : 'video');

@@ -8,7 +8,7 @@ import {
     saveDevicePreference,
     stopMedia,
 } from '@/features/conference/api';
-import type { CallPreferences } from '@/features/conference/domain';
+import { type CallPreferences, trackEnabled } from '@/features/conference/domain';
 import type { ConferenceConnection } from './session-messages';
 
 export type ActiveDevices = { audioinput: string | null; videoinput: string | null };
@@ -34,8 +34,7 @@ export type CallMedia = {
 
 /** Turns the microphone and camera tracks on or off as the person chose. Off means silence or black frames. */
 const applyCallPreferences = (stream: MediaStream, preferences: CallPreferences) => {
-    for (const track of stream.getAudioTracks()) track.enabled = !preferences.microphoneMuted;
-    for (const track of stream.getVideoTracks()) track.enabled = !preferences.cameraOff;
+    for (const track of stream.getTracks()) track.enabled = trackEnabled(track.kind, preferences);
 };
 
 const devicesOf = (stream: MediaStream): ActiveDevices => ({
@@ -74,8 +73,11 @@ export const useCallMedia = (connection: RefObject<ConferenceConnection>): CallM
             if (!stream) return;
             const track = await captureInput(kind, deviceId);
             const old = kind === 'audioinput' ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+            // Before it is sent anywhere: a muted microphone stays silent through the switch.
+            track.enabled = trackEnabled(track.kind, preferencesRef.current);
+            const { peer, mesh } = connection.current;
             try {
-                await connection.current.peer?.replaceInput(track);
+                await Promise.all([peer?.replaceInput(track), mesh?.replaceInput(track)]);
             } catch (error) {
                 track.stop();
                 throw error;
@@ -85,6 +87,7 @@ export const useCallMedia = (connection: RefObject<ConferenceConnection>): CallM
                 old.stop();
             }
             stream.addTrack(track);
+            // A switch pressed while the device was opening reaches the new track too.
             applyCallPreferences(stream, preferencesRef.current);
             saveDevicePreference(kind, deviceId);
             setActiveDevices(devicesOf(stream));
