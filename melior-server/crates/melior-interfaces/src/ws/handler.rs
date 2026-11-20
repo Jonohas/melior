@@ -1,4 +1,5 @@
 use super::messages::{ClientMessage, CloseReason, SdpType, ServerMessage};
+use super::peer::{PeerCommand, Rejection};
 use crate::AppState;
 use crate::http::{Authenticated, authenticate, from_foreign_origin};
 use axum::Router;
@@ -226,6 +227,11 @@ async fn dispatch(
         ClientMessage::Ice(candidate) => {
             service.add_ice_candidate(session_id, candidate.into()).await
         }
+        ClientMessage::RouteLive(dto) => peer(service, session_id, dto.validate()).await,
+        ClientMessage::LinkFailed(dto) => peer(service, session_id, dto.validate()).await,
+        ClientMessage::PeerOffer(dto) => peer(service, session_id, dto.validate_offer()).await,
+        ClientMessage::PeerAnswer(dto) => peer(service, session_id, dto.validate_answer()).await,
+        ClientMessage::PeerIce(dto) => peer(service, session_id, dto.validate()).await,
         ClientMessage::Echo(text) => {
             outbox.push(ServerMessage::Echo(text));
             Ok(())
@@ -234,6 +240,40 @@ async fn dispatch(
 
     if let Err(error) = result {
         report(session_id, outbox, &error);
+    }
+}
+
+/// Carries out a validated mesh message. A rejected one is dropped with a debug log
+/// and no reply: the client tears everything down on `error`.
+async fn peer(
+    service: &ConferenceService,
+    session_id: &SessionId,
+    command: Result<PeerCommand, Rejection>,
+) -> Result<(), ConferenceError> {
+    let command = match command {
+        Ok(command) => command,
+        Err(rejection) => {
+            debug!(session = %session_id, ?rejection, "mesh message dropped");
+            return Ok(());
+        }
+    };
+    match command {
+        PeerCommand::RouteLive { peer, epoch } => {
+            service.route_live(session_id, &peer, epoch).await
+        }
+        PeerCommand::LinkFailed { peer } => service.link_failed(session_id, &peer).await,
+        PeerCommand::Offer { to, sdp } => {
+            service.relay_peer_offer(session_id, &to, sdp).await;
+            Ok(())
+        }
+        PeerCommand::Answer { to, sdp } => {
+            service.relay_peer_answer(session_id, &to, sdp).await;
+            Ok(())
+        }
+        PeerCommand::Ice { to, candidate } => {
+            service.relay_peer_ice(session_id, &to, candidate).await;
+            Ok(())
+        }
     }
 }
 

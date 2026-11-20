@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::TestServer;
+use common::{STEP, TestServer, new_peer_connection, next_json};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -13,21 +13,15 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
-use webrtc::api::APIBuilder;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MIME_TYPE_VP8, MediaEngine};
+use webrtc::api::media_engine::MIME_TYPE_VP8;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
-use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp::header::Header;
 use webrtc::rtp::packet::Packet;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
-
-const STEP: Duration = Duration::from_secs(20);
 
 /// Something a test client observed.
 #[derive(Debug)]
@@ -301,31 +295,6 @@ fn report_when_flowing(
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     });
-}
-
-async fn new_peer_connection() -> RTCPeerConnection {
-    let mut media_engine = MediaEngine::default();
-    media_engine.register_default_codecs().unwrap();
-    let interceptors = register_default_interceptors(Registry::new(), &mut media_engine).unwrap();
-    APIBuilder::new()
-        .with_media_engine(media_engine)
-        .with_interceptor_registry(interceptors)
-        .build()
-        .new_peer_connection(RTCConfiguration::default())
-        .await
-        .unwrap()
-}
-
-async fn next_json<S>(stream: &mut S) -> Value
-where
-    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
-{
-    let message = timeout(STEP, stream.next())
-        .await
-        .expect("timed out waiting for a message")
-        .expect("socket closed")
-        .expect("socket error");
-    serde_json::from_str(message.to_text().unwrap()).unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

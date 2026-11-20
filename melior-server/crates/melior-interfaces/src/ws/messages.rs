@@ -3,6 +3,7 @@
 //! These types exist only to be (de)serialized; they are translated to and from the
 //! application's vocabulary at the edge so the wire format can evolve independently.
 
+use super::peer::{LinkFailedDto, PeerDescriptionDto, PeerIceDto, RouteLiveDto};
 use melior_application::Signal;
 #[cfg(test)]
 use melior_application::TrackOwner;
@@ -15,6 +16,11 @@ pub enum ClientMessage {
     SdpOffer(SessionDescriptionDto),
     SdpAnswer(SessionDescriptionDto),
     Ice(IceCandidateDto),
+    RouteLive(RouteLiveDto),
+    LinkFailed(LinkFailedDto),
+    PeerOffer(PeerDescriptionDto),
+    PeerAnswer(PeerDescriptionDto),
+    PeerIce(PeerIceDto),
     Echo(String),
 }
 
