@@ -3,6 +3,7 @@ import type { StopReason } from './reconnect';
 import { partitionStreams, type StreamKey } from './remote-tracks';
 import type { SessionId } from './session-id';
 import type { Participant, Path } from './signalling-message';
+import type { VoiceState } from './voice-state';
 
 /** Structural stand-in for MediaStream so the domain stays free of DOM types. */
 export type StreamRef = object;
@@ -13,6 +14,8 @@ export type ConferenceState<TStream extends StreamRef> = {
     username: string | null;
     /** Remote participants by session id (a remote stream's id is its publisher's session id). */
     participants: Record<SessionId, string>;
+    /** Mute, camera, screen and speaking per participant (this one included), as the server relays them. */
+    voices: Record<SessionId, VoiceState>;
     localStream: TStream | null;
     /** One stream per remote participant that has media, keyed by session id. */
     remoteStreams: Record<SessionId, TStream>;
@@ -37,7 +40,8 @@ export type ConferenceAction<TStream extends StreamRef> =
     | { type: 'local_stream_ready'; stream: TStream }
     | { type: 'socket_connecting' }
     | { type: 'session_started'; sessionId: SessionId; username: string; participants: Participant[] }
-    | { type: 'peer_joined'; sessionId: SessionId; username: string }
+    | { type: 'peer_joined'; sessionId: SessionId; username: string; voice: VoiceState }
+    | { type: 'voice_changed'; sessionId: SessionId; voice: VoiceState }
     | { type: 'connected' }
     | { type: 'failed'; message: string }
     | { type: 'reconnecting'; attempt: number }
@@ -52,6 +56,7 @@ export const createInitialConferenceState = <TStream extends StreamRef>(): Confe
     sessionId: null,
     username: null,
     participants: {},
+    voices: {},
     localStream: null,
     remoteStreams: {},
     directStreams: {},
@@ -85,12 +90,19 @@ export const conferenceReducer = <TStream extends StreamRef>(
                         .filter((p) => p.session_id !== action.sessionId)
                         .map((p) => [p.session_id, p.username]),
                 ),
+                voices: Object.fromEntries(action.participants.map((p) => [p.session_id, p.voice])),
                 status: 'negotiating',
             };
         case 'peer_joined':
             return action.sessionId === state.sessionId
                 ? state
-                : { ...state, participants: { ...state.participants, [action.sessionId]: action.username } };
+                : {
+                      ...state,
+                      participants: { ...state.participants, [action.sessionId]: action.username },
+                      voices: { ...state.voices, [action.sessionId]: action.voice },
+                  };
+        case 'voice_changed':
+            return { ...state, voices: { ...state.voices, [action.sessionId]: action.voice } };
         case 'connected':
             return { ...state, status: 'connected', reconnectAttempt: 0 };
         case 'failed':
@@ -101,6 +113,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 ...state,
                 sessionId: null,
                 participants: {},
+                voices: {},
                 remoteStreams: {},
                 directStreams: {},
                 directScreens: {},
@@ -115,6 +128,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 ...state,
                 sessionId: null,
                 participants: {},
+                voices: {},
                 remoteStreams: {},
                 directStreams: {},
                 directScreens: {},
@@ -145,12 +159,22 @@ export const conferenceReducer = <TStream extends StreamRef>(
             return { ...state, shownPaths: { ...state.shownPaths, [action.sessionId]: action.path } };
         case 'peer_left': {
             const { [action.sessionId]: _left, ...participants } = state.participants;
+            const { [action.sessionId]: _voice, ...voices } = state.voices;
             const { [action.sessionId]: _media, ...remoteStreams } = state.remoteStreams;
             const { [action.sessionId]: _screen, ...screenStreams } = state.screenStreams;
             const { [action.sessionId]: _direct, ...directStreams } = state.directStreams;
             const { [action.sessionId]: _directScreen, ...directScreens } = state.directScreens;
             const { [action.sessionId]: _shown, ...shownPaths } = state.shownPaths;
-            return { ...state, participants, remoteStreams, screenStreams, directStreams, directScreens, shownPaths };
+            return {
+                ...state,
+                participants,
+                voices,
+                remoteStreams,
+                screenStreams,
+                directStreams,
+                directScreens,
+                shownPaths,
+            };
         }
     }
 };

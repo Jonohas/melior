@@ -1,22 +1,7 @@
-import { Link } from '@tanstack/react-router';
-import {
-    LogOut,
-    MessageSquare,
-    Mic,
-    MicOff,
-    MonitorOff,
-    MonitorUp,
-    Settings2,
-    ShieldCheck,
-    Video,
-    VideoOff,
-} from 'lucide-react';
+import { LogOut, MessageSquare, Mic, MicOff, MonitorOff, MonitorUp, Settings2, Video, VideoOff } from 'lucide-react';
 import { Badge, Button } from '@/components/ui';
 
 type RoomDockProps = {
-    /** Only the owner or an admin can change who may enter. */
-    canManageAccess: boolean;
-    onOpenAccess: () => void;
     chatOpen: boolean;
     onToggleChat: () => void;
     /** Chat messages that arrived while the panel was closed. */
@@ -32,12 +17,12 @@ type RoomDockProps = {
     onToggleMicrophone: () => void;
     cameraOff: boolean;
     onToggleCamera: () => void;
+    /** Leaves the call; the caller decides where to go. */
+    onLeave: () => void;
 };
 
 /** The controls at the bottom of a room. */
 export const RoomDock = ({
-    canManageAccess,
-    onOpenAccess,
     chatOpen,
     onToggleChat,
     unread,
@@ -50,6 +35,7 @@ export const RoomDock = ({
     onToggleMicrophone,
     cameraOff,
     onToggleCamera,
+    onLeave,
 }: RoomDockProps) => (
     <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-border bg-card px-4 py-3">
         <Button
@@ -85,11 +71,6 @@ export const RoomDock = ({
                 {screenSharing ? 'Stop sharing' : 'Share screen'}
             </Button>
         )}
-        {canManageAccess && (
-            <Button type="button" variant="outline" onClick={onOpenAccess}>
-                <ShieldCheck /> Room access
-            </Button>
-        )}
         <Button
             type="button"
             variant={chatOpen ? 'secondary' : 'outline'}
@@ -104,10 +85,8 @@ export const RoomDock = ({
                 </Badge>
             )}
         </Button>
-        <Button asChild variant="destructive">
-            <Link to="/">
-                <LogOut /> Leave
-            </Link>
+        <Button type="button" variant="destructive" onClick={onLeave}>
+            <LogOut /> Leave
         </Button>
     </div>
 );

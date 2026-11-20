@@ -1,4 +1,3 @@
-export { ChannelForm } from './channel-form';
 export { ConferenceStatusBadges } from './conference-status-badges';
 export { DeviceSettingsDialog } from './device-settings-dialog';
 export { LocalPreview } from './local-preview';

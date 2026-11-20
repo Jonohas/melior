@@ -1,6 +1,7 @@
 import { MicOff, VideoOff } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { Badge } from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 type LocalPreviewProps = {
     stream: MediaStream | null;
@@ -8,10 +9,18 @@ type LocalPreviewProps = {
     /** Shown on the tile, so you can tell the others cannot hear you. */
     microphoneMuted?: boolean;
     cameraOff?: boolean;
+    /** Your microphone picks up speech: the tile gets the speaking ring. */
+    speaking?: boolean;
 };
 
 /** Your own camera, mirrored and muted. */
-export const LocalPreview = ({ stream, username, microphoneMuted = false, cameraOff = false }: LocalPreviewProps) => {
+export const LocalPreview = ({
+    stream,
+    username,
+    microphoneMuted = false,
+    cameraOff = false,
+    speaking = false,
+}: LocalPreviewProps) => {
     const ref = useRef<HTMLVideoElement>(null);
 
     useEffect(() => {
@@ -19,7 +28,13 @@ export const LocalPreview = ({ stream, username, microphoneMuted = false, camera
     }, [stream]);
 
     return (
-        <div className="relative aspect-video overflow-hidden rounded-lg border-2 border-border bg-muted">
+        <div
+            data-speaking={speaking}
+            className={cn(
+                'relative aspect-video overflow-hidden rounded-lg border-2 border-border bg-muted transition-colors',
+                speaking && 'border-success',
+            )}
+        >
             <video ref={ref} autoPlay muted playsInline className="size-full -scale-x-100 bg-black object-contain" />
             {cameraOff && (
                 <div className="absolute inset-0 grid place-items-center bg-muted text-sm text-muted-foreground">

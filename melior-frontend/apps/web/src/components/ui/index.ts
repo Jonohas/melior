@@ -34,8 +34,10 @@ export {
 } from './dropdown-menu';
 export { Input, inputVariants } from './input';
 export { Label } from './label';
+export { NativeSelect } from './native-select';
 export { Separator } from './separator';
 export { Skeleton } from './skeleton';
 export { Switch } from './switch';
+export { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs';
 export { Textarea, textareaVariants } from './textarea';
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip';

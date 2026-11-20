@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { parseServerMessage } from './parse-server-message';
+import { SILENT_VOICE } from './voice-state';
 
 const msg = (channel: string, payload: unknown) => JSON.stringify({ channel, payload });
 
@@ -10,7 +11,7 @@ describe('parseServerMessage', () => {
                 session_id: 's1',
                 channel_id: 'general',
                 username: 'alice',
-                participants: [{ session_id: 's0', username: 'bob' }],
+                participants: [{ session_id: 's0', username: 'bob', voice: { ...SILENT_VOICE, muted: true } }],
                 ice_servers: [{ urls: ['stun:x:1'] }, { urls: ['turn:y:2'], username: 'u', credential: 'c' }],
             }),
         );
@@ -20,7 +21,7 @@ describe('parseServerMessage', () => {
                 session_id: 's1',
                 channel_id: 'general',
                 username: 'alice',
-                participants: [{ session_id: 's0', username: 'bob' }],
+                participants: [{ session_id: 's0', username: 'bob', voice: { ...SILENT_VOICE, muted: true } }],
                 ice_servers: [{ urls: ['stun:x:1'] }, { urls: ['turn:y:2'], username: 'u', credential: 'c' }],
             },
         });
@@ -58,12 +59,28 @@ describe('parseServerMessage', () => {
         expect(parseServerMessage(msg('closed', null))).toBeNull();
     });
 
-    test('parses peer_joined', () => {
+    test('parses peer_joined, with everything off when the voice object is missing', () => {
         expect(parseServerMessage(msg('peer_joined', { session_id: 'x', username: 'bob' }))).toEqual({
             channel: 'peer_joined',
-            payload: { session_id: 'x', username: 'bob' },
+            payload: { session_id: 'x', username: 'bob', voice: SILENT_VOICE },
+        });
+        const voice = { muted: false, camera: true, screen: true, speaking: false };
+        expect(parseServerMessage(msg('peer_joined', { session_id: 'x', username: 'bob', voice }))).toEqual({
+            channel: 'peer_joined',
+            payload: { session_id: 'x', username: 'bob', voice },
         });
         expect(parseServerMessage(msg('peer_joined', { session_id: 'x' }))).toBeNull();
+        expect(
+            parseServerMessage(msg('peer_joined', { session_id: 'x', username: 'bob', voice: { muted: 1 } })),
+        ).toBeNull();
+    });
+
+    test('parses voice_state and rejects a partial one', () => {
+        const state = { session_id: 's', muted: true, camera: false, screen: false, speaking: false };
+        expect(parseServerMessage(msg('voice_state', state))).toEqual({ channel: 'voice_state', payload: state });
+        expect(parseServerMessage(msg('voice_state', { ...state, session_id: undefined }))).toBeNull();
+        expect(parseServerMessage(msg('voice_state', { ...state, speaking: 'no' }))).toBeNull();
+        expect(parseServerMessage(msg('voice_state', null))).toBeNull();
     });
 
     test('rejects a session with a bad channel id or ice server', () => {

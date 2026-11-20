@@ -1,39 +1,34 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
+import { Server } from 'lucide-react';
 import { TopBar } from '@/components';
-import { ChannelForm } from '@/features/conference/components';
-import { RoomList } from '@/features/rooms/components';
-import { useDeleteRoomMutation, useRoomsQuery } from '@/features/rooms/hooks';
+import { CommunityHome } from '@/features/communities/components';
+import { REMOVED_REASONS, type RemovedReason } from '@/features/communities/domain';
+
+type HomeSearch = {
+    /** Set after the user was removed from a server, to say why. */
+    removed?: RemovedReason;
+};
 
 export const Route = createFileRoute('/_authenticated/')({
-    component: LobbyPage,
+    validateSearch: (raw: Record<string, unknown>): HomeSearch => {
+        const removed = REMOVED_REASONS.find((reason) => reason === raw.removed);
+        return removed ? { removed } : {};
+    },
+    component: HomePage,
 });
 
-function LobbyPage() {
-    const navigate = useNavigate();
-    const rooms = useRoomsQuery();
-    const deleteRoom = useDeleteRoomMutation();
-    const error = rooms.error?.message ?? deleteRoom.error?.message ?? null;
-
+function HomePage() {
+    const { removed } = Route.useSearch();
     return (
-        <>
-            <TopBar />
-            <main className="min-h-0 flex-1 overflow-y-auto">
-                <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-                    <div>
-                        <h1 className="text-2xl font-semibold">Rooms</h1>
-                        <p className="text-sm text-muted-foreground">Rooms you own or were invited to.</p>
-                    </div>
-                    <ChannelForm
-                        onSubmit={(channelId) => navigate({ to: '/rooms/$channelId', params: { channelId } })}
-                    />
-                    <RoomList
-                        rooms={rooms.data}
-                        loading={rooms.isPending}
-                        error={error}
-                        onDelete={(channelId) => deleteRoom.mutate(channelId)}
-                    />
-                </div>
-            </main>
-        </>
+        <div className="flex min-w-0 flex-1 flex-col">
+            <TopBar
+                title={
+                    <>
+                        <Server className="size-4" aria-hidden="true" /> Servers
+                    </>
+                }
+            />
+            <CommunityHome removed={removed} />
+        </div>
     );
 }

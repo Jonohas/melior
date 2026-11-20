@@ -134,7 +134,12 @@ export const handleServerMessage = async (context: MessageContext, message: Serv
                 type: 'peer_joined',
                 sessionId: message.payload.session_id,
                 username: message.payload.username,
+                voice: message.payload.voice,
             });
+        case 'voice_state': {
+            const { session_id, ...voice } = message.payload;
+            return dispatch({ type: 'voice_changed', sessionId: session_id, voice });
+        }
         case 'peer_left':
             connection.mesh?.peerLeft(message.payload.session_id);
             return dispatch({ type: 'peer_left', sessionId: message.payload.session_id });

@@ -10,9 +10,9 @@ import {
     DialogHeader,
     DialogTitle,
     Label,
+    NativeSelect,
 } from '@/components/ui';
 import { type DeviceOption, selectedDevice } from '@/features/conference/domain';
-import { cn } from '@/lib/utils';
 
 type DeviceSettingsDialogProps = {
     open: boolean;
@@ -50,16 +50,11 @@ const DeviceField = ({ icon, label, options, value, onChange }: DeviceFieldProps
                 {icon}
                 {label}
             </Label>
-            <select
+            <NativeSelect
                 id={id}
                 value={value}
                 disabled={options.length === 0}
                 onChange={(event) => onChange(event.target.value)}
-                className={cn(
-                    'h-9 w-full rounded-md border border-input bg-secondary px-3 text-sm shadow-(--input-shadow) outline-none',
-                    'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50',
-                    '[color-scheme:dark]',
-                )}
             >
                 {options.length === 0 && <option value="">None found</option>}
                 {options.map((option) => (
@@ -67,7 +62,7 @@ const DeviceField = ({ icon, label, options, value, onChange }: DeviceFieldProps
                         {option.label}
                     </option>
                 ))}
-            </select>
+            </NativeSelect>
         </div>
     );
 };

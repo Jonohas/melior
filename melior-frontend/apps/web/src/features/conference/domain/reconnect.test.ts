@@ -45,7 +45,7 @@ describe('decideOnClose', () => {
     test('session_ended re-checks the session only', () => {
         expect(decideOnClose({ serverReason: 'session_ended', opened: true })).toEqual({
             kind: 'diagnose',
-            checkRoom: false,
+            checkChannel: false,
         });
     });
 
@@ -62,7 +62,7 @@ describe('decideOnClose', () => {
     });
 
     test('a close before open diagnoses session and room', () => {
-        expect(decideOnClose({ serverReason: null, opened: false })).toEqual({ kind: 'diagnose', checkRoom: true });
+        expect(decideOnClose({ serverReason: null, opened: false })).toEqual({ kind: 'diagnose', checkChannel: true });
     });
 });
 
@@ -72,9 +72,12 @@ describe('decideAfterDiagnosis', () => {
         expect(decideAfterDiagnosis('forbidden', 'unknown')).toEqual({ kind: 'stop', reason: 'no_access' });
     });
 
-    test('a forbidden room is final only when the session is fine', () => {
-        expect(decideAfterDiagnosis('ok', 'forbidden')).toEqual({ kind: 'stop', reason: 'not_invited' });
+    test('a refused, unknown or full channel is final only when the session is fine', () => {
+        expect(decideAfterDiagnosis('ok', 'forbidden')).toEqual({ kind: 'stop', reason: 'removed' });
+        expect(decideAfterDiagnosis('ok', 'not_found')).toEqual({ kind: 'stop', reason: 'channel_not_found' });
+        expect(decideAfterDiagnosis('ok', 'full')).toEqual({ kind: 'stop', reason: 'channel_full' });
         expect(decideAfterDiagnosis('error', 'forbidden')).toEqual({ kind: 'reconnect', immediate: false });
+        expect(decideAfterDiagnosis('error', 'full')).toEqual({ kind: 'reconnect', immediate: false });
     });
 
     test('everything else retries with backoff', () => {
@@ -86,7 +89,8 @@ describe('decideAfterDiagnosis', () => {
 
 describe('describeStop', () => {
     test('has the user-facing texts', () => {
-        expect(describeStop('removed')).toBe('You were removed from this room');
-        expect(describeStop('not_invited')).toBe('You are not invited to this room');
+        expect(describeStop('removed')).toBe('You were removed from this channel');
+        expect(describeStop('channel_not_found')).toBe('This channel does not exist');
+        expect(describeStop('channel_full')).toBe('This channel is full');
     });
 });

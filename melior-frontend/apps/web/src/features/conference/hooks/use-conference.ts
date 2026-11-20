@@ -2,10 +2,10 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { createSignallingClient, stopMedia } from '@/features/conference/api';
 import {
     type ChannelId,
+    type ChannelProbe,
     type ConferenceState,
     conferenceReducer,
     createInitialConferenceState,
-    type RoomProbe,
     type ServerMessage,
     type SessionProbe,
 } from '@/features/conference/domain';
@@ -19,6 +19,8 @@ import {
 } from './session-messages';
 import { type CallMedia, useCallMedia } from './use-call-media';
 import { type ScreenShare, useScreenShare } from './use-screen-share';
+import { useSpeaking } from './use-speaking';
+import { useVoicePublisher } from './use-voice-publisher';
 
 type UseConferenceReturn = ConferenceState<MediaStream> &
     Pick<
@@ -32,6 +34,8 @@ type UseConferenceReturn = ConferenceState<MediaStream> &
         screenError: ScreenShare['error'];
         startScreenShare: ScreenShare['start'];
         stopScreenShare: ScreenShare['stop'];
+        /** Whether the own microphone picks up speech right now (always false while muted). */
+        speaking: boolean;
     };
 
 type UseConferenceOptions = {
@@ -42,8 +46,8 @@ type UseConferenceOptions = {
      * upgrade). The caller runs the login gate on 401 and shows the no-access state on 403.
      */
     checkSession?: () => Promise<SessionProbe>;
-    /** Asks whether the user may join this room (a 403 means "not invited"). */
-    checkRoomAccess?: () => Promise<RoomProbe>;
+    /** Asks whether the user may join this voice channel (404 unknown, 403 refused, 409 full). */
+    checkChannelAccess?: () => Promise<ChannelProbe>;
     /** Called for every chat message the room receives and every refusal of this client's messages. */
     onChat?: (event: ChatEvent) => void;
 };
@@ -54,9 +58,9 @@ type UseConferenceOptions = {
  * long to wait) are pure functions in the domain; this hook only executes them.
  */
 export const useConference = (channelId: ChannelId, options: UseConferenceOptions = {}): UseConferenceReturn => {
-    const { forceRelay = false, checkSession, checkRoomAccess, onChat } = options;
+    const { forceRelay = false, checkSession, checkChannelAccess, onChat } = options;
     const checkSessionRef = useRef(checkSession);
-    const checkRoomAccessRef = useRef(checkRoomAccess);
+    const checkChannelAccessRef = useRef(checkChannelAccess);
     const onChatRef = useRef(onChat);
     // The open connection, for the use cases that act outside the connection's own effect.
     const connectionRef = useRef<ConferenceConnection>({ signalling: null, peer: null, mesh: null });
@@ -66,7 +70,7 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
     const { resume: resumeScreen, release: releaseScreen, track: screenTrack } = screen;
     useEffect(() => {
         checkSessionRef.current = checkSession;
-        checkRoomAccessRef.current = checkRoomAccess;
+        checkChannelAccessRef.current = checkChannelAccess;
         onChatRef.current = onChat;
     });
     const [state, dispatch] = useReducer(
@@ -74,6 +78,17 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
         undefined,
         createInitialConferenceState<MediaStream>,
     );
+    const speaking = useSpeaking(state.localStream, media.activeDevices.audioinput, media.microphoneMuted);
+    useVoicePublisher({
+        connection: connectionRef,
+        sessionId: state.sessionId,
+        switches: {
+            muted: media.microphoneMuted,
+            camera: !media.cameraOff,
+            screen: screen.sharing,
+            speaking,
+        },
+    });
 
     useEffect(() => {
         let disposed = false;
@@ -103,7 +118,7 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
             release: () => releaseConnection(connection),
             connect: () => connect(),
             checkSession: checkSessionRef,
-            checkRoomAccess: checkRoomAccessRef,
+            checkChannelAccess: checkChannelAccessRef,
         });
 
         const contextFor = (mine: number): MessageContext => ({
@@ -186,6 +201,7 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
     return {
         ...state,
         sendChat,
+        speaking,
         activeDevices: media.activeDevices,
         changeInput: media.changeInput,
         microphoneMuted: media.microphoneMuted,

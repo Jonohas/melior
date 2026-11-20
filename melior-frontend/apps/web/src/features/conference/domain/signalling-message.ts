@@ -1,5 +1,6 @@
 import type { ChannelId } from './channel-id';
 import type { SessionId } from './session-id';
+import type { VoiceState } from './voice-state';
 
 export type IceServer = {
     urls: string[];
@@ -22,6 +23,8 @@ export type SessionDescription<T extends 'offer' | 'answer'> = {
 export type Participant = {
     session_id: SessionId;
     username: string;
+    /** Mute, camera, screen and speaking, as the server last relayed them. */
+    voice: VoiceState;
 };
 
 /** What a published track shows: the participant's camera (and microphone) or its screen. */
@@ -78,6 +81,7 @@ export type ServerMessage =
     | { channel: 'sdp_offer'; payload: ServerOffer }
     | { channel: 'ice'; payload: IceCandidate }
     | { channel: 'peer_left'; payload: { session_id: SessionId } }
+    | { channel: 'voice_state'; payload: VoiceState & { session_id: SessionId } }
     | { channel: 'chat'; payload: ChatPayload }
     | { channel: 'chat_error'; payload: { message: string; client_id?: string } }
     | { channel: 'error'; payload: { message: string } }
@@ -97,4 +101,5 @@ export type ClientMessage =
     | { channel: 'peer_offer'; payload: { to: SessionId; sdp: string } }
     | { channel: 'peer_answer'; payload: { to: SessionId; sdp: string } }
     | { channel: 'peer_ice'; payload: { to: SessionId; candidate: IceCandidate } }
-    | { channel: 'chat_send'; payload: { text: string; client_id?: string } };
+    | { channel: 'chat_send'; payload: { text: string; client_id?: string } }
+    | { channel: 'voice_state'; payload: VoiceState };

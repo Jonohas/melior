@@ -4,14 +4,7 @@ export {
     parseCallPreferences,
     trackEnabled,
 } from './call-preferences';
-export {
-    CHANNEL_ID_PATTERN,
-    type ChannelId,
-    DEFAULT_CHANNEL_ID,
-    isChannelId,
-    normalizeChannelInput,
-    parseChannelId,
-} from './channel-id';
+export { CHANNEL_ID_PATTERN, type ChannelId, isChannelId } from './channel-id';
 export {
     type ConferenceAction,
     type ConferenceState,
@@ -32,6 +25,7 @@ export {
 } from './devices';
 export { isOfferer } from './direct-link-role';
 export { parseForceRelay } from './force-relay';
+export { isObject, isString, type JsonObject } from './parse-primitives';
 export { parseServerMessage } from './parse-server-message';
 export {
     countInbound,
@@ -49,6 +43,7 @@ export {
     updateFlow,
 } from './path-flow';
 export {
+    type ChannelProbe,
     type CloseDecision,
     decideAfterDiagnosis,
     decideOnClose,
@@ -56,7 +51,6 @@ export {
     nextAttempt,
     RECONNECT_BASE_MS,
     RECONNECT_MAX_MS,
-    type RoomProbe,
     reconnectDelayMs,
     type SessionProbe,
     type StopReason,
@@ -100,3 +94,17 @@ export {
     type SelectionResult,
     selectSource,
 } from './source-selection';
+export {
+    nextSpeaking,
+    QUIET,
+    rmsLevel,
+    SPEAKING_SAMPLE_MS,
+    type SpeakingState,
+} from './speaking';
+export {
+    claimedVoiceState,
+    parseVoiceState,
+    SILENT_VOICE,
+    type VoiceState,
+    voiceUpdateToSend,
+} from './voice-state';

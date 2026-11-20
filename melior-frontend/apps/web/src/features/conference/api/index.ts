@@ -1,3 +1,4 @@
+export { createLevelMeter, type LevelMeter } from './level-meter';
 export {
     canChooseSpeaker,
     canShareScreen,
