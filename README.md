@@ -509,11 +509,60 @@ marked as a pre-release on GitHub. The images carry the OCI labels `source`,
 `version` and `revision`.
 
 The first time, GHCR may create the packages as private. Make both public in
-the package settings (Package settings, Danger Zone, Change visibility) so the
-deploy host can pull without credentials.
+the package settings (Package settings, Danger Zone, Change visibility) so anyone
+can pull them without credentials. The deploy logs in with the workflow's token,
+so it does not depend on this.
 
-Deployment is not part of this repository: the infrastructure repository
-(`Jonohas/infra`) pins the version to run and rolls it out.
+A stable release then deploys itself; see [Deployment](#deployment).
+
+## Deployment
+
+Melior runs on the VM `melior`. The work is split between two repositories:
+
+| This repository | `Jonohas/infra` |
+|---|---|
+| `deploy/compose.yaml`: the server, the frontend, Postgres and Redis, from the release images | The VM with Docker, on the tailnet as `tag:melior-host` with Tailscale SSH, and the user `deploy` |
+| `deploy/deploy.sh`: pulls one release and starts it | `/opt/melior/.env`: `FRONTEND_URL`, the issuer and client, the TURN URLs and secret, `POSTGRES_PASSWORD` |
+| `.github/workflows/deploy.yml`: runs the two on the VM | The realm `melior` on the central Keycloak at `https://auth.faber.zip`, coturn at `turn.faber.zip`, and Traefik serving `https://meet.faber.zip` |
+
+The infrastructure repository rewrites `/opt/melior/.env` on every run, so the
+app's own settings go in `deploy/compose.yaml`.
+
+`release.yml` starts `deploy.yml` on `main` for every stable release. To deploy a
+pre-release or to roll back, open **Actions**, then **deploy**, then **Run
+workflow**, and enter the version (`X.Y.Z`, no `v`). The workflow:
+
+1. Checks that the version has a GitHub Release.
+2. Joins the tailnet as `tag:melior-deployer` through a federated identity, so
+   no secret is stored. Only runs on `main` get in.
+3. Copies `deploy/compose.yaml` and `deploy/deploy.sh` to `/opt/melior` as
+   `deploy@melior`, over Tailscale SSH.
+4. Runs `deploy.sh X.Y.Z`. It writes `version.env`, pulls the images and starts
+   them, and it waits until every container is running. One deploy runs at a time.
+5. Waits until `<FRONTEND_URL>/api/health` answers 200 through Traefik.
+
+To read the logs on the VM:
+
+```sh
+ssh deploy@melior
+cd /opt/melior && docker compose --env-file .env --env-file version.env -f compose.yaml logs -f melior-server
+```
+
+### Set up once
+
+1. In the Tailscale admin console, under **Settings**, then **Trust credentials**,
+   add an **OpenID Connect** credential:
+   - Issuer: **GitHub Actions**
+   - Subject: `repo:Jonohas/melior:ref:refs/heads/main`
+   - Custom claim: `job_workflow_ref` =
+     `Jonohas/melior/.github/workflows/deploy.yml@refs/heads/main`
+   - Scope: **Auth Keys** write, with the tag `tag:melior-deployer`
+2. Store its client ID and audience in this repository:
+
+   ```sh
+   gh variable set TS_RUNNER_CLIENT_ID --body '<client id>'
+   gh variable set TS_RUNNER_AUDIENCE --body '<audience>'
+   ```
 
 ## Tests and checks
 

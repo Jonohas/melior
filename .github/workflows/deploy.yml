@@ -1,0 +1,92 @@
+# Deploys a released version to the Melior VM, which Jonohas/infra prepares. The runner joins the
+# tailnet as tag:melior-deployer through a federated identity (no stored secret), copies
+# deploy/compose.yaml and deploy/deploy.sh to the VM over Tailscale SSH as `deploy`, and runs the
+# script. See "Deployment" in README.md. release.yml starts it for every stable release.
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to deploy, X.Y.Z (no leading v). An older one rolls back.
+        required: true
+        type: string
+
+# One deploy at a time. A running one is never cancelled: that would leave the stack half-updated.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Tailscale federated identity (OIDC).
+  id-token: write
+  # Pulls the images on the VM, in case they are not public.
+  packages: read
+
+jobs:
+  deploy:
+    name: deploy ${{ inputs.version }}
+    # The trust credential only accepts tokens of main; this skips other branches before they fail.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ inputs.version }}
+      HOST: deploy@melior
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # The version goes through the environment, never into the script text.
+      - name: Version is a release
+        run: |
+          semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if ! [[ "$VERSION" =~ $semver ]]; then
+            echo "::error::version must look like X.Y.Z, got '$VERSION'"
+            exit 1
+          fi
+          gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Join the tailnet
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ vars.TS_RUNNER_CLIENT_ID }}
+          audience: ${{ vars.TS_RUNNER_AUDIENCE }}
+          tags: tag:melior-deployer
+
+      # Tailscale SSH authenticates the VM by its tailnet identity, so there is no host key to pin.
+      - name: Copy the compose file and the script
+        run: |
+          ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20)
+          for file in compose.yaml deploy.sh; do
+            ssh "${ssh_opts[@]}" "$HOST" "cat > /opt/melior/$file.new" < "deploy/$file"
+          done
+          ssh "${ssh_opts[@]}" "$HOST" \
+            'cd /opt/melior && chmod 755 deploy.sh.new && mv compose.yaml.new compose.yaml && mv deploy.sh.new deploy.sh'
+
+      - name: Deploy
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$HOST" \
+            "/opt/melior/deploy.sh '$VERSION' '$ACTOR'" <<<"$GH_TOKEN"
+
+      # Through Traefik on the web VM and the frontend's proxy to the server: the path a browser takes.
+      - name: Verify
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$HOST" 'bash -s' <<'REMOTE'
+          set -u
+          url=$(sed -n 's/^FRONTEND_URL=//p' /opt/melior/.env)/api/health
+          deadline=$((SECONDS + 180))
+          until [ "$(curl -s -o /dev/null -w '%{http_code}' -m 5 "$url")" = 200 ]; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::$url did not answer 200 within 180s"
+              docker compose --env-file /opt/melior/.env --env-file /opt/melior/version.env \
+                -f /opt/melior/compose.yaml ps
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "healthy: $url"
+          REMOTE
