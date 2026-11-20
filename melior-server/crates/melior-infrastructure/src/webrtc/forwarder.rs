@@ -2,6 +2,7 @@ use melior_domain::{MediaKind, TrackId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 use tracing::debug;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
@@ -50,6 +51,8 @@ pub(super) struct Forwarder {
     /// Replaced as a whole on every change, so the packet loop only clones an `Arc`.
     outlets: RwLock<Arc<Vec<Arc<OutletTrack>>>>,
     last_keyframe_request: Mutex<Option<Instant>>,
+    /// Wakes [`Self::run`] to end the track when its publisher stopped sending.
+    stopped: Notify,
 }
 
 impl Forwarder {
@@ -62,6 +65,7 @@ impl Forwarder {
             publisher,
             outlets: RwLock::new(Arc::new(Vec::new())),
             last_keyframe_request: Mutex::new(None),
+            stopped: Notify::new(),
         }
     }
 
@@ -81,9 +85,20 @@ impl Forwarder {
         *outlets = Arc::new(next);
     }
 
-    /// Forwards packets until the publisher's track ends.
+    /// Ends [`Self::run`], as a failing read does. Remembered if `run` is not
+    /// waiting yet, so it cannot be missed.
+    pub fn stop(&self) {
+        self.stopped.notify_one();
+    }
+
+    /// Forwards packets until the publisher's track ends or is stopped.
     pub async fn run(&self, remote: Arc<TrackRemote>) {
-        while let Ok((mut packet, _)) = remote.read_rtp().await {
+        loop {
+            let read = tokio::select! {
+                read = remote.read_rtp() => read,
+                () = self.stopped.notified() => return,
+            };
+            let Ok((mut packet, _)) = read else { return };
             // Header extension ids are negotiated per connection; the publisher's
             // (notably its MID) would be wrong for subscribers. Each outlet's track
             // re-adds the ones its own connection negotiated.
