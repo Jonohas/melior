@@ -250,6 +250,47 @@ impl ConferenceService {
         Ok(())
     }
 
+    /// The room a participant is in and the username it joined with.
+    pub async fn whereabouts(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<(ChannelId, String), ConferenceError> {
+        let session = self.require_session(session_id)?;
+        let room = session.room.lock().await;
+        let username = room
+            .roster()
+            .into_iter()
+            .find(|participant| &participant.session_id == session_id)
+            .map(|participant| participant.username)
+            .ok_or(ConferenceError::UnknownSession)?;
+        Ok((session.channel_id.clone(), username))
+    }
+
+    /// Tells everyone in a participant's room something: `for_sender` to the
+    /// participant, `for_others` to the rest. Runs under the room lock, so the
+    /// room's participants hear it in the same order as its other signals.
+    pub async fn tell_room(
+        &self,
+        session_id: &SessionId,
+        for_sender: Signal,
+        for_others: Signal,
+    ) -> Result<(), ConferenceError> {
+        let session = self.require_session(session_id)?;
+        let room = session.room.lock().await;
+        for participant in room.roster() {
+            let Some(target) = self.session(&participant.session_id) else {
+                continue;
+            };
+            let signal = if &participant.session_id == session_id {
+                for_sender.clone()
+            } else {
+                for_others.clone()
+            };
+            target.signals.send(signal);
+        }
+        Ok(())
+    }
+
     /// Sends the participant a fresh offer if its negotiation allows one right now;
     /// otherwise the negotiation remembers that one is due.
     async fn renegotiate(&self, room: &mut Room, session: &Session) {
@@ -266,7 +307,8 @@ impl ConferenceService {
                     .into_iter()
                     .filter_map(|(mid, track_id)| {
                         let session_id = room.publisher_of(&track_id)?.clone();
-                        Some(TrackOwner { mid, session_id })
+                        let source = room.source_of(&track_id)?;
+                        Some(TrackOwner { mid, session_id, source })
                     })
                     .collect();
                 session.signals.send(Signal::Offer { sdp: offer.sdp, tracks });

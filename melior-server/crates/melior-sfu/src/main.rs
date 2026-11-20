@@ -13,11 +13,13 @@
     clippy::unreachable
 )]
 
-use melior_application::{AuthService, AuthSettings, ConferenceService, RoomAccessService};
+use melior_application::{
+    AuthService, AuthSettings, ChatService, ConferenceService, RoomAccessService,
+};
 use melior_domain::MeshPolicy;
 use melior_infrastructure::config::Config;
 use melior_infrastructure::oidc::{OidcIdentityProvider, OidcSettings};
-use melior_infrastructure::postgres::PostgresRoomRepository;
+use melior_infrastructure::postgres::{Database, PostgresChatRepository, PostgresRoomRepository};
 use melior_infrastructure::redis::{RedisConnection, RedisRoomLeases, RedisSessionStore};
 use melior_infrastructure::telemetry;
 use melior_infrastructure::turn::TurnRestCredentials;
@@ -65,12 +67,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         AuthSettings::new(&config.frontend_url, config.session_ttl, config.token_refresh_lead),
     ));
 
-    let rooms = Arc::new(RoomAccessService::new(Arc::new(PostgresRoomRepository::new(
-        &config.database_url,
-    )?)));
+    // One lazily connected pool for everything stored in Postgres.
+    let database = Arc::new(Database::new(&config.database_url)?);
+    let rooms =
+        Arc::new(RoomAccessService::new(Arc::new(PostgresRoomRepository::new(database.clone()))));
+    let chat = Arc::new(ChatService::new(
+        conference.clone(),
+        Arc::new(PostgresChatRepository::new(database)),
+    ));
 
     let app = router(AppState {
         conference,
+        chat,
         auth,
         rooms,
         session_cookie_name: config.session_cookie_name.as_str().into(),

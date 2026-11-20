@@ -24,7 +24,8 @@ export type ReceiverSection = { mid: string | null; trackId: string };
 /**
  * Whose media a stats entry shows: the entry's `trackIdentifier` names a receiving track, the transceiver
  * holding it has a mid, and the server's assignments say who publishes that mid. Undefined when any link
- * of that chain is missing.
+ * of that chain is missing. Only a camera section counts: a shared screen is no part of the path a camera
+ * switch waits for.
  */
 export const peerForTrack = (
     trackId: string | undefined,
@@ -33,7 +34,7 @@ export const peerForTrack = (
 ): SessionId | undefined => {
     const mid = sections.find((section) => section.trackId === trackId)?.mid;
     if (mid === null || mid === undefined) return undefined;
-    return assignments.find((assignment) => assignment.mid === mid)?.session_id;
+    return assignments.find((assignment) => assignment.mid === mid && assignment.source === 'camera')?.session_id;
 };
 
 /** Sums the counters per peer; `peerOf` says whose media an entry shows (undefined: nobody's). */

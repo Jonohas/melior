@@ -1,5 +1,6 @@
 //! The Melior domain model, one module per bounded context.
 //!
+//! - [`chat`]: chat messages and the rules on what may be said.
 //! - [`conference`]: rooms, participants, tracks and the negotiation rules.
 //! - [`identity`]: who a user is and what they may do.
 //!
@@ -21,13 +22,15 @@
     clippy::unreachable
 )]
 
+pub mod chat;
 pub mod conference;
 pub mod identity;
 
+pub use chat::{ChatError, ChatMessage, ChatText, MessageId, SendLimit};
 pub use conference::{
     ChannelId, ClientOffer, Departure, DomainError, Effects, IceCandidate, IceServer, Joined,
     LinkClose, LinkTimeout, MediaKind, MediaPath, MeshPolicy, Negotiation, NegotiationPhase, Pair,
     ParticipantInfo, Room, RoomAccess, RoomTarget, Route, RouteNotice, Sdp, SessionId, Track,
-    TrackId,
+    TrackId, TrackSource,
 };
 pub use identity::{AuthSessionId, ReturnPath, User, UserId, Username};

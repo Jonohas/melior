@@ -5,9 +5,9 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use melior_application::{
-    AuthService, AuthSettings, Authentication, AuthorizationRequest, ConferenceService,
-    IdentityProvider, IdpError, InMemoryRoomRepository, InMemorySessionStore, LeaseError,
-    RoomAccessService, RoomLeases, StaticIceServers, Tokens,
+    AuthService, AuthSettings, Authentication, AuthorizationRequest, ChatService,
+    ConferenceService, IdentityProvider, IdpError, InMemoryChatRepository, InMemoryRoomRepository,
+    InMemorySessionStore, LeaseError, RoomAccessService, RoomLeases, StaticIceServers, Tokens,
 };
 use melior_domain::{ChannelId, MeshPolicy, User, UserId};
 use melior_infrastructure::webrtc::WebRtcMediaEngine;
@@ -144,6 +144,10 @@ impl TestServer {
             leases.clone(),
             mesh,
         );
+        let chat = Arc::new(ChatService::new(
+            conference.clone(),
+            Arc::new(InMemoryChatRepository::default()),
+        ));
         let sessions = Arc::new(InMemorySessionStore::default());
         let auth = Arc::new(AuthService::new(
             Arc::new(FakeIdp),
@@ -153,6 +157,7 @@ impl TestServer {
         let rooms = Arc::new(RoomAccessService::new(Arc::new(InMemoryRoomRepository::default())));
         let app = router(AppState {
             conference,
+            chat,
             auth: auth.clone(),
             rooms: rooms.clone(),
             session_cookie_name: SESSION_COOKIE.into(),

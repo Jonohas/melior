@@ -3,11 +3,12 @@
 //! These types exist only to be (de)serialized; they are translated to and from the
 //! application's vocabulary at the edge so the wire format can evolve independently.
 
+use super::chat::{ChatMessageDto, ChatSendDto};
 use super::peer::{LinkFailedDto, PeerDescriptionDto, PeerIceDto, RouteLiveDto};
 use melior_application::Signal;
 #[cfg(test)]
 use melior_application::TrackOwner;
-use melior_domain::{IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp};
+use melior_domain::{IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp, TrackSource};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -22,6 +23,7 @@ pub enum ClientMessage {
     PeerAnswer(PeerDescriptionDto),
     PeerIce(PeerIceDto),
     Echo(String),
+    ChatSend(ChatSendDto),
 }
 
 impl ClientMessage {
@@ -86,6 +88,13 @@ pub enum ServerMessage {
         reason: CloseReason,
     },
     Echo(String),
+    Chat(ChatMessageDto),
+    /// A message the server did not accept. `client_id` names it when the client gave one.
+    ChatError {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
+        message: String,
+    },
 }
 
 /// Why the server ends a connection that the client did not close.
@@ -153,6 +162,24 @@ pub struct OfferDto {
 pub struct TrackOwnerDto {
     pub mid: String,
     pub session_id: String,
+    /// What the track shows.
+    pub source: TrackSourceDto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackSourceDto {
+    Camera,
+    Screen,
+}
+
+impl From<TrackSource> for TrackSourceDto {
+    fn from(source: TrackSource) -> Self {
+        match source {
+            TrackSource::Camera => Self::Camera,
+            TrackSource::Screen => Self::Screen,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -243,6 +270,7 @@ impl From<Signal> for ServerMessage {
                     .map(|owner| TrackOwnerDto {
                         mid: owner.mid,
                         session_id: owner.session_id.to_string(),
+                        source: owner.source.into(),
                     })
                     .collect(),
             }),
@@ -261,6 +289,9 @@ impl From<Signal> for ServerMessage {
             }
             Signal::PeerIce { from, candidate } => {
                 Self::PeerIce { from: from.to_string(), candidate: candidate.into() }
+            }
+            Signal::Chat { message, client_id } => {
+                Self::Chat(ChatMessageDto::new(message, client_id))
             }
             Signal::Error(message) => Self::Error { message },
         }
@@ -376,7 +407,11 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ServerMessage::from(Signal::Offer {
                 sdp: Sdp::new("v=0"),
-                tracks: vec![TrackOwner { mid: "1".into(), session_id: session_id.clone() }],
+                tracks: vec![TrackOwner {
+                    mid: "1".into(),
+                    session_id: session_id.clone(),
+                    source: TrackSource::Screen
+                },],
             }))
             .unwrap(),
             json!({
@@ -384,7 +419,7 @@ mod tests {
                 "payload": {
                     "type": "offer",
                     "sdp": "v=0",
-                    "tracks": [{ "mid": "1", "session_id": session_id.as_str() }]
+                    "tracks": [{ "mid": "1", "session_id": session_id.as_str(), "source": "screen" }]
                 }
             })
         );

@@ -8,16 +8,20 @@ describe('peerForTrack', () => {
         { mid: null, trackId: 't2' },
     ];
     const assignments = [
-        { mid: '0', session_id: 'a' },
-        { mid: '2', session_id: 'b' },
+        { mid: '0', session_id: 'a', source: 'camera' as const },
+        { mid: '1', session_id: 'a', source: 'screen' as const },
+        { mid: '2', session_id: 'b', source: 'camera' as const },
     ];
 
     test('follows track id to mid to publisher', () => {
         expect(peerForTrack('t0', sections, assignments)).toBe('a');
     });
 
-    test('is undefined when a link of the chain is missing', () => {
+    test("a shared screen belongs to no peer, so it cannot count as the peer's video", () => {
         expect(peerForTrack('t1', sections, assignments)).toBeUndefined();
+    });
+
+    test('is undefined when a link of the chain is missing', () => {
         expect(peerForTrack('t2', sections, assignments)).toBeUndefined();
         expect(peerForTrack('nope', sections, assignments)).toBeUndefined();
         expect(peerForTrack(undefined, sections, assignments)).toBeUndefined();

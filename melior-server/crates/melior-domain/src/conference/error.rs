@@ -18,6 +18,9 @@ pub enum DomainError {
     #[error("track {0} is already published")]
     DuplicateTrack(TrackId),
 
+    #[error("participant {0} already shares a screen next to its camera")]
+    TooManyVideoTracks(SessionId),
+
     #[error("an offer was received while a server offer is still awaiting its answer")]
     OfferDuringRenegotiation,
 

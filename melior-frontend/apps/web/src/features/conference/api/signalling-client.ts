@@ -14,7 +14,8 @@ type SignallingClientOptions = {
 };
 
 export type SignallingClient = {
-    send: (message: ClientMessage) => void;
+    /** Returns false when the socket is not open, so nothing was sent. */
+    send: (message: ClientMessage) => boolean;
     close: () => void;
 };
 
@@ -49,7 +50,9 @@ export const createSignallingClient = ({
 
     return {
         send: (message) => {
-            if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+            if (socket.readyState !== WebSocket.OPEN) return false;
+            socket.send(JSON.stringify(message));
+            return true;
         },
         close: () => {
             socket.onopen = socket.onclose = socket.onerror = socket.onmessage = null;

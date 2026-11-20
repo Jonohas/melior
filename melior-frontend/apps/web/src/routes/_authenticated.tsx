@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router';
-import { AuthenticatedHeader, NoAccessPage, RouterErrorPage } from '@/components';
+import { AppShell, NoAccessPage, RouterErrorPage } from '@/components';
+import { useRoomsQuery } from '@/features/rooms/hooks';
 import { ForbiddenError, loadAuthenticatedContext, useAuth } from '@/lib/auth';
 
 /**
@@ -23,11 +24,11 @@ export const Route = createFileRoute('/_authenticated')({
 
 function AuthenticatedLayout() {
     const { user } = useAuth();
+    const rooms = useRoomsQuery();
 
     return (
-        <>
-            <AuthenticatedHeader username={user.username} />
+        <AppShell username={user.username} rooms={rooms.data ?? []}>
             <Outlet />
-        </>
+        </AppShell>
     );
 }

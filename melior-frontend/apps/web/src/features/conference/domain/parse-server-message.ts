@@ -2,14 +2,30 @@ import { isChannelId } from './channel-id';
 import { parseMeshMessage } from './parse-mesh-message';
 import { isObject, isString, optionalString, parseIceCandidate } from './parse-primitives';
 import {
+    type ChatPayload,
     CLOSE_REASONS,
     type CloseReason,
     type IceServer,
     type Participant,
     type ServerMessage,
+    TRACK_SOURCES,
     type TrackAssignment,
 } from './signalling-message';
 
+const isWholeNumber = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value);
+
+const parseChatPayload = (value: unknown): ChatPayload | null => {
+    if (!isObject(value) || !isWholeNumber(value.id) || !isWholeNumber(value.sent_at_ms)) return null;
+    if (!isString(value.username) || !isString(value.text) || !optionalString(value.client_id)) return null;
+    const payload: ChatPayload = {
+        id: value.id,
+        username: value.username,
+        text: value.text,
+        sent_at_ms: value.sent_at_ms,
+    };
+    if (value.client_id !== undefined) payload.client_id = value.client_id;
+    return payload;
+};
 const parseIceServer = (value: unknown): IceServer | null => {
     if (!isObject(value)) return null;
     const { urls, username, credential } = value;
@@ -29,7 +45,9 @@ const parseParticipant = (value: unknown): Participant | null => {
 
 const parseTrackAssignment = (value: unknown): TrackAssignment | null => {
     if (!isObject(value) || !isString(value.mid) || !isString(value.session_id)) return null;
-    return { mid: value.mid, session_id: value.session_id };
+    const source = TRACK_SOURCES.find((known) => known === value.source);
+    if (!source) return null;
+    return { mid: value.mid, session_id: value.session_id, source };
 };
 
 const parseSessionDescription = <T extends 'offer' | 'answer'>(
@@ -99,6 +117,16 @@ const parseEnvelope = (value: unknown): ServerMessage | null => {
             return isObject(payload) && isString(payload.session_id)
                 ? { channel: 'peer_left', payload: { session_id: payload.session_id } }
                 : null;
+        case 'chat': {
+            const chat = parseChatPayload(payload);
+            return chat ? { channel: 'chat', payload: chat } : null;
+        }
+        case 'chat_error': {
+            if (!isObject(payload) || !isString(payload.message) || !optionalString(payload.client_id)) return null;
+            const refusal: { message: string; client_id?: string } = { message: payload.message };
+            if (payload.client_id !== undefined) refusal.client_id = payload.client_id;
+            return { channel: 'chat_error', payload: refusal };
+        }
         case 'error':
             return isObject(payload) && isString(payload.message)
                 ? { channel: 'error', payload: { message: payload.message } }

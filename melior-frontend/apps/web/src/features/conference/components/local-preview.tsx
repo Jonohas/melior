@@ -1,11 +1,17 @@
+import { MicOff, VideoOff } from 'lucide-react';
 import { useEffect, useRef } from 'react';
+import { Badge } from '@/components/ui';
 
 type LocalPreviewProps = {
     stream: MediaStream | null;
     username: string | null;
+    /** Shown on the tile, so you can tell the others cannot hear you. */
+    microphoneMuted?: boolean;
+    cameraOff?: boolean;
 };
 
-export const LocalPreview = ({ stream, username }: LocalPreviewProps) => {
+/** Your own camera, mirrored and muted. */
+export const LocalPreview = ({ stream, username, microphoneMuted = false, cameraOff = false }: LocalPreviewProps) => {
     const ref = useRef<HTMLVideoElement>(null);
 
     useEffect(() => {
@@ -13,16 +19,23 @@ export const LocalPreview = ({ stream, username }: LocalPreviewProps) => {
     }, [stream]);
 
     return (
-        <div>
-            <p>{username ? `${username} (you)` : 'Local (your camera)'}</p>
-            <video
-                ref={ref}
-                autoPlay
-                muted
-                playsInline
-                className="w-[400px] max-w-full aspect-video bg-black"
-                style={{ transform: 'scaleX(-1)' }}
-            />
+        <div className="relative aspect-video overflow-hidden rounded-lg border-2 border-border bg-muted">
+            <video ref={ref} autoPlay muted playsInline className="size-full -scale-x-100 bg-black object-contain" />
+            {cameraOff && (
+                <div className="absolute inset-0 grid place-items-center bg-muted text-sm text-muted-foreground">
+                    <span className="flex items-center gap-2">
+                        <VideoOff className="size-4" aria-hidden="true" /> Your camera is off
+                    </span>
+                </div>
+            )}
+            {microphoneMuted && (
+                <Badge variant="destructive" className="absolute top-2 left-2">
+                    <MicOff /> Muted
+                </Badge>
+            )}
+            <Badge variant="secondary" className="absolute bottom-2 left-2">
+                {username ? `${username} (you)` : 'You'}
+            </Badge>
         </div>
     );
 };

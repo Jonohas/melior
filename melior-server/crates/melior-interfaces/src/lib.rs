@@ -1,6 +1,6 @@
 //! Delivery mechanisms that drive the application's use cases.
 //!
-//! - [`http`]: the login round trip, identity and health endpoints.
+//! - [`http`]: the login round trip, identity, health, room and chat history endpoints.
 //! - [`ws`]: the signalling WebSocket.
 //!
 //! Invariants of this crate:
@@ -26,7 +26,7 @@ pub mod http;
 pub mod ws;
 
 use axum::Router;
-use melior_application::{AuthService, ConferenceService, RoomAccessService};
+use melior_application::{AuthService, ChatService, ConferenceService, RoomAccessService};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,6 +34,7 @@ use std::time::Duration;
 #[derive(Clone)]
 pub struct AppState {
     pub conference: Arc<ConferenceService>,
+    pub chat: Arc<ChatService>,
     pub auth: Arc<AuthService>,
     pub rooms: Arc<RoomAccessService>,
     pub session_cookie_name: Arc<str>,
@@ -46,6 +47,7 @@ pub struct AppState {
 /// - `GET /login`, `/signin`, `/signout`: the login round trip (see [`http`]).
 /// - `GET /api/identity/me`, `/api/health`.
 /// - `GET /api/rooms`, `GET`/`PUT`/`DELETE /api/rooms/{channel_id}`: the room registry.
+/// - `GET /api/rooms/{channel_id}/messages`: the room's chat history.
 /// - `GET /ws?channel_id=<room>`: conference signalling (see [`ws`]), for logged-in users.
 pub fn router(state: AppState) -> Router {
     Router::new().merge(http::routes()).merge(ws::routes()).with_state(state)

@@ -19,7 +19,7 @@ pub use effects::{Effects, LinkClose, LinkTimeout, RouteNotice};
 pub use error::DomainError;
 pub use ids::{ChannelId, SessionId, TrackId};
 pub use links::{LinkEvent, Links, Pair, Route};
-pub use media::{MediaKind, Track};
+pub use media::{MediaKind, Track, TrackSource};
 pub use mesh::{MediaPath, MeshPolicy, RoomTarget};
 pub use negotiation::{ClientOffer, Negotiation, NegotiationPhase};
 pub use room::{Departure, Joined, ParticipantInfo, Room};

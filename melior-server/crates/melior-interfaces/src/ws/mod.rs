@@ -1,5 +1,6 @@
 //! The WebSocket signalling API.
 
+pub mod chat;
 mod handler;
 mod limiter;
 pub mod messages;

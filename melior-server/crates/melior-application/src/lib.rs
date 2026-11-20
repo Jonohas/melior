@@ -1,5 +1,6 @@
 //! The Melior use cases and the ports they depend on, one module per bounded context.
 //!
+//! - [`chat`]: room chat and its history.
 //! - [`conference`]: joining rooms and negotiating who receives which tracks.
 //! - [`auth`]: the login round trip and server-side sessions.
 //! - [`rooms`]: the room registry: who owns a room and who may enter it.
@@ -24,6 +25,7 @@
 )]
 
 pub mod auth;
+pub mod chat;
 pub mod conference;
 pub mod rooms;
 
@@ -31,6 +33,9 @@ pub use auth::{
     ActiveSession, AuthError, AuthService, AuthSettings, Authentication, AuthorizationRequest,
     CompletedLogin, IdentityProvider, IdpError, InMemorySessionStore, LoginRedirect, SessionState,
     SessionStore, StoreError, StoredSession, Tokens,
+};
+pub use chat::{
+    ChatFailure, ChatPage, ChatRepository, ChatService, ChatStoreError, InMemoryChatRepository,
 };
 pub use conference::{
     ConferenceError, ConferenceService, IceServerProvider, LeaseError, MediaEngine, MediaError,

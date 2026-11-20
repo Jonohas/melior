@@ -1,41 +1,27 @@
+use super::Database;
 use async_trait::async_trait;
 use melior_application::{RepositoryError, RoomRepository};
 use melior_domain::{ChannelId, RoomAccess, User, UserId, Username};
 use sqlx::Row;
-use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use std::time::Duration;
-use tokio::sync::OnceCell;
+use sqlx::postgres::{PgPool, PgRow};
+use std::sync::Arc;
 
 const COLUMNS: &str = "channel_id, owner_id, owner_username, restricted, members";
 
 /// [`RoomRepository`] on Postgres.
-///
-/// Nothing is connected at construction: the pool connects on first use and the
-/// schema migrations run once before the first query, so the server starts while
-/// the database is still coming up and reports a useful error per request.
 pub struct PostgresRoomRepository {
-    pool: PgPool,
-    migrated: OnceCell<()>,
+    database: Arc<Database>,
 }
 
 impl PostgresRoomRepository {
-    /// `url` looks like `postgres://user:password@host:port/database`.
-    pub fn new(url: &str) -> Result<Self, RepositoryError> {
-        let pool = PgPoolOptions::new()
-            .max_connections(8)
-            .acquire_timeout(Duration::from_secs(5))
-            .connect_lazy(url)
-            .map_err(repository_error)?;
-        Ok(Self { pool, migrated: OnceCell::new() })
+    #[must_use]
+    pub fn new(database: Arc<Database>) -> Self {
+        Self { database }
     }
 
     /// The pool, with the schema brought up to date.
     async fn pool(&self) -> Result<&PgPool, RepositoryError> {
-        self.migrated
-            .get_or_try_init(|| async { sqlx::migrate!("./migrations").run(&self.pool).await })
-            .await
-            .map_err(repository_error)?;
-        Ok(&self.pool)
+        self.database.pool().await.map_err(repository_error)
     }
 
     fn members(room: &RoomAccess) -> Vec<String> {

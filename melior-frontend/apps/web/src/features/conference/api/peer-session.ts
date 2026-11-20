@@ -4,7 +4,7 @@ import {
     type IceServer,
     peerForTrack,
     reconcileTracks,
-    type SessionId,
+    type StreamKey,
     type TrackAssignment,
     type TrackDiff,
     type TracksBySession,
@@ -19,8 +19,16 @@ type PeerSessionOptions = {
     forceRelay?: boolean;
     localStream: MediaStream | null;
     onIceCandidate: (candidate: IceCandidate) => void;
-    /** The remote media after a renegotiation: one stable MediaStream per participant that has tracks. */
-    onRemoteMedia: (streams: Record<SessionId, MediaStream>) => void;
+    /**
+     * An offer for a change this side made after the connection was up (a screen added or removed). The
+     * first offer is not one of these: the caller asks for it with `createOffer`.
+     */
+    onOffer: (sdp: string) => void;
+    /**
+     * The remote media after a renegotiation: one stable MediaStream per participant's camera and per
+     * shared screen, named by `streamKey`.
+     */
+    onRemoteMedia: (streams: Record<StreamKey, MediaStream>) => void;
     onConnected: () => void;
     onFailed: () => void;
 };
@@ -35,6 +43,12 @@ export type PeerSession = {
     setUplinkActive: (active: boolean) => Promise<void>;
     /** What the stats sampler reads: this connection, with media sections mapped to their publisher. */
     statsSource: StatsSource;
+    /** Sends another microphone or camera from now on, in place of the one in use; no renegotiation. */
+    replaceInput: (track: MediaStreamTrack) => Promise<void>;
+    /** Starts sending a captured screen next to the camera. The change is offered to the server. */
+    shareScreen: (screen: MediaStream) => void;
+    /** Stops sending the screen. The change is offered to the server. */
+    stopScreen: () => void;
     close: () => void;
 };
 
@@ -43,8 +57,8 @@ export type PeerSession = {
  * section keeps the msid of its first user, so who publishes a track comes from the server's
  * `mid -> session_id` list alone, never from `event.streams`.
  */
-const createRemoteStreams = (onRemoteMedia: (streams: Record<SessionId, MediaStream>) => void) => {
-    const streams = new Map<SessionId, MediaStream>();
+const createRemoteStreams = (onRemoteMedia: (streams: Record<StreamKey, MediaStream>) => void) => {
+    const streams = new Map<StreamKey, MediaStream>();
 
     return {
         apply: ({ removed, added }: TrackDiff<MediaStreamTrack>, next: TracksBySession<MediaStreamTrack>) => {
@@ -82,6 +96,7 @@ export const createPeerSession = ({
     forceRelay = false,
     localStream,
     onIceCandidate,
+    onOffer,
     onRemoteMedia,
     onConnected,
     onFailed,
@@ -92,13 +107,40 @@ export const createPeerSession = ({
     let uplinkTimer: ReturnType<typeof setTimeout> | null = null;
 
     let assignments: TrackAssignment[] = [];
+
+    // Offers this side starts after the first exchange. Only one is in flight; one that crosses the
+    // server's own offer is given up (the server ignores it) and made again once the connection is stable.
+    let firstAnswerApplied = false;
+    let offerInFlight = false;
+    let changeWaiting = false;
+    let screenSender: RTCRtpSender | null = null;
     let current: TracksBySession<MediaStreamTrack> = {};
     const remoteStreams = createRemoteStreams(onRemoteMedia);
+
+    /**
+     * Asks the browser to show media as soon as it arrives, with no extra buffering. A call is
+     * conversation, so a late frame is worth less than a glitch. Browsers that do not know these
+     * properties ignore them.
+     */
+    const playLive = (receiver: RTCRtpReceiver) => {
+        const live = receiver as RTCRtpReceiver & {
+            jitterBufferTarget?: number | null;
+            playoutDelayHint?: number | null;
+        };
+        try {
+            live.jitterBufferTarget = 0;
+            live.playoutDelayHint = 0;
+        } catch {
+            // Not supported here.
+        }
+    };
 
     const reconcile = () => {
         const receivers = new Map<string, MediaStreamTrack>();
         for (const transceiver of connection.getTransceivers()) {
-            if (transceiver.mid !== null) receivers.set(transceiver.mid, transceiver.receiver.track);
+            if (transceiver.mid === null) continue;
+            playLive(transceiver.receiver);
+            receivers.set(transceiver.mid, transceiver.receiver.track);
         }
         const next = reconcileTracks(assignments, receivers);
         const changes = diffTracks(current, next);
@@ -108,6 +150,26 @@ export const createPeerSession = ({
 
     connection.onicecandidate = (event) => {
         if (event.candidate) onIceCandidate(event.candidate.toJSON());
+    };
+
+    const offerWaitingChange = async () => {
+        if (!firstAnswerApplied || offerInFlight || !changeWaiting) return;
+        if (connection.signalingState !== 'stable') return;
+        changeWaiting = false;
+        offerInFlight = true;
+        try {
+            const offer = await connection.createOffer();
+            await connection.setLocalDescription(offer);
+            onOffer(connection.localDescription?.sdp ?? offer.sdp ?? '');
+        } catch (error) {
+            offerInFlight = false;
+            console.warn('could not offer a change', error);
+        }
+    };
+
+    connection.onnegotiationneeded = () => {
+        changeWaiting = true;
+        void offerWaitingChange();
     };
 
     connection.onconnectionstatechange = () => {
@@ -120,25 +182,39 @@ export const createPeerSession = ({
         uplinkTimer = setTimeout(() => void uplink.reapply(), 0);
     };
 
+    // The camera's and the microphone's senders, to switch what they send without a new negotiation.
+    const inputSenders = new Map<string, RTCRtpSender>();
     if (localStream) {
-        for (const track of localStream.getTracks()) connection.addTrack(track, localStream);
+        for (const track of localStream.getTracks())
+            inputSenders.set(track.kind, connection.addTrack(track, localStream));
     }
 
     return {
         statsSource: createSfuStatsSource(connection, () => assignments),
         setUplinkActive: uplink.set,
         createOffer: async () => {
+            // Tracks added before the first offer are part of it, not a change to offer later.
+            changeWaiting = false;
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
             return connection.localDescription?.sdp ?? offer.sdp ?? '';
         },
         applyAnswer: async (sdp) => {
             await connection.setRemoteDescription({ type: 'answer', sdp });
+            firstAnswerApplied = true;
+            offerInFlight = false;
             reconcile();
             await candidates.flush();
             reapplyUplinkSoon();
+            void offerWaitingChange();
         },
         answerOffer: async (sdp, tracks) => {
+            // The server's offer wins over one of ours that is still unanswered: the browser rolls ours
+            // back, and the change is offered again after this exchange.
+            if (offerInFlight) {
+                offerInFlight = false;
+                changeWaiting = true;
+            }
             await connection.setRemoteDescription({ type: 'offer', sdp });
             // The transceivers and their mids exist now.
             assignments = tracks;
@@ -147,11 +223,29 @@ export const createPeerSession = ({
             const answer = await connection.createAnswer();
             await connection.setLocalDescription(answer);
             reapplyUplinkSoon();
-            return connection.localDescription?.sdp ?? answer.sdp ?? '';
+            const answerSdp = connection.localDescription?.sdp ?? answer.sdp ?? '';
+            // A later task, so the caller has sent this answer before any offer of ours goes out.
+            setTimeout(() => void offerWaitingChange(), 0);
+            return answerSdp;
         },
         addIceCandidate: candidates.add,
+        replaceInput: async (track) => {
+            await inputSenders.get(track.kind)?.replaceTrack(track);
+        },
+        shareScreen: (screen) => {
+            const [track] = screen.getVideoTracks();
+            if (!track || screenSender) return;
+            screenSender = connection.addTrack(track, screen);
+        },
+        stopScreen: () => {
+            if (!screenSender) return;
+            // The section stays and goes quiet; the track itself is stopped by whoever captured it.
+            if (connection.signalingState !== 'closed') connection.removeTrack(screenSender);
+            screenSender = null;
+        },
         close: () => {
             connection.onicecandidate = null;
+            connection.onnegotiationneeded = null;
             connection.onconnectionstatechange = null;
             if (uplinkTimer) clearTimeout(uplinkTimer);
             uplink.stop();

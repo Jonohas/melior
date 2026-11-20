@@ -1,3 +1,4 @@
+use super::chat::ChatSendDto;
 use super::limiter::TokenBucket;
 use super::messages::{ClientMessage, CloseReason, SdpType, ServerMessage};
 use super::peer::{PeerCommand, Rejection};
@@ -12,9 +13,10 @@ use axum::routing::get;
 use axum_extra::extract::cookie::CookieJar;
 use futures_util::{SinkExt, StreamExt};
 use melior_application::{
-    ConferenceError, ConferenceService, RoomsError, SessionState, Signal, SignalSink,
+    ChatFailure, ChatService, ConferenceError, ConferenceService, RoomsError, SessionState, Signal,
+    SignalSink,
 };
-use melior_domain::{AuthSessionId, ChannelId, SessionId, User};
+use melior_domain::{AuthSessionId, ChannelId, DomainError, SessionId, User};
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -164,6 +166,7 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
 
     let outbox = Arc::new(Outbox(tx));
     let service = guest.state.conference.clone();
+    let chat = guest.state.chat.clone();
     match service.join(guest.channel_id.clone(), &guest.user, outbox.clone()).await {
         Ok(session_id) => {
             let period = guest.state.session_recheck;
@@ -179,7 +182,9 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                 tokio::select! {
                     message = stream.next() => match message {
                         Some(Ok(Message::Text(text))) => {
-                            dispatch(&service, &session_id, &outbox, &mut relay_limit, text.as_str()).await;
+                            let services = Services { conference: &service, chat: &chat };
+                            dispatch(&services, &session_id, &outbox, &mut relay_limit, text.as_str())
+                                .await;
                         }
                         Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                         Some(Ok(_)) => {}
@@ -194,6 +199,7 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                 }
             }
             service.leave(&session_id).await;
+            chat.forget(&session_id);
         }
         Err(error) => {
             warn!(%error, "join failed");
@@ -208,9 +214,15 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
     }
 }
 
+/// The use cases a client message can call.
+struct Services<'a> {
+    conference: &'a ConferenceService,
+    chat: &'a ChatService,
+}
+
 /// Translates one client message into a use case call.
 async fn dispatch(
-    service: &ConferenceService,
+    services: &Services<'_>,
     session_id: &SessionId,
     outbox: &Outbox,
     relay_limit: &mut TokenBucket,
@@ -230,6 +242,7 @@ async fn dispatch(
         return;
     }
 
+    let service = services.conference;
     let result = match message {
         ClientMessage::SdpOffer(description) => match description.into_sdp(SdpType::Offer) {
             Some(offer) => service.handle_offer(session_id, offer).await,
@@ -254,6 +267,9 @@ async fn dispatch(
         ClientMessage::Echo(text) => {
             outbox.push(ServerMessage::Echo(text));
             Ok(())
+        }
+        ClientMessage::ChatSend(message) => {
+            return say(services.chat, session_id, outbox, message).await;
         }
     };
 
@@ -296,6 +312,22 @@ async fn peer(
     }
 }
 
+/// Hands a chat message to the room. A refusal goes back to the sender alone.
+async fn say(chat: &ChatService, session_id: &SessionId, outbox: &Outbox, message: ChatSendDto) {
+    let ChatSendDto { client_id, text } = message;
+    let Err(error) = chat.send(session_id, client_id.clone(), &text).await else {
+        return;
+    };
+    let message = match &error {
+        ChatFailure::Rejected(rule) => rule.to_string(),
+        ChatFailure::Conference(_) | ChatFailure::Store(_) => {
+            warn!(session = %session_id, %error, "chat message not delivered");
+            "the message could not be sent, try again".to_owned()
+        }
+    };
+    outbox.push(ServerMessage::ChatError { client_id, message });
+}
+
 fn wrong_type(outbox: &Outbox, channel: &str, expected: &str) {
     outbox.push(ServerMessage::Error {
         message: format!("{channel} payload must have type \"{expected}\""),
@@ -303,6 +335,12 @@ fn wrong_type(outbox: &Outbox, channel: &str, expected: &str) {
 }
 
 fn report(session_id: &SessionId, outbox: &Outbox, error: &ConferenceError) {
+    // An offer that crossed the server's own on the wire is not a fault. The client gives up
+    // its offer when the server's arrives, and offers again once the exchange is over.
+    if matches!(error, ConferenceError::Domain(DomainError::OfferDuringRenegotiation)) {
+        debug!(session = %session_id, "client offer ignored: a server offer is outstanding");
+        return;
+    }
     warn!(session = %session_id, %error, "request failed");
     outbox.push(ServerMessage::Error { message: error.to_string() });
 }

@@ -3,6 +3,9 @@ import { createPeerSession, type Mesh, type PeerSession, type SignallingClient }
 import type { CloseReason, ConferenceAction, ServerMessage, TrackAssignment } from '@/features/conference/domain';
 import { startMesh } from './start-mesh';
 
+/** What the room says in chat: a message for everyone, or a refusal of the one this client sent. */
+export type ChatEvent = Extract<ServerMessage, { channel: 'chat' | 'chat_error' }>;
+
 /** What one signalling connection owns; every field is replaced on reconnect. */
 export type ConferenceConnection = {
     signalling: SignallingClient | null;
@@ -28,6 +31,7 @@ export type MessageContext = {
     /** False once the connection this message belongs to was torn down; late callbacks then do nothing. */
     isCurrent: () => boolean;
     onConnected: () => void;
+    onChat: (event: ChatEvent) => void;
     onPeerFailed: () => void;
     /** The server announced it is closing the socket. */
     onServerClosed: (reason: CloseReason) => void;
@@ -56,6 +60,9 @@ export const startSession = async (context: MessageContext, payload: SessionMess
         localStream: context.localStream,
         onIceCandidate: (candidate) => {
             if (isCurrent()) connection.signalling?.send({ channel: 'ice', payload: candidate });
+        },
+        onOffer: (sdp) => {
+            if (isCurrent()) connection.signalling?.send({ channel: 'sdp_offer', payload: { type: 'offer', sdp } });
         },
         onRemoteMedia: (streams) => {
             if (isCurrent()) dispatch({ type: 'remote_media_updated', streams });
@@ -128,6 +135,9 @@ export const handleServerMessage = async (context: MessageContext, message: Serv
         case 'peer_left':
             connection.mesh?.peerLeft(message.payload.session_id);
             return dispatch({ type: 'peer_left', sessionId: message.payload.session_id });
+        case 'chat':
+        case 'chat_error':
+            return context.onChat(message);
         case 'closed':
             return context.onServerClosed(message.payload.reason);
         case 'error':

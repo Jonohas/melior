@@ -12,8 +12,8 @@ come and go, without freezing any video.
 - `melior-server/` - the SFU (binary `melior-sfu`), built on axum and webrtc-rs.
   It also acts as the backend-for-frontend (BFF) for login: it runs the OpenID
   Connect flow against Keycloak and keeps sessions in Redis, so tokens never
-  reach the browser. Room ownership and invitations are stored in Postgres.
-  Media flows over WebRTC on arbitrary UDP ports. In a mesh room (see
+  reach the browser. Room ownership, invitations and chat history are stored in
+  Postgres. Media flows over WebRTC on arbitrary UDP ports. In a mesh room (see
   "Mesh" below) the server only signals: media goes straight between browsers,
   with TURN as the fallback, and the SFU forwards nothing for that room.
 - `melior-frontend/` - a Bun workspace run by Turborepo with one app,
@@ -45,15 +45,16 @@ melior-application     L1  conference/  ConferenceService (join, leave, offer, a
                            auth/        AuthService (login round trip, session checks with token
                                         refresh, logout); ports IdentityProvider, SessionStore
                            rooms/       RoomAccessService (admit, configure, list, delete); port RoomRepository
+                           chat/        ChatService (send to the room, history); port ChatRepository
 melior-infrastructure  L2  webrtc/      webrtc-rs media engine: peer connections, RTP forwarding with
                                         reusable outlets, keyframe requests
                            oidc/        OpenID Connect identity provider (code flow with PKCE, verification)
                            redis/       session store, token-refresh claims, room leases
-                           postgres/    room registry, with embedded migrations
+                           postgres/    room registry and chat history on sqlx, with embedded migrations
                            turn.rs      per-user, expiring TURN credentials
                            telemetry.rs logging and OpenTelemetry trace export
                            config.rs    environment configuration
-melior-interfaces      L2  http/        /login, /signin, /signout, /api/identity/me, /api/rooms, /api/health
+melior-interfaces      L2  http/        /login, /signin, /signout, /api/identity/me, /api/rooms, /api/rooms/{id}/messages, /api/health
                            ws/          the signalling WebSocket: wire-format DTOs and connection handler
 melior-sfu             L3  main.rs      composition root; tests/ holds the integration tests
 xtask/                     cargo xtask layers
@@ -114,6 +115,10 @@ application hooks, and presentation. See `melior-frontend/README.md`.
 
    Only `DATABASE_URL` is required; TURN and trace export are optional.
 
+   For anything beyond a quick look, run `cargo run --release`. The media
+   path (SRTP, RTP forwarding) is several times slower in a debug build, which
+   shows up as late video and audio as soon as the machine is busy.
+
 3. Start the frontend:
 
    ```sh
@@ -166,7 +171,8 @@ owned by that person. The owner (or an admin) can make it invite-only.
 | `GET /api/rooms` | The rooms the caller owns or is invited to; all rooms for an admin. |
 | `GET /api/rooms/{channel_id}` | One room. 404 if nobody registered the channel, 403 if it is invite-only and the caller is not invited. |
 | `PUT /api/rooms/{channel_id}` | Body `{ "restricted": bool, "members": [username] }`. Registers the room for the caller if it does not exist; otherwise owner or admin only. |
-| `DELETE /api/rooms/{channel_id}` | Owner or admin only. The channel is unregistered; whoever joins next owns it. |
+| `DELETE /api/rooms/{channel_id}` | Owner or admin only. The channel is unregistered, and its chat history is deleted with it; whoever joins next owns it. |
+| `GET /api/rooms/{channel_id}/messages?before=<id>&limit=<n>` | A page of the room's chat history, `{ "messages": [...], "has_more": bool }`, oldest first. Without `before` it is the newest page; with it, the messages before that id. `limit` is 1 to 100 (default 50). Same access as `GET /api/rooms/{channel_id}`: 404 for an unregistered channel, 403 for a room the caller may not enter. |
 
 A room object is `{ channel_id, owner, restricted, members, is_owner }`.
 Usernames are lower-case, 1 to 64 characters of `a-z`, `0-9`, `.`, `_`, `@`,
@@ -189,8 +195,14 @@ JSON messages of the form `{channel, payload}`:
   - `peer_joined` (`session_id`, `username`), `peer_left` (`session_id`).
   - `sdp_answer` (`type`, `sdp`): the answer to the client's first offer.
   - `sdp_offer` (`type`, `sdp`, `tracks`): a renegotiation. `tracks` is the
-    complete list of `{ mid, session_id }`: which media section carries whose
-    track from now on.
+    complete list of `{ mid, session_id, source }`: which media section carries
+    whose track from now on, and whether it is that participant's `camera` or
+    its `screen`.
+  - `chat` (`id`, `username`, `text`, `sent_at_ms`, and `client_id` on the
+    author's own copy only): someone said something in the room, the author
+    included. `id` orders the room's messages.
+  - `chat_error` (`message`, and the `client_id` of the refused message if it
+    had one): a chat message the server did not accept. Only its sender gets it.
   - `ice`, `error` (`message`).
   - `route` (`peer`, `path`, `epoch`): play `peer`'s media over `path`
     (`direct` or `forwarded`) as soon as it works there, then report
@@ -205,8 +217,10 @@ JSON messages of the form `{channel, payload}`:
   - `closed` (`reason`): the last message before the server closes the socket.
     `session_ended` (log in again), `removed` (no access to this room any
     more), `room_moved` (reconnect).
-- Client to server: `sdp_offer`, `sdp_answer`, `ice` (an
-  `RTCIceCandidateInit`), `echo`, and:
+- Client to server: `sdp_offer` (the first offer, and later one for each track
+  the client adds or removes), `sdp_answer`, `ice` (an
+  `RTCIceCandidateInit`), `echo`, `chat_send` (`text`, optional `client_id`),
+  and:
   - `route_live` (`peer`, `epoch`): I now play `peer`'s media over the path of
     route `epoch`, or I already did when the route arrived.
   - `peer_offer` (`to`, `sdp`), `peer_answer` (`to`, `sdp`): the offer and
@@ -216,6 +230,34 @@ JSON messages of the form `{channel, payload}`:
 
 Every `peer` (and `from`, `to`) is a session id. The server drops a relayed SDP
 over 64 KiB and a candidate over 1 KiB.
+
+### Screen sharing
+
+A participant shares its screen by adding a second video track to its own
+connection and sending an `sdp_offer` for the change. Nothing else is signalled:
+the server works out what a track shows. A participant's first video track is its
+camera, the next one is its screen, and a third is refused, so one participant
+shows at most one screen at a time. Audio belongs to the camera, and a screen has
+no sound. Everyone else receives the screen as one more track in their `tracks`
+list, with `source: "screen"`. When the sharer stops, the track ends and the next
+offer no longer lists it. A screen share is sent on the server connection; how
+it travels in mesh rooms is being changed.
+
+A client offer that crosses a server offer is ignored by the server. The client
+gives its own up when the server's offer arrives, answers that, and offers its
+change again once the connection is stable.
+
+### Chat
+
+A `chat_send` is checked, saved and sent to everyone in the room, the sender
+included. The text is trimmed and must be 1 to 2000 characters with no control
+characters other than line breaks and tabs. A participant may send 5 messages
+per 10 seconds. A refused message gets a `chat_error` and nothing else happens.
+Messages are stored in the `chat_messages` table, and the history endpoint above
+reads them back, so people who join later see what was said. A room lives on one
+instance (see [Several server instances](#several-server-instances)), so its
+messages are delivered from that instance's memory; the store only orders and
+keeps them.
 
 The client makes the first offer. Once its media connection is established, the
 server offers it the other participants' tracks, and renegotiates whenever
@@ -448,8 +490,14 @@ bun run test:unit && bun run check-types && bun run biome-check && bun run build
 ```
 
 CI runs the same commands (`.github/workflows/checks.yml`). The Redis,
-Postgres, OIDC and TURN adapters are exercised only by running the stack; see
-`AGENTS.md` section 5.
+OIDC, TURN and the Redis and room-registry adapters are exercised only by running
+the stack; see `AGENTS.md` section 5. The chat history adapter has an ignored test
+that needs a database:
+
+```sh
+MELIOR_TEST_DATABASE_URL=postgres://user:password@127.0.0.1:5432/db \
+    cargo test -p melior-infrastructure --test postgres_chat -- --ignored
+```
 
 ## Limitations
 
@@ -476,4 +524,4 @@ Postgres, OIDC and TURN adapters are exercised only by running the stack; see
 - After a switch, video quality ramps up for a few seconds on the new path.
 - Switching is per pair of participants. A failed direct link moves the whole
   room to the SFU until the next join or leave.
-- There is no recording, screen sharing, simulcast or bandwidth adaptation.
+- There is no recording, simulcast or bandwidth adaptation.

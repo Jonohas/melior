@@ -1,6 +1,6 @@
 use super::testing::*;
 use super::*;
-use melior_domain::UserId;
+use melior_domain::{MediaKind, TrackSource, UserId};
 
 #[tokio::test]
 async fn join_announces_the_session_and_first_offer_is_answered() {
@@ -35,11 +35,44 @@ async fn an_offer_says_whose_track_each_media_section_carries() {
     assert_eq!(
         *tracks,
         [
-            TrackOwner { mid: "0".into(), session_id: alice.id.clone() },
-            TrackOwner { mid: "1".into(), session_id: bob.id.clone() },
+            TrackOwner {
+                mid: "0".into(),
+                session_id: alice.id.clone(),
+                source: TrackSource::Camera
+            },
+            TrackOwner { mid: "1".into(), session_id: bob.id.clone(), source: TrackSource::Camera },
         ],
         "the complete list, not only what changed"
     );
+}
+
+#[tokio::test]
+async fn a_screen_is_offered_with_its_source_and_a_stopped_one_is_retracted() {
+    let h = Harness::new();
+    let alice = h.join_ready("general").await;
+    let bob = h.join_ready("general").await;
+    h.publish(&alice).await;
+    h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
+    bob.sink.take_all();
+
+    let screen = h.publish(&alice).await;
+
+    let signals = bob.sink.take_all();
+    let [Signal::Offer { tracks, .. }] = signals.as_slice() else {
+        panic!("expected one offer, got {signals:?}");
+    };
+    let sources: Vec<TrackSource> = tracks.iter().map(|owner| owner.source).collect();
+    assert_eq!(sources, [TrackSource::Camera, TrackSource::Screen]);
+
+    h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();
+    bob.sink.take_all();
+    h.service.track_ended(&alice.id, &screen.id).await;
+    let signals = bob.sink.take_all();
+    let [Signal::Offer { tracks, .. }] = signals.as_slice() else {
+        panic!("expected one offer, got {signals:?}");
+    };
+    assert_eq!(tracks.len(), 1, "only the camera is left");
+    assert_eq!(tracks[0].source, TrackSource::Camera);
 }
 
 #[tokio::test]
@@ -140,9 +173,11 @@ async fn changes_during_an_outstanding_offer_are_batched_into_the_next_one() {
     let alice = h.join_ready("general").await;
     let bob = h.join_ready("general").await;
 
+    // A camera, a screen and a microphone: a third video would be refused.
     h.publish(&alice).await;
     h.publish(&alice).await;
-    h.publish(&alice).await;
+    let microphone = Track::new(TrackId::generate(), MediaKind::Audio);
+    h.service.track_published(&alice.id, microphone).await;
     assert_eq!(bob.sink.take(), vec![offer("offer-1")], "no overlapping offers");
 
     h.service.handle_answer(&bob.id, Sdp::new("answer")).await.unwrap();

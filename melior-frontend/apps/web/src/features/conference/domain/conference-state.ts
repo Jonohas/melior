@@ -1,5 +1,6 @@
 import type { ConferenceStatus } from './conference-status';
 import type { StopReason } from './reconnect';
+import { partitionStreams, type StreamKey } from './remote-tracks';
 import type { SessionId } from './session-id';
 import type { Participant, Path } from './signalling-message';
 
@@ -19,6 +20,8 @@ export type ConferenceState<TStream extends StreamRef> = {
     directStreams: Record<SessionId, TStream>;
     /** The path each remote participant is currently shown over; absent means `forwarded`. */
     shownPaths: Record<SessionId, Path>;
+    /** Screens that participants share, by the session id of the one sharing. */
+    screenStreams: Record<SessionId, TStream>;
     status: ConferenceStatus;
     /** Consecutive reconnect attempts so far; 0 while a connection is healthy. */
     reconnectAttempt: number;
@@ -37,7 +40,7 @@ export type ConferenceAction<TStream extends StreamRef> =
     | { type: 'failed'; message: string }
     | { type: 'reconnecting'; attempt: number }
     | { type: 'stopped'; reason: StopReason }
-    | { type: 'remote_media_updated'; streams: Record<SessionId, TStream> }
+    | { type: 'remote_media_updated'; streams: Record<StreamKey, TStream> }
     | { type: 'direct_media_updated'; sessionId: SessionId; stream: TStream | null }
     | { type: 'shown_path_changed'; sessionId: SessionId; path: Path }
     | { type: 'peer_left'; sessionId: SessionId };
@@ -50,6 +53,7 @@ export const createInitialConferenceState = <TStream extends StreamRef>(): Confe
     remoteStreams: {},
     directStreams: {},
     shownPaths: {},
+    screenStreams: {},
     status: 'starting',
     reconnectAttempt: 0,
     stopReason: null,
@@ -96,6 +100,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 remoteStreams: {},
                 directStreams: {},
                 shownPaths: {},
+                screenStreams: {},
                 status: 'reconnecting',
                 reconnectAttempt: action.attempt,
                 error: null,
@@ -108,11 +113,14 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 remoteStreams: {},
                 directStreams: {},
                 shownPaths: {},
+                screenStreams: {},
                 status: 'stopped',
                 stopReason: action.reason,
             };
-        case 'remote_media_updated':
-            return { ...state, remoteStreams: action.streams };
+        case 'remote_media_updated': {
+            const { camera, screen } = partitionStreams(action.streams);
+            return { ...state, remoteStreams: camera, screenStreams: screen };
+        }
         case 'direct_media_updated': {
             const { [action.sessionId]: _old, ...others } = state.directStreams;
             return {
@@ -125,9 +133,10 @@ export const conferenceReducer = <TStream extends StreamRef>(
         case 'peer_left': {
             const { [action.sessionId]: _left, ...participants } = state.participants;
             const { [action.sessionId]: _media, ...remoteStreams } = state.remoteStreams;
+            const { [action.sessionId]: _screen, ...screenStreams } = state.screenStreams;
             const { [action.sessionId]: _direct, ...directStreams } = state.directStreams;
             const { [action.sessionId]: _shown, ...shownPaths } = state.shownPaths;
-            return { ...state, participants, remoteStreams, directStreams, shownPaths };
+            return { ...state, participants, remoteStreams, screenStreams, directStreams, shownPaths };
         }
     }
 };
