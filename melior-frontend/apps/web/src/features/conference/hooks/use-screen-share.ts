@@ -18,6 +18,8 @@ export type ScreenShare = {
     /** Asks which screen to share and starts sending it. Does nothing while sharing or not connected. */
     start: () => Promise<void>;
     stop: () => void;
+    /** The screen's video track while sharing, else null. */
+    track: () => MediaStreamTrack | null;
     /** Offers the screen again on a new connection, so a share survives a reconnect. */
     resume: (peer: PeerSession) => void;
     /** Ends the share without touching a connection: the conference is over. */
@@ -38,6 +40,7 @@ export const useScreenShare = (connection: RefObject<ConferenceConnection>): Scr
 
     const stop = useCallback(() => {
         connection.current.peer?.stopScreen();
+        void connection.current.mesh?.setScreen(null);
         release();
     }, [connection, release]);
 
@@ -58,6 +61,7 @@ export const useScreenShare = (connection: RefObject<ConferenceConnection>): Scr
                 if (screenRef.current === screen) stop();
             });
             peer.shareScreen(screen);
+            void connection.current.mesh?.setScreen(screen.getVideoTracks()[0] ?? null);
             setSharing(true);
         } catch (failure) {
             if (isScreenShareCancelled(failure)) return;
@@ -69,5 +73,7 @@ export const useScreenShare = (connection: RefObject<ConferenceConnection>): Scr
         if (screenRef.current) peer.shareScreen(screenRef.current);
     }, []);
 
-    return { supported: canShareScreen(), sharing, error, start, stop, resume, release };
+    const track = useCallback(() => screenRef.current?.getVideoTracks()[0] ?? null, []);
+
+    return { track, supported: canShareScreen(), sharing, error, start, stop, resume, release };
 };

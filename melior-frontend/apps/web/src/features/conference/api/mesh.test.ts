@@ -28,9 +28,11 @@ describe('createMesh', () => {
             iceServers: [],
             forceRelay: false,
             localStream: null,
+            screenTrack: null,
             sfu: () => null,
             send: (message) => sent.push(message),
             onDirectMedia: (peer, stream) => media.push([peer, stream]),
+            onDirectScreen: () => undefined,
             onShownPath: (peer, path) => shown.push([peer, path]),
         });
     });
@@ -62,9 +64,11 @@ describe('createMesh', () => {
             iceServers: [],
             forceRelay: false,
             localStream: null,
+            screenTrack: null,
             sfu: () => null,
             send: (message) => sent.push(message),
             onDirectMedia: () => undefined,
+            onDirectScreen: () => undefined,
             onShownPath: () => undefined,
         });
         await answerer.handle({ channel: 'route', payload: { peer: PEER, path: 'direct', epoch: 1 } });
@@ -102,7 +106,12 @@ describe('createMesh', () => {
         await route('direct', 1);
         const connection = FakePeerConnection.instances[0];
         connection?.setState('connected');
-        connection?.statsEntries.push({ type: 'inbound-rtp', kind: 'video', trackIdentifier: 't', framesDecoded: 1 });
+        connection?.statsEntries.push({
+            type: 'inbound-rtp',
+            kind: 'video',
+            trackIdentifier: 'remote-1',
+            framesDecoded: 1,
+        });
         // The direct link flows; the forwarded path is not sampled (no SFU), so only direct is observed.
         await vi.advanceTimersByTimeAsync(300);
         const entry = connection?.statsEntries[0];

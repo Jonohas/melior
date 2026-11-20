@@ -1,12 +1,19 @@
 import type { SessionId } from './session-id';
 import type { TrackAssignment } from './signalling-message';
 
-export type MediaKind = 'audio' | 'video';
+/** What a peer sends: microphone, camera video, and shared screen video. */
+export type MediaKind = 'audio' | 'video' | 'screen';
+
+/** The kinds of the three media sections of a direct link, in section order. */
+export const DIRECT_SECTIONS: readonly MediaKind[] = ['audio', 'video', 'screen'];
+
+/** Whose media a stats entry shows, and which of the peer's kinds it is. */
+export type InboundSource = { peer: SessionId; kind: MediaKind };
 
 /** A kind is flowing when its counter grew within this many milliseconds. */
 export const FLOW_WINDOW_MS = 1000;
 
-/** The cumulative counters that show media arriving: video `framesDecoded`, audio `packetsReceived`. */
+/** The cumulative counters that show media arriving: `framesDecoded` for video and screen, `packetsReceived` for audio. */
 export type InboundCounters = Record<MediaKind, number>;
 
 /** The fields of an `inbound-rtp` stats entry that matter here. */
@@ -21,35 +28,48 @@ export type InboundEntry = {
 /** A media section of the SFU connection: its mid and the id of its receiving track. */
 export type ReceiverSection = { mid: string | null; trackId: string };
 
+const entryKind = (entry: InboundEntry): 'audio' | 'video' | undefined =>
+    entry.kind === 'audio' || entry.kind === 'video' ? entry.kind : undefined;
+
 /**
- * Whose media a stats entry shows: the entry's `trackIdentifier` names a receiving track, the transceiver
- * holding it has a mid, and the server's assignments say who publishes that mid. Undefined when any link
- * of that chain is missing. Only a camera section counts: a shared screen is no part of the path a camera
- * switch waits for.
+ * Who an SFU stats entry belongs to: the entry's `trackIdentifier` names a receiving track, the transceiver
+ * holding it has a mid, and the server's assignments say who publishes that mid and whether it carries the
+ * camera or the screen. Undefined when any link of that chain is missing.
  */
-export const peerForTrack = (
-    trackId: string | undefined,
+export const sfuSourceOf = (
+    entry: InboundEntry,
     sections: readonly ReceiverSection[],
     assignments: readonly TrackAssignment[],
-): SessionId | undefined => {
-    const mid = sections.find((section) => section.trackId === trackId)?.mid;
-    if (mid === null || mid === undefined) return undefined;
-    return assignments.find((assignment) => assignment.mid === mid && assignment.source === 'camera')?.session_id;
+): InboundSource | undefined => {
+    const mid = sections.find((section) => section.trackId === entry.trackIdentifier)?.mid;
+    const kind = entryKind(entry);
+    if (mid === null || mid === undefined || kind === undefined) return undefined;
+    const assignment = assignments.find((candidate) => candidate.mid === mid);
+    if (!assignment) return undefined;
+    return { peer: assignment.session_id, kind: assignment.source === 'screen' ? 'screen' : kind };
 };
 
-/** Sums the counters per peer; `peerOf` says whose media an entry shows (undefined: nobody's). */
+/**
+ * Which of its peer's kinds a direct-link stats entry shows: the position of its receiving track among the
+ * link's sections (audio, camera, screen), given as the receiving track ids in section order.
+ */
+export const directKindOf = (entry: InboundEntry, trackIds: readonly string[]): MediaKind | undefined => {
+    const index = trackIds.findIndex((id) => id === entry.trackIdentifier);
+    return DIRECT_SECTIONS[index];
+};
+
+/** Sums the counters per peer; `sourceOf` says whose media an entry shows (undefined: nobody's). */
 export const countInbound = (
     entries: readonly InboundEntry[],
-    peerOf: (entry: InboundEntry) => SessionId | undefined,
+    sourceOf: (entry: InboundEntry) => InboundSource | undefined,
 ): Map<SessionId, InboundCounters> => {
     const result = new Map<SessionId, InboundCounters>();
     for (const entry of entries) {
-        const peer = peerOf(entry);
-        if (peer === undefined) continue;
-        const counters = result.get(peer) ?? { audio: 0, video: 0 };
-        if (entry.kind === 'video') counters.video += entry.framesDecoded ?? 0;
-        if (entry.kind === 'audio') counters.audio += entry.packetsReceived ?? 0;
-        result.set(peer, counters);
+        const source = sourceOf(entry);
+        if (source === undefined) continue;
+        const counters = result.get(source.peer) ?? { audio: 0, video: 0, screen: 0 };
+        counters[source.kind] += (source.kind === 'audio' ? entry.packetsReceived : entry.framesDecoded) ?? 0;
+        result.set(source.peer, counters);
     }
     return result;
 };
@@ -59,11 +79,15 @@ export type FlowState = {
     increasedAt: Record<MediaKind, number | null>;
 };
 
-const KINDS: readonly MediaKind[] = ['audio', 'video'];
+const KINDS = DIRECT_SECTIONS;
 
 /** Folds a new counter sample taken at `now` (ms) into the state. The first sample only sets the baseline. */
 export const updateFlow = (previous: FlowState | undefined, counters: InboundCounters, now: number): FlowState => {
-    const increasedAt = { audio: previous?.increasedAt.audio ?? null, video: previous?.increasedAt.video ?? null };
+    const increasedAt = {
+        audio: previous?.increasedAt.audio ?? null,
+        video: previous?.increasedAt.video ?? null,
+        screen: previous?.increasedAt.screen ?? null,
+    };
     if (previous) {
         for (const kind of KINDS) {
             if (counters[kind] > previous.last[kind]) increasedAt[kind] = now;

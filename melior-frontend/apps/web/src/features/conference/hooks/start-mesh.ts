@@ -7,6 +7,8 @@ type StartMeshOptions = {
     iceServers: IceServer[];
     forceRelay: boolean;
     localStream: MediaStream | null;
+    /** The screen being shared when the mesh starts, or none. */
+    screenTrack: MediaStreamTrack | null;
     /** The current SFU connection and socket; read at call time because both are replaced on reconnect. */
     peer: () => PeerSession | null;
     signalling: () => SignallingClient | null;
@@ -21,6 +23,7 @@ export const startMesh = ({
     iceServers,
     forceRelay,
     localStream,
+    screenTrack,
     peer,
     signalling,
     dispatch,
@@ -31,12 +34,16 @@ export const startMesh = ({
         iceServers,
         forceRelay,
         localStream,
+        screenTrack,
         sfu: () => peer()?.statsSource ?? null,
         send: (message) => {
             if (isCurrent()) signalling()?.send(message);
         },
         onDirectMedia: (sessionId, stream) => {
             if (isCurrent()) dispatch({ type: 'direct_media_updated', sessionId, stream });
+        },
+        onDirectScreen: (sessionId, stream) => {
+            if (isCurrent()) dispatch({ type: 'direct_screen_updated', sessionId, stream });
         },
         onShownPath: (sessionId, path) => {
             if (isCurrent()) dispatch({ type: 'shown_path_changed', sessionId, path });

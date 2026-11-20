@@ -2,9 +2,9 @@ import {
     diffTracks,
     type IceCandidate,
     type IceServer,
-    peerForTrack,
     reconcileTracks,
     type StreamKey,
+    sfuSourceOf,
     type TrackAssignment,
     type TrackDiff,
     type TracksBySession,
@@ -83,9 +83,9 @@ const createRemoteStreams = (onRemoteMedia: (streams: Record<StreamKey, MediaStr
 const createSfuStatsSource = (connection: RTCPeerConnection, assignments: () => TrackAssignment[]): StatsSource => ({
     connection,
     isConnected: () => connection.connectionState === 'connected',
-    peerOf: (entry) =>
-        peerForTrack(
-            entry.trackIdentifier,
+    sourceOf: (entry) =>
+        sfuSourceOf(
+            entry,
             connection.getTransceivers().map((t) => ({ mid: t.mid, trackId: t.receiver.track.id })),
             assignments(),
         ),
@@ -236,6 +236,8 @@ export const createPeerSession = ({
             const [track] = screen.getVideoTracks();
             if (!track || screenSender) return;
             screenSender = connection.addTrack(track, screen);
+            // A paused uplink covers the new sender like the others.
+            reapplyUplinkSoon();
         },
         stopScreen: () => {
             if (!screenSender) return;

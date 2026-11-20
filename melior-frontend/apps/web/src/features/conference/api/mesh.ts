@@ -25,10 +25,13 @@ type MeshOptions = {
     iceServers: IceServer[];
     forceRelay: boolean;
     localStream: MediaStream | null;
+    /** The screen being shared when the mesh starts, or none. */
+    screenTrack: MediaStreamTrack | null;
     /** The SFU connection, for sampling the forwarded path. */
     sfu: () => StatsSource | null;
     send: (message: ClientMessage) => void;
     onDirectMedia: (peer: SessionId, stream: MediaStream | null) => void;
+    onDirectScreen: (peer: SessionId, stream: MediaStream | null) => void;
     onShownPath: (peer: SessionId, path: Path) => void;
 };
 
@@ -36,6 +39,8 @@ export type Mesh = {
     handle: (message: MeshMessage) => Promise<void>;
     /** Closes the direct link to a peer and forgets its route. */
     peerLeft: (peer: SessionId) => void;
+    /** Starts (a track) or stops (null) sending the screen on every direct link, without renegotiation. */
+    setScreen: (track: MediaStreamTrack | null) => Promise<void>;
     close: () => void;
 };
 
@@ -61,6 +66,7 @@ export const createMesh = (options: MeshOptions): Mesh => {
     const registry = createLinkRegistry({
         ...options,
         onMedia: options.onDirectMedia,
+        onScreen: options.onDirectScreen,
         onFailed: (peer) => {
             showForwarded(peer);
             send({ channel: 'link_failed', payload: { peer } });
@@ -121,6 +127,7 @@ export const createMesh = (options: MeshOptions): Mesh => {
             registry.close(peer);
             views.delete(peer);
         },
+        setScreen: registry.setScreen,
         close: () => {
             sampler.stop();
             registry.closeAll();

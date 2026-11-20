@@ -18,6 +18,8 @@ export type ConferenceState<TStream extends StreamRef> = {
     remoteStreams: Record<SessionId, TStream>;
     /** The direct-link stream per remote participant, while a direct link delivers media. */
     directStreams: Record<SessionId, TStream>;
+    /** The screen each remote participant shares over its direct link, while it says it shares one. */
+    directScreens: Record<SessionId, TStream>;
     /** The path each remote participant is currently shown over; absent means `forwarded`. */
     shownPaths: Record<SessionId, Path>;
     /** Screens that participants share, by the session id of the one sharing. */
@@ -42,6 +44,7 @@ export type ConferenceAction<TStream extends StreamRef> =
     | { type: 'stopped'; reason: StopReason }
     | { type: 'remote_media_updated'; streams: Record<StreamKey, TStream> }
     | { type: 'direct_media_updated'; sessionId: SessionId; stream: TStream | null }
+    | { type: 'direct_screen_updated'; sessionId: SessionId; stream: TStream | null }
     | { type: 'shown_path_changed'; sessionId: SessionId; path: Path }
     | { type: 'peer_left'; sessionId: SessionId };
 
@@ -52,6 +55,7 @@ export const createInitialConferenceState = <TStream extends StreamRef>(): Confe
     localStream: null,
     remoteStreams: {},
     directStreams: {},
+    directScreens: {},
     shownPaths: {},
     screenStreams: {},
     status: 'starting',
@@ -99,6 +103,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 participants: {},
                 remoteStreams: {},
                 directStreams: {},
+                directScreens: {},
                 shownPaths: {},
                 screenStreams: {},
                 status: 'reconnecting',
@@ -112,6 +117,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 participants: {},
                 remoteStreams: {},
                 directStreams: {},
+                directScreens: {},
                 shownPaths: {},
                 screenStreams: {},
                 status: 'stopped',
@@ -128,6 +134,13 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 directStreams: action.stream ? { ...others, [action.sessionId]: action.stream } : others,
             };
         }
+        case 'direct_screen_updated': {
+            const { [action.sessionId]: _old, ...others } = state.directScreens;
+            return {
+                ...state,
+                directScreens: action.stream ? { ...others, [action.sessionId]: action.stream } : others,
+            };
+        }
         case 'shown_path_changed':
             return { ...state, shownPaths: { ...state.shownPaths, [action.sessionId]: action.path } };
         case 'peer_left': {
@@ -135,8 +148,9 @@ export const conferenceReducer = <TStream extends StreamRef>(
             const { [action.sessionId]: _media, ...remoteStreams } = state.remoteStreams;
             const { [action.sessionId]: _screen, ...screenStreams } = state.screenStreams;
             const { [action.sessionId]: _direct, ...directStreams } = state.directStreams;
+            const { [action.sessionId]: _directScreen, ...directScreens } = state.directScreens;
             const { [action.sessionId]: _shown, ...shownPaths } = state.shownPaths;
-            return { ...state, participants, remoteStreams, screenStreams, directStreams, shownPaths };
+            return { ...state, participants, remoteStreams, screenStreams, directStreams, directScreens, shownPaths };
         }
     }
 };

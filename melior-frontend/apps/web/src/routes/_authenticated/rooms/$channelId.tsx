@@ -57,6 +57,7 @@ function RoomPage() {
         localStream,
         remoteStreams,
         directStreams,
+        directScreens,
         shownPaths,
         screenStreams,
         screenShareSupported,
@@ -166,6 +167,7 @@ function RoomPage() {
                         <RemoteVideoGrid
                             streams={remoteStreams}
                             directStreams={directStreams}
+                            directScreens={directScreens}
                             shownPaths={shownPaths}
                             usernames={participants}
                             screens={screenStreams}

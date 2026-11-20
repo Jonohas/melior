@@ -34,14 +34,17 @@ export { parseForceRelay } from './force-relay';
 export { parseServerMessage } from './parse-server-message';
 export {
     countInbound,
+    DIRECT_SECTIONS,
+    directKindOf,
     FLOW_WINDOW_MS,
     type FlowState,
     flowingKinds,
     type InboundCounters,
     type InboundEntry,
+    type InboundSource,
     type MediaKind,
-    peerForTrack,
     type ReceiverSection,
+    sfuSourceOf,
     updateFlow,
 } from './path-flow';
 export {
@@ -69,6 +72,7 @@ export {
     type TrackRef,
     type TracksBySession,
 } from './remote-tracks';
+export { parseScreenState, screenStateMessage } from './screen-state';
 export type { SessionId } from './session-id';
 export type {
     ChatPayload,

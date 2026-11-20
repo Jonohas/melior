@@ -14,9 +14,15 @@ describe('createStatsSampler', () => {
             sfu: () => ({
                 connection: asRtc(sfu),
                 isConnected: () => true,
-                peerOf: (entry) => (entry.trackIdentifier === 'sfu-video' ? 'p' : undefined),
+                sourceOf: (entry) => (entry.trackIdentifier === 'sfu-video' ? { peer: 'p', kind: 'video' } : undefined),
             }),
-            direct: () => [{ connection: asRtc(direct), isConnected: () => true, peerOf: () => 'p' }],
+            direct: () => [
+                {
+                    connection: asRtc(direct),
+                    isConnected: () => true,
+                    sourceOf: (entry) => ({ peer: 'p', kind: entry.kind === 'audio' ? 'audio' : 'screen' }),
+                },
+            ],
             onSample: (observations) => samples.push(observations),
             now: () => clock,
         });

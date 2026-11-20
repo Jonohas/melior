@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ClientMessage } from '@/features/conference/domain';
 import { createDirectLink, type DirectLink } from './direct-link';
+import type { LocalTracks } from './direct-sections';
 import { FakePeerConnection, stubRtc } from './fake-rtc';
+
+const NO_LOCAL_TRACKS: LocalTracks = { audio: null, video: null, screen: null };
 
 describe('createDirectLink local candidates', () => {
     let sent: ClientMessage[];
@@ -13,8 +16,10 @@ describe('createDirectLink local candidates', () => {
             iceServers: [],
             forceRelay: false,
             localStream: null,
+            local: () => NO_LOCAL_TRACKS,
             send: (message) => sent.push(message),
             onMedia: () => undefined,
+            onScreen: () => undefined,
             onFailed: () => undefined,
         });
 

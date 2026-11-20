@@ -9,6 +9,8 @@ type RemoteVideoGridProps = {
     streams: Record<string, MediaStream>;
     /** Direct-link streams by session id. */
     directStreams: Record<string, MediaStream>;
+    /** Screens shared over direct links, by the session id of the one sharing. */
+    directScreens: Record<string, MediaStream>;
     /** The path each participant is shown over; absent means forwarded. */
     shownPaths: Record<string, Path>;
     /** Display names by session id: everyone in the room, whether their media has arrived or not. */
@@ -25,6 +27,7 @@ type RemoteVideoGridProps = {
 export const RemoteVideoGrid = ({
     streams,
     directStreams,
+    directScreens,
     shownPaths,
     usernames,
     screens,
@@ -36,15 +39,21 @@ export const RemoteVideoGrid = ({
     ];
     const alone = sessionIds.length === 0;
 
-    const sharing = Object.entries(screens);
+    const sharing = [...new Set([...Object.keys(screens), ...Object.keys(directScreens)])];
     const gridClass = sharing.length > 0 ? 'max-w-6xl grid-cols-2 sm:grid-cols-3 xl:grid-cols-4' : null;
 
     return (
         <div className="mx-auto flex w-full flex-col gap-3">
             {sharing.length > 0 && (
                 <div className={cn('mx-auto grid w-full max-w-6xl gap-3', sharing.length > 1 && 'lg:grid-cols-2')}>
-                    {sharing.map(([sessionId, stream]) => (
-                        <ScreenVideo key={sessionId} stream={stream} username={usernames[sessionId]} />
+                    {sharing.map((sessionId) => (
+                        <ScreenVideo
+                            key={sessionId}
+                            forwarded={screens[sessionId]}
+                            direct={directScreens[sessionId]}
+                            shownPath={shownPaths[sessionId] ?? 'forwarded'}
+                            username={usernames[sessionId]}
+                        />
                     ))}
                 </div>
             )}

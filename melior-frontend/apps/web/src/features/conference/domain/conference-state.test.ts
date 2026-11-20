@@ -16,6 +16,7 @@ describe('conferenceReducer', () => {
             localStream: null,
             remoteStreams: {},
             directStreams: {},
+            directScreens: {},
             shownPaths: {},
             screenStreams: {},
             status: 'starting',
@@ -183,5 +184,16 @@ describe('direct paths', () => {
         state = conferenceReducer(state, { type: 'shown_path_changed', sessionId: 'p', path: 'direct' });
         state = conferenceReducer(state, { type: 'peer_left', sessionId: 'p' });
         expect(state.shownPaths).toEqual({});
+    });
+
+    test('tracks the direct screen and drops it when the peer leaves', () => {
+        const screen = { id: 'scr' };
+        let state = conferenceReducer(joined, { type: 'direct_screen_updated', sessionId: 'p', stream: screen });
+        expect(state.directScreens.p).toBe(screen);
+        state = conferenceReducer(state, { type: 'direct_screen_updated', sessionId: 'p', stream: null });
+        expect(state.directScreens).toEqual({});
+        state = conferenceReducer(state, { type: 'direct_screen_updated', sessionId: 'p', stream: screen });
+        state = conferenceReducer(state, { type: 'peer_left', sessionId: 'p' });
+        expect(state.directScreens).toEqual({});
     });
 });

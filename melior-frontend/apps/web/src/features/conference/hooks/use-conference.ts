@@ -63,7 +63,7 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
     const media = useCallMedia(connectionRef);
     const screen = useScreenShare(connectionRef);
     const { open: openMedia, adopt: adoptMedia, release: releaseMedia } = media;
-    const { resume: resumeScreen, release: releaseScreen } = screen;
+    const { resume: resumeScreen, release: releaseScreen, track: screenTrack } = screen;
     useEffect(() => {
         checkSessionRef.current = checkSession;
         checkRoomAccessRef.current = checkRoomAccess;
@@ -111,6 +111,7 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
             dispatch,
             forceRelay,
             localStream: local,
+            screenTrack,
             isCurrent: () => !disposed && mine === generation,
             onConnected: () => {
                 reconnector.markConnected();
@@ -171,7 +172,7 @@ export const useConference = (channelId: ChannelId, options: UseConferenceOption
             releaseMedia();
             releaseScreen();
         };
-    }, [channelId, forceRelay, openMedia, adoptMedia, releaseMedia, resumeScreen, releaseScreen]);
+    }, [channelId, forceRelay, openMedia, adoptMedia, releaseMedia, resumeScreen, releaseScreen, screenTrack]);
 
     const sendChat = useCallback(
         (text: string, clientId: string) =>

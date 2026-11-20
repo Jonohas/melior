@@ -88,6 +88,28 @@ describe('selectSource', () => {
     });
 });
 
+describe('selectSource with a screen', () => {
+    const withScreen = ['audio', 'video', 'screen'] as MediaKind[];
+
+    test('waits for a screen that flows on the shown path, until the preferred path carries it too', () => {
+        const waiting = selectSource(toDirect, { forwarded: obs(true, withScreen), direct: obs(true, both) });
+        expect(waiting).toEqual({ view: toDirect, report: null });
+        const ready = selectSource(toDirect, { forwarded: obs(true, withScreen), direct: obs(true, withScreen) });
+        expect(ready.view.shown).toBe('direct');
+        expect(ready.report).toBe(1);
+    });
+
+    test('a screen that sends no frames on the shown path is not waited for', () => {
+        const result = selectSource(toDirect, { forwarded: obs(true, both), direct: obs(true, withScreen) });
+        expect(result.view.shown).toBe('direct');
+    });
+
+    test('a screen flowing on the camera-less shown path moves with the rest: one path for camera and screen', () => {
+        const result = selectSource(toDirect, { forwarded: obs(true, ['screen']), direct: obs(true, ['audio']) });
+        expect(result.view.shown).toBe('forwarded');
+    });
+});
+
 describe('applyRoute', () => {
     test('ignores stale and repeated epochs', () => {
         const current = applyRoute(initialRouteView(), { path: 'direct', epoch: 5 });

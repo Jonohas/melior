@@ -3,6 +3,7 @@ import {
     type FlowState,
     flowingKinds,
     type InboundEntry,
+    type InboundSource,
     NO_OBSERVATION,
     type Path,
     type PathObservation,
@@ -16,8 +17,8 @@ export const SAMPLE_INTERVAL_MS = 250;
 export type StatsSource = {
     connection: RTCPeerConnection;
     isConnected: () => boolean;
-    /** Whose media an inbound stats entry shows; a direct link answers with its one peer for every entry. */
-    peerOf: (entry: InboundEntry) => SessionId | undefined;
+    /** Whose media an inbound stats entry shows and which kind it is (microphone, camera, screen). */
+    sourceOf: (entry: InboundEntry) => InboundSource | undefined;
 };
 
 export type Observations = Map<SessionId, Record<Path, PathObservation>>;
@@ -43,8 +44,8 @@ const readInbound = async (connection: RTCPeerConnection): Promise<InboundEntry[
 };
 
 /**
- * Every 250 ms, reports for every peer which kinds flow on each path: SFU `inbound-rtp` entries are mapped to
- * peers through their receiving track, direct-link entries belong to the link's peer. A kind flows when its counter
+ * Every 250 ms, reports for every peer which kinds flow on each path: each `inbound-rtp` entry is mapped to a peer
+ * and a kind through its receiving track's transceiver. A kind flows when its counter
  * grew within the last second.
  */
 export const createStatsSampler = ({ sfu, direct, onSample, now = Date.now }: StatsSamplerOptions) => {
@@ -52,7 +53,7 @@ export const createStatsSampler = ({ sfu, direct, onSample, now = Date.now }: St
     let busy = false;
 
     const sampleSource = async (path: Path, source: StatsSource, observed: Observations) => {
-        const counters = countInbound(await readInbound(source.connection), source.peerOf);
+        const counters = countInbound(await readInbound(source.connection), source.sourceOf);
         const at = now();
         const connected = source.isConnected();
         for (const [peer, count] of counters) {
