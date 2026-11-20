@@ -26,11 +26,14 @@ export class FakeSender {
 export class FakeTransceiver {
     direction: string;
     mid: string | null = null;
+    /** Whether a track was ever attached to the sender; addTrack only reuses a section that never sent. */
+    hasSent: boolean;
     sender: FakeSender;
     receiver: { track: FakeTrack };
 
     constructor(kind: string, track: FakeTrack | null, direction: string, index: number) {
         this.direction = direction;
+        this.hasSent = track !== null;
         this.sender = new FakeSender(track);
         this.receiver = { track: { id: `remote-${index}`, kind } };
     }
@@ -95,9 +98,22 @@ export class FakePeerConnection {
         FakePeerConnection.instances.push(this);
     }
 
+    /** Like Chromium: reuses a section that never sent and matches the kind, else adds one. */
     addTrack(track: FakeTrack) {
         this.tracksAdded += 1;
-        return this.addTransceiver(track, { direction: 'sendrecv' }).sender;
+        const idle = this.transceivers.find((t) => t.receiver.track.kind === track.kind && !t.hasSent);
+        if (!idle) return this.addTransceiver(track, { direction: 'sendrecv' }).sender;
+        idle.sender.track = track;
+        idle.hasSent = true;
+        idle.direction = 'sendrecv';
+        return idle.sender;
+    }
+
+    /** Like `removeTrack`: the sender stops sending, the section stays and only receives. */
+    removeTrack(sender: FakeSender) {
+        sender.track = null;
+        const section = this.transceivers.find((t) => t.sender === sender);
+        if (section) section.direction = 'recvonly';
     }
 
     addTransceiver(source: FakeTrack | string, init: { direction: string }) {

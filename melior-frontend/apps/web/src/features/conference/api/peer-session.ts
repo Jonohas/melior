@@ -235,13 +235,17 @@ export const createPeerSession = ({
         shareScreen: (screen) => {
             const [track] = screen.getVideoTracks();
             if (!track || screenSender) return;
-            screenSender = connection.addTrack(track, screen);
+            // Never `addTrack`: Chromium would put the screen on any section that has not sent yet, including
+            // one the server made to forward someone else's media, and the server never accepts a publisher
+            // on its own sending sections. A section of our own is one the server did not create.
+            screenSender = connection.addTransceiver(track, { direction: 'sendonly', streams: [screen] }).sender;
             // A paused uplink covers the new sender like the others.
             reapplyUplinkSoon();
         },
         stopScreen: () => {
             if (!screenSender) return;
-            // The section stays and goes quiet; the track itself is stopped by whoever captured it.
+            // The section stays and goes quiet (the server sees it end in the next offer, as before); the
+            // track itself is stopped by whoever captured it. A later share gets a section of its own again.
             if (connection.signalingState !== 'closed') connection.removeTrack(screenSender);
             screenSender = null;
         },
