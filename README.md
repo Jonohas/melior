@@ -240,8 +240,15 @@ camera, the next one is its screen, and a third is refused, so one participant
 shows at most one screen at a time. Audio belongs to the camera, and a screen has
 no sound. Everyone else receives the screen as one more track in their `tracks`
 list, with `source: "screen"`. When the sharer stops, the track ends and the next
-offer no longer lists it. A screen share is sent on the server connection; how
-it travels in mesh rooms is being changed.
+offer no longer lists it. A screen share is sent on the server connection. In a
+mesh room it also travels over each direct link, in a fixed third media section
+(after audio and camera video) that the link negotiates once. Starting and
+stopping the share uses `replaceTrack` on that section's sender, so no direct
+link is renegotiated. The sharer tells each peer with `{"screen": true}` or
+`{"screen": false}` on the link's `melior` data channel, and the peer shows the
+screen from the direct path only while the last state it got is `true`. On
+forwarded links the screen travels as before, as a track in `tracks`. The paused
+uplink covers the screen sender like the others.
 
 A client offer that crosses a server offer is ignored by the server. The client
 gives its own up when the server's offer arrives, answers that, and offers its
@@ -301,6 +308,10 @@ the browsers switch without a gap.
   one link and every link is `Direct`; the server sends `uplink` when this
   changes. The track stays published, the sender only stops sending packets.
   A participant alone in a room keeps sending.
+- **Devices and mute.** Switching camera or microphone replaces the track on
+  the server connection and on every direct link before the old track is
+  stopped. Mute applies to the shared local tracks, so it holds on every
+  connection.
 - **Relay rule.** The server relays `peer_offer`, `peer_answer` and `peer_ice`
   only when the target is in the sender's room and their link is `ToDirect`,
   `Direct` or `ToForwarded`. Anything else is dropped without an `error`, because

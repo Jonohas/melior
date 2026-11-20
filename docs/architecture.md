@@ -102,7 +102,8 @@ flowchart LR
 ```
 
 In a mesh room with `n` participants each browser sends `n - 1` copies of its
-tracks, and the SFU sends nothing; its connection is open but the uplink is
+tracks (camera, microphone and, while it shares, its screen in a fixed third
+section of each link), and the SFU sends nothing; its connection is open but the uplink is
 paused. In a forwarded room the SFU receives `n` sets of tracks and sends
 `n * (n - 1)`. Signalling always goes through the server, which relays the
 offers, answers and candidates of the direct links.
