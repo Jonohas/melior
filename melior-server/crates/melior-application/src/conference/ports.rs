@@ -3,7 +3,8 @@
 
 use async_trait::async_trait;
 use melior_domain::{
-    ChannelId, IceCandidate, IceServer, ParticipantInfo, Sdp, SessionId, Track, TrackId, User,
+    ChannelId, IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp, SessionId, Track, TrackId,
+    User,
 };
 use std::sync::{Arc, Weak};
 
@@ -106,6 +107,36 @@ pub enum Signal {
     },
     IceCandidate(IceCandidate),
     PeerLeft(SessionId),
+    /// Play `peer`'s media over `path` as soon as it works there, then report
+    /// `route_live` with this `epoch`.
+    Route {
+        peer: SessionId,
+        path: MediaPath,
+        epoch: u64,
+    },
+    /// Close the direct connection to `peer`.
+    LinkClose {
+        peer: SessionId,
+    },
+    /// Pause (`false`) or resume (`true`) sending on the SFU connection.
+    Uplink {
+        active: bool,
+    },
+    /// An offer for the direct connection with `from`, relayed by the server.
+    PeerOffer {
+        from: SessionId,
+        sdp: Sdp,
+    },
+    /// An answer for the direct connection with `from`.
+    PeerAnswer {
+        from: SessionId,
+        sdp: Sdp,
+    },
+    /// An ICE candidate for the direct connection with `from`.
+    PeerIce {
+        from: SessionId,
+        candidate: IceCandidate,
+    },
     Error(String),
 }
 

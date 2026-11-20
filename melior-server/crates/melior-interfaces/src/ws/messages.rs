@@ -6,7 +6,7 @@
 use melior_application::Signal;
 #[cfg(test)]
 use melior_application::TrackOwner;
-use melior_domain::{IceCandidate, IceServer, ParticipantInfo, Sdp};
+use melior_domain::{IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -35,6 +35,35 @@ pub enum ServerMessage {
     PeerLeft {
         session_id: String,
     },
+    /// Play `peer`'s media over `path` as soon as it works there, then report `route_live`.
+    Route {
+        peer: String,
+        path: PathDto,
+        epoch: u64,
+    },
+    /// Close the direct connection to `peer`.
+    LinkClose {
+        peer: String,
+    },
+    /// Pause (`false`) or resume (`true`) sending on the SFU connection.
+    Uplink {
+        active: bool,
+    },
+    /// A relayed offer for the direct connection with `from`.
+    PeerOffer {
+        from: String,
+        sdp: String,
+    },
+    /// A relayed answer for the direct connection with `from`.
+    PeerAnswer {
+        from: String,
+        sdp: String,
+    },
+    /// A relayed ICE candidate for the direct connection with `from`.
+    PeerIce {
+        from: String,
+        candidate: IceCandidateDto,
+    },
     Error {
         message: String,
     },
@@ -55,6 +84,23 @@ pub enum CloseReason {
     Removed,
     /// Another server instance hosts this room now; reconnect.
     RoomMoved,
+}
+
+/// The path media takes between two participants, as clients name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PathDto {
+    Direct,
+    Forwarded,
+}
+
+impl From<MediaPath> for PathDto {
+    fn from(path: MediaPath) -> Self {
+        match path {
+            MediaPath::Direct => Self::Direct,
+            MediaPath::Forwarded => Self::Forwarded,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,6 +234,20 @@ impl From<Signal> for ServerMessage {
             }),
             Signal::IceCandidate(candidate) => Self::Ice(candidate.into()),
             Signal::PeerLeft(session_id) => Self::PeerLeft { session_id: session_id.to_string() },
+            Signal::Route { peer, path, epoch } => {
+                Self::Route { peer: peer.to_string(), path: path.into(), epoch }
+            }
+            Signal::LinkClose { peer } => Self::LinkClose { peer: peer.to_string() },
+            Signal::Uplink { active } => Self::Uplink { active },
+            Signal::PeerOffer { from, sdp } => {
+                Self::PeerOffer { from: from.to_string(), sdp: sdp.into_string() }
+            }
+            Signal::PeerAnswer { from, sdp } => {
+                Self::PeerAnswer { from: from.to_string(), sdp: sdp.into_string() }
+            }
+            Signal::PeerIce { from, candidate } => {
+                Self::PeerIce { from: from.to_string(), candidate: candidate.into() }
+            }
             Signal::Error(message) => Self::Error { message },
         }
     }
@@ -333,6 +393,53 @@ mod tests {
             serde_json::to_value(ServerMessage::from(Signal::PeerLeft(session_id.clone())))
                 .unwrap(),
             json!({ "channel": "peer_left", "payload": { "session_id": session_id.as_str() } })
+        );
+    }
+
+    #[test]
+    fn serializes_the_mesh_signals_in_the_wire_format() {
+        let peer = SessionId::generate();
+        let wire = |signal| serde_json::to_value(ServerMessage::from(signal)).unwrap();
+
+        for (path, name) in [(MediaPath::Direct, "direct"), (MediaPath::Forwarded, "forwarded")] {
+            assert_eq!(
+                wire(Signal::Route { peer: peer.clone(), path, epoch: 7 }),
+                json!({ "channel": "route", "payload": { "peer": peer.as_str(), "path": name, "epoch": 7 } })
+            );
+        }
+        assert_eq!(
+            wire(Signal::LinkClose { peer: peer.clone() }),
+            json!({ "channel": "link_close", "payload": { "peer": peer.as_str() } })
+        );
+        assert_eq!(
+            wire(Signal::Uplink { active: false }),
+            json!({ "channel": "uplink", "payload": { "active": false } })
+        );
+        assert_eq!(
+            wire(Signal::PeerOffer { from: peer.clone(), sdp: Sdp::new("v=0") }),
+            json!({ "channel": "peer_offer", "payload": { "from": peer.as_str(), "sdp": "v=0" } })
+        );
+        assert_eq!(
+            wire(Signal::PeerAnswer { from: peer.clone(), sdp: Sdp::new("v=0") }),
+            json!({ "channel": "peer_answer", "payload": { "from": peer.as_str(), "sdp": "v=0" } })
+        );
+        assert_eq!(
+            wire(Signal::PeerIce {
+                from: peer.clone(),
+                candidate: IceCandidate {
+                    candidate: "c".into(),
+                    sdp_mid: Some("0".into()),
+                    sdp_mline_index: Some(1),
+                    username_fragment: None,
+                },
+            }),
+            json!({
+                "channel": "peer_ice",
+                "payload": {
+                    "from": peer.as_str(),
+                    "candidate": { "candidate": "c", "sdpMid": "0", "sdpMLineIndex": 1, "usernameFragment": null }
+                }
+            })
         );
     }
 

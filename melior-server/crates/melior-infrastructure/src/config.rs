@@ -11,6 +11,11 @@ pub const DEFAULT_IDP_CLIENT_ID: &str = "melior";
 pub const DEFAULT_IDP_SCOPE: &str = "openid email profile";
 pub const DEFAULT_SESSION_COOKIE_NAME: &str = "melior_session_id";
 pub const DEFAULT_INSTANCE_ID: &str = "melior-1";
+pub const DEFAULT_MESH_MAX_PARTICIPANTS: usize = 4;
+/// The largest room that may run as a mesh.
+pub const MESH_LIMIT_MAX: usize = 8;
+/// The smallest limit that makes sense: a mesh of one is no mesh.
+pub const MESH_LIMIT_MIN: usize = 2;
 
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
 pub enum ConfigError {
@@ -36,6 +41,9 @@ pub enum ConfigError {
 
     #[error("DATABASE_URL is required, e.g. postgres://user:password@127.0.0.1:5432/melior")]
     MissingDatabaseUrl,
+
+    #[error("MELIOR_MESH_MAX_PARTICIPANTS must be 0 (mesh off) or a number from 2 to 8, got {0}")]
+    InvalidMeshLimit(String),
 
     #[error("MELIOR_INSTANCE_ID must be 1-64 characters of A-Z, a-z, 0-9, '_' or '-'")]
     InvalidInstanceId,
@@ -76,6 +84,9 @@ pub struct Config {
     pub turn_secret: Option<String>,
     /// `MELIOR_TURN_TTL_SECONDS`: how long a TURN credential is valid.
     pub turn_ttl: Duration,
+    /// The largest room that runs as a mesh (`MELIOR_MESH_MAX_PARTICIPANTS`): 0 turns
+    /// mesh off, otherwise 2 to 8. See [`Config::effective_mesh_limit`].
+    pub mesh_max_participants: usize,
     /// Where traces go (`OTEL_EXPORTER_OTLP_ENDPOINT`, OTLP over gRPC). Unset: no export.
     pub otlp_endpoint: Option<String>,
 }
@@ -135,6 +146,11 @@ impl Config {
             return Err(ConfigError::TurnSecretWithoutUrls);
         }
 
+        let mesh_max_participants = match get("MELIOR_MESH_MAX_PARTICIPANTS") {
+            None => DEFAULT_MESH_MAX_PARTICIPANTS,
+            Some(value) => parse_mesh_limit(&value)?,
+        };
+
         Ok(Self {
             bind,
             instance_id,
@@ -152,8 +168,16 @@ impl Config {
             turn_urls,
             turn_secret,
             turn_ttl: seconds("MELIOR_TURN_TTL_SECONDS", 3600, 60)?,
+            mesh_max_participants,
             otlp_endpoint: get("OTEL_EXPORTER_OTLP_ENDPOINT"),
         })
+    }
+
+    /// The mesh limit the server actually applies: mesh needs TURN as its fallback
+    /// path, so without `MELIOR_TURN_URLS` it is 0 (off).
+    #[must_use]
+    pub fn effective_mesh_limit(&self) -> usize {
+        if self.turn_urls.is_empty() { 0 } else { self.mesh_max_participants }
     }
 
     /// How long a room stays tied to an instance that stopped renewing its lease:
@@ -161,6 +185,14 @@ impl Config {
     #[must_use]
     pub fn room_lease_ttl(&self) -> Duration {
         self.session_recheck * 3
+    }
+}
+
+fn parse_mesh_limit(value: &str) -> Result<usize, ConfigError> {
+    match value.parse::<usize>() {
+        Ok(0) => Ok(0),
+        Ok(limit) if (MESH_LIMIT_MIN..=MESH_LIMIT_MAX).contains(&limit) => Ok(limit),
+        _ => Err(ConfigError::InvalidMeshLimit(value.to_owned())),
     }
 }
 
@@ -175,6 +207,7 @@ impl std::fmt::Debug for Config {
             .field("idp_client_id", &self.idp_client_id)
             .field("turn_urls", &self.turn_urls)
             .field("turn_secret", &self.turn_secret.as_ref().map(|_| "<set>"))
+            .field("mesh_max_participants", &self.mesh_max_participants)
             .field("otlp_endpoint", &self.otlp_endpoint)
             .finish_non_exhaustive()
     }
@@ -210,6 +243,7 @@ mod tests {
         assert_eq!(config.room_lease_ttl(), Duration::from_secs(45));
         assert!(config.turn_urls.is_empty());
         assert_eq!(config.turn_secret, None);
+        assert_eq!(config.mesh_max_participants, 4);
         assert_eq!(config.otlp_endpoint, None);
     }
 
@@ -285,5 +319,42 @@ mod tests {
         let printed = format!("{config:?}");
         assert!(!printed.contains("north-secret"));
         assert!(!printed.contains(":pw@"));
+    }
+
+    #[test]
+    fn mesh_limit_accepts_zero_and_two_to_eight() {
+        for (value, expected) in [("0", 0), ("2", 2), ("4", 4), ("8", 8)] {
+            let config = config(&[DATABASE, ("MELIOR_MESH_MAX_PARTICIPANTS", value)]).unwrap();
+            assert_eq!(config.mesh_max_participants, expected);
+        }
+    }
+
+    #[test]
+    fn mesh_limit_rejects_one_nine_negative_and_non_numeric_values() {
+        for value in ["1", "9", "100", "-1", "many", "4.5"] {
+            assert_eq!(
+                config(&[DATABASE, ("MELIOR_MESH_MAX_PARTICIPANTS", value)]),
+                Err(ConfigError::InvalidMeshLimit(value.into())),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn mesh_needs_turn_to_be_on() {
+        let without = config(&[DATABASE]).unwrap();
+        assert_eq!(without.mesh_max_participants, 4);
+        assert_eq!(without.effective_mesh_limit(), 0, "no TURN: mesh is off, startup still works");
+
+        let with = config(&[DATABASE, ("MELIOR_TURN_URLS", "turn:a:3478")]).unwrap();
+        assert_eq!(with.effective_mesh_limit(), 4);
+
+        let off = config(&[
+            DATABASE,
+            ("MELIOR_TURN_URLS", "turn:a:3478"),
+            ("MELIOR_MESH_MAX_PARTICIPANTS", "0"),
+        ])
+        .unwrap();
+        assert_eq!(off.effective_mesh_limit(), 0);
     }
 }

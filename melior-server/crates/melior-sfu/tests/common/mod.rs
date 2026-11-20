@@ -8,7 +8,7 @@ use melior_application::{
     IdentityProvider, IdpError, InMemoryRoomRepository, InMemorySessionStore, LeaseError,
     RoomAccessService, RoomLeases, StaticIceServers, Tokens,
 };
-use melior_domain::{ChannelId, User, UserId};
+use melior_domain::{ChannelId, MeshPolicy, User, UserId};
 use melior_infrastructure::webrtc::WebRtcMediaEngine;
 use melior_interfaces::{AppState, router};
 use std::net::SocketAddr;
@@ -118,8 +118,12 @@ impl TestServer {
     pub async fn start() -> Self {
         let media = Arc::new(WebRtcMediaEngine::new().expect("media engine"));
         let leases = Arc::new(SwitchableLeases::default());
-        let conference =
-            ConferenceService::new(media, Arc::new(StaticIceServers::default()), leases.clone());
+        let conference = ConferenceService::new(
+            media,
+            Arc::new(StaticIceServers::default()),
+            leases.clone(),
+            MeshPolicy::OFF,
+        );
         let sessions = Arc::new(InMemorySessionStore::default());
         let auth = Arc::new(AuthService::new(
             Arc::new(FakeIdp),

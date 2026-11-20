@@ -25,8 +25,9 @@ pub mod conference;
 pub mod identity;
 
 pub use conference::{
-    ChannelId, ClientOffer, Departure, DomainError, IceCandidate, IceServer, MediaKind,
-    Negotiation, NegotiationPhase, ParticipantInfo, Room, RoomAccess, Sdp, SessionId, Track,
+    ChannelId, ClientOffer, Departure, DomainError, Effects, IceCandidate, IceServer, Joined,
+    LinkClose, LinkTimeout, MediaKind, MediaPath, MeshPolicy, Negotiation, NegotiationPhase, Pair,
+    ParticipantInfo, Room, RoomAccess, RoomTarget, Route, RouteNotice, Sdp, SessionId, Track,
     TrackId,
 };
 pub use identity::{AuthSessionId, ReturnPath, User, UserId, Username};

@@ -1,14 +1,19 @@
-use super::{ChannelId, ClientOffer, DomainError, Negotiation, SessionId, Track, TrackId};
+use super::{
+    ChannelId, ClientOffer, DomainError, Effects, LinkClose, Links, MeshPolicy, Negotiation,
+    RoomTarget, SessionId, Track, TrackId,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A participant inside a [`Room`].
 #[derive(Debug)]
-struct Participant {
+pub(super) struct Participant {
     /// Name shown to the other participants.
-    username: String,
-    negotiation: Negotiation,
-    published: Vec<Track>,
-    subscriptions: BTreeSet<TrackId>,
+    pub(super) username: String,
+    pub(super) negotiation: Negotiation,
+    pub(super) published: Vec<Track>,
+    pub(super) subscriptions: BTreeSet<TrackId>,
+    /// Whether the participant was last told to send on the SFU connection.
+    pub(super) uplink_active: bool,
 }
 
 /// Who a participant is, as the others see it.
@@ -18,31 +23,54 @@ pub struct ParticipantInfo {
     pub username: String,
 }
 
+/// What a join changed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Joined {
+    /// Who was already there.
+    pub present: Vec<ParticipantInfo>,
+    pub effects: Effects,
+}
+
 /// What changed for the rest of the room when a participant left.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Departure {
-    /// Tracks each remaining participant no longer receives.
-    pub unsubscribed: Vec<(SessionId, Vec<TrackId>)>,
     /// Everyone still in the room.
     pub remaining: Vec<SessionId>,
+    /// Tracks the others no longer receive, link closes, route changes and uplinks.
+    pub effects: Effects,
 }
 
 /// The room aggregate: who is in a channel, what they publish and who receives what.
 ///
-/// Invariant: a participant whose media connection is established ("ready") is
-/// subscribed to every track published by the other participants, and never to its own.
-/// The methods return the subscription changes the caller has to carry out on the
-/// media plane; the room itself performs no I/O.
+/// Invariant: a participant R whose media connection is established ("ready") is
+/// subscribed to a track of another participant P exactly when the link between P and
+/// R is not `Direct`, and never to its own tracks. The methods return the subscription
+/// changes the caller has to carry out on the media plane; the room itself performs
+/// no I/O. The mesh rules (target, links, uplinks) live in `mesh`, `links` and
+/// `room_mesh`.
 #[derive(Debug)]
 pub struct Room {
     id: ChannelId,
-    participants: BTreeMap<SessionId, Participant>,
+    pub(super) participants: BTreeMap<SessionId, Participant>,
+    pub(super) links: Links,
+    pub(super) target: RoomTarget,
 }
 
 impl Room {
+    /// A room without mesh: everything is forwarded.
     #[must_use]
     pub fn new(id: ChannelId) -> Self {
-        Self { id, participants: BTreeMap::new() }
+        Self::with_mesh(id, MeshPolicy::OFF)
+    }
+
+    #[must_use]
+    pub fn with_mesh(id: ChannelId, policy: MeshPolicy) -> Self {
+        Self {
+            id,
+            participants: BTreeMap::new(),
+            links: Links::default(),
+            target: RoomTarget::new(policy),
+        }
     }
 
     #[must_use]
@@ -60,16 +88,20 @@ impl Room {
         self.participants.contains_key(id)
     }
 
-    /// Adds a participant. Returns who was already there.
+    /// Adds a participant, links it to everyone already there and re-evaluates the
+    /// room's target.
     pub fn join(
         &mut self,
         id: SessionId,
         username: impl Into<String>,
-    ) -> Result<Vec<ParticipantInfo>, DomainError> {
+    ) -> Result<Joined, DomainError> {
         if self.participants.contains_key(&id) {
             return Err(DomainError::AlreadyJoined(id));
         }
         let present = self.roster();
+        for other in &present {
+            self.links.add(&other.session_id, &id);
+        }
         self.participants.insert(
             id,
             Participant {
@@ -77,9 +109,11 @@ impl Room {
                 negotiation: Negotiation::default(),
                 published: Vec::new(),
                 subscriptions: BTreeSet::new(),
+                uplink_active: true,
             },
         );
-        Ok(present)
+        let effects = self.retarget();
+        Ok(Joined { present, effects })
     }
 
     /// Who publishes a track, if it is still published.
@@ -103,27 +137,18 @@ impl Room {
             .collect()
     }
 
-    /// Removes a participant and everything it published.
+    /// Removes a participant, its links and everything it published.
     pub fn leave(&mut self, id: &SessionId) -> Result<Departure, DomainError> {
-        let leaver = self
-            .participants
-            .remove(id)
-            .ok_or_else(|| DomainError::UnknownParticipant(id.clone()))?;
-
-        let mut departure = Departure::default();
-        for (other_id, other) in &mut self.participants {
-            let lost: Vec<TrackId> = leaver
-                .published
-                .iter()
-                .filter(|track| other.subscriptions.remove(&track.id))
-                .map(|track| track.id.clone())
-                .collect();
-            if !lost.is_empty() {
-                departure.unsubscribed.push((other_id.clone(), lost));
-            }
-            departure.remaining.push(other_id.clone());
+        if self.participants.remove(id).is_none() {
+            return Err(DomainError::UnknownParticipant(id.clone()));
         }
-        Ok(departure)
+        let had_direct_link = self.links.remove_participant(id);
+        let mut effects = self.retarget();
+        let closes =
+            had_direct_link.into_iter().map(|peer| LinkClose { to: peer, peer: id.clone() });
+        effects.link_closes.splice(0..0, closes);
+        let remaining = self.participants.keys().cloned().collect();
+        Ok(Departure { remaining, effects })
     }
 
     /// Adds a published track. Returns the participants that now have to receive it.
@@ -137,12 +162,14 @@ impl Room {
         }
         self.participant_mut(publisher)?.published.push(track.clone());
 
-        let mut subscribers = Vec::new();
-        for (id, participant) in &mut self.participants {
-            if id != publisher && participant.negotiation.is_ready() {
-                participant.subscriptions.insert(track.id.clone());
-                subscribers.push(id.clone());
-            }
+        let subscribers: Vec<SessionId> = self
+            .participants
+            .keys()
+            .filter(|id| self.receives_through_sfu(publisher, id))
+            .cloned()
+            .collect();
+        for id in &subscribers {
+            self.participant_mut(id)?.subscriptions.insert(track.id.clone());
         }
         Ok(subscribers)
     }
@@ -193,7 +220,7 @@ impl Room {
         let existing: Vec<Track> = self
             .participants
             .iter()
-            .filter(|(other, _)| *other != id)
+            .filter(|(other, _)| *other != id && self.link_is_not_direct(other, id))
             .flat_map(|(_, p)| p.published.iter().cloned())
             .collect();
         let participant = self.participant_mut(id)?;
@@ -215,7 +242,10 @@ impl Room {
             .ok_or_else(|| DomainError::UnknownParticipant(id.clone()))
     }
 
-    fn participant_mut(&mut self, id: &SessionId) -> Result<&mut Participant, DomainError> {
+    pub(super) fn participant_mut(
+        &mut self,
+        id: &SessionId,
+    ) -> Result<&mut Participant, DomainError> {
         self.participants.get_mut(id).ok_or_else(|| DomainError::UnknownParticipant(id.clone()))
     }
 }
@@ -254,9 +284,9 @@ mod tests {
     fn joining_reports_who_is_already_there() {
         let mut room = room();
         let alice = SessionId::generate();
-        assert!(room.join(alice.clone(), "alice").unwrap().is_empty());
+        assert!(room.join(alice.clone(), "alice").unwrap().present.is_empty());
 
-        let present = room.join(SessionId::generate(), "bob").unwrap();
+        let present = room.join(SessionId::generate(), "bob").unwrap().present;
         assert_eq!(present, vec![ParticipantInfo { session_id: alice, username: "alice".into() }]);
         assert_eq!(room.roster().len(), 2);
     }
@@ -335,8 +365,11 @@ mod tests {
         assert_eq!(
             departure,
             Departure {
-                unsubscribed: vec![(bob.clone(), vec![track.id.clone()])],
                 remaining: vec![bob.clone()],
+                effects: Effects {
+                    unsubscribe: vec![(bob.clone(), vec![track.id.clone()])],
+                    ..Effects::default()
+                },
             }
         );
         assert!(room.subscriptions(&bob).unwrap().is_empty());
