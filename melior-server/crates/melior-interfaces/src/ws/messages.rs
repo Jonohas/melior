@@ -8,7 +8,9 @@ use super::peer::{LinkFailedDto, PeerDescriptionDto, PeerIceDto, RouteLiveDto};
 use melior_application::Signal;
 #[cfg(test)]
 use melior_application::TrackOwner;
-use melior_domain::{IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp, TrackSource};
+use melior_domain::{
+    IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp, TrackSource, VoiceState,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -24,6 +26,7 @@ pub enum ClientMessage {
     PeerIce(PeerIceDto),
     Echo(String),
     ChatSend(ChatSendDto),
+    VoiceState(VoiceDto),
 }
 
 impl ClientMessage {
@@ -89,6 +92,12 @@ pub enum ServerMessage {
     },
     Echo(String),
     Chat(ChatMessageDto),
+    /// A participant's voice state changed; the participant hears it too.
+    VoiceState {
+        session_id: String,
+        #[serde(flatten)]
+        voice: VoiceDto,
+    },
     /// A message the server did not accept. `client_id` names it when the client gave one.
     ChatError {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -186,11 +195,45 @@ impl From<TrackSource> for TrackSourceDto {
 pub struct ParticipantDto {
     pub session_id: String,
     pub username: String,
+    pub voice: VoiceDto,
 }
 
 impl From<ParticipantInfo> for ParticipantDto {
     fn from(participant: ParticipantInfo) -> Self {
-        Self { session_id: participant.session_id.to_string(), username: participant.username }
+        Self {
+            session_id: participant.session_id.to_string(),
+            username: participant.username,
+            voice: participant.voice.into(),
+        }
+    }
+}
+
+/// `{ muted, camera, screen, speaking }`: what a participant claims (client to
+/// server) or what the room accepted (server to client).
+// Four independent flags, as clients show them.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceDto {
+    pub muted: bool,
+    pub camera: bool,
+    pub screen: bool,
+    pub speaking: bool,
+}
+
+impl From<VoiceState> for VoiceDto {
+    fn from(voice: VoiceState) -> Self {
+        Self {
+            muted: voice.muted,
+            camera: voice.camera,
+            screen: voice.screen,
+            speaking: voice.speaking,
+        }
+    }
+}
+
+impl From<VoiceDto> for VoiceState {
+    fn from(dto: VoiceDto) -> Self {
+        Self { muted: dto.muted, camera: dto.camera, screen: dto.screen, speaking: dto.speaking }
     }
 }
 
@@ -293,6 +336,9 @@ impl From<Signal> for ServerMessage {
             Signal::Chat { message, client_id } => {
                 Self::Chat(ChatMessageDto::new(message, client_id))
             }
+            Signal::VoiceState { session_id, voice } => {
+                Self::VoiceState { session_id: session_id.to_string(), voice: voice.into() }
+            }
             Signal::Error(message) => Self::Error { message },
         }
     }
@@ -374,6 +420,7 @@ mod tests {
             participants: vec![ParticipantInfo {
                 session_id: session_id.clone(),
                 username: "alice".into(),
+                voice: VoiceState { muted: true, ..VoiceState::default() },
             }],
             ice_servers: vec![IceServer {
                 urls: vec!["turn:localhost:3478".into()],
@@ -390,7 +437,11 @@ mod tests {
                     "channel_id": "general",
                     "username": "bob",
                     "ice_servers": [{ "urls": ["turn:localhost:3478"], "username": "user" }],
-                    "participants": [{ "session_id": session_id.as_str(), "username": "alice" }]
+                    "participants": [{
+                        "session_id": session_id.as_str(),
+                        "username": "alice",
+                        "voice": { "muted": true, "camera": false, "screen": false, "speaking": false }
+                    }]
                 }
             })
         );
@@ -399,9 +450,14 @@ mod tests {
             serde_json::to_value(ServerMessage::from(Signal::PeerJoined(ParticipantInfo {
                 session_id: session_id.clone(),
                 username: "carol".into(),
+                voice: VoiceState::default(),
             })))
             .unwrap(),
-            json!({ "channel": "peer_joined", "payload": { "session_id": session_id.as_str(), "username": "carol" } })
+            json!({ "channel": "peer_joined", "payload": {
+                "session_id": session_id.as_str(),
+                "username": "carol",
+                "voice": { "muted": false, "camera": false, "screen": false, "speaking": false }
+            } })
         );
 
         assert_eq!(
@@ -489,6 +545,43 @@ mod tests {
                     "candidate": { "candidate": "c", "sdpMid": "0", "sdpMLineIndex": 1, "usernameFragment": null }
                 }
             })
+        );
+    }
+
+    #[test]
+    fn voice_states_go_both_ways() {
+        let claim: ClientMessage = serde_json::from_value(json!({
+            "channel": "voice_state",
+            "payload": { "muted": true, "camera": false, "screen": true, "speaking": false }
+        }))
+        .unwrap();
+        assert_eq!(
+            claim,
+            ClientMessage::VoiceState(VoiceDto {
+                muted: true,
+                camera: false,
+                screen: true,
+                speaking: false
+            })
+        );
+        for bad in [
+            json!({ "channel": "voice_state", "payload": { "muted": true } }),
+            json!({ "channel": "voice_state", "payload": { "muted": 1, "camera": false, "screen": false, "speaking": false } }),
+        ] {
+            assert!(serde_json::from_value::<ClientMessage>(bad).is_err());
+        }
+
+        let session_id = SessionId::generate();
+        let voice = VoiceState { muted: false, camera: true, screen: false, speaking: true };
+        assert_eq!(
+            serde_json::to_value(ServerMessage::from(Signal::VoiceState {
+                session_id: session_id.clone(),
+                voice
+            }))
+            .unwrap(),
+            json!({ "channel": "voice_state", "payload": {
+                "session_id": session_id.as_str(), "muted": false, "camera": true, "screen": false, "speaking": true
+            } })
         );
     }
 

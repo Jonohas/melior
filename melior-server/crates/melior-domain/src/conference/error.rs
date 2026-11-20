@@ -26,4 +26,7 @@ pub enum DomainError {
 
     #[error("an answer was received but no server offer is pending")]
     UnexpectedAnswer,
+
+    #[error("this channel is full")]
+    ChannelFull,
 }

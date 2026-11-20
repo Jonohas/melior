@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// The identity provider's stable identifier for a user (the OIDC `sub`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct UserId(String);
 
 impl UserId {

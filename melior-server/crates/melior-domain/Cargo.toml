@@ -1,6 +1,6 @@
 [package]
 name = "melior-domain"
-description = "The Melior domain model: rooms, participants, negotiation rules, users. Pure and synchronous."
+description = "The Melior domain model: rooms, participants, negotiation rules, communities, users. Pure and synchronous."
 version.workspace = true
 edition.workspace = true
 

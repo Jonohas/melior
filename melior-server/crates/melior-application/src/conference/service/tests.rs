@@ -1,6 +1,6 @@
 use super::testing::*;
 use super::*;
-use melior_domain::{MediaKind, TrackSource, UserId};
+use melior_domain::{MediaKind, TrackSource, UserId, VoiceState};
 
 #[tokio::test]
 async fn join_announces_the_session_and_first_offer_is_answered() {
@@ -79,29 +79,27 @@ async fn a_screen_is_offered_with_its_source_and_a_stopped_one_is_retracted() {
 async fn participants_learn_who_is_in_the_room() {
     let h = Harness::new();
     let alice_sink = Arc::new(RecordingSink::default());
-    let alice = h
-        .service
-        .join(ChannelId::parse("general").unwrap(), &member("alice"), alice_sink.clone())
-        .await
-        .unwrap();
+    let alice =
+        h.service.join(h.admission("general"), &member("alice"), alice_sink.clone()).await.unwrap();
     alice_sink.take_all();
 
     let bob_sink = Arc::new(RecordingSink::default());
-    let bob = h
-        .service
-        .join(ChannelId::parse("general").unwrap(), &member("bob"), bob_sink.clone())
-        .await
-        .unwrap();
+    let bob =
+        h.service.join(h.admission("general"), &member("bob"), bob_sink.clone()).await.unwrap();
 
     assert!(matches!(
         bob_sink.take_all().as_slice(),
         [Signal::Joined { username, participants, .. }]
             if username == "bob"
-                && *participants == [ParticipantInfo { session_id: alice.clone(), username: "alice".into() }]
+                && *participants == [ParticipantInfo { session_id: alice.clone(), username: "alice".into(), voice: VoiceState::default() }]
     ));
     assert_eq!(
         alice_sink.take_all(),
-        vec![Signal::PeerJoined(ParticipantInfo { session_id: bob, username: "bob".into() })]
+        vec![Signal::PeerJoined(ParticipantInfo {
+            session_id: bob,
+            username: "bob".into(),
+            voice: VoiceState::default()
+        })]
     );
 }
 
@@ -110,10 +108,8 @@ async fn users_without_a_melior_role_cannot_join() {
     let h = Harness::new();
     let guest = User::new(UserId::new("sub-guest"), "guest", None, []);
 
-    let result = h
-        .service
-        .join(ChannelId::parse("general").unwrap(), &guest, Arc::new(RecordingSink::default()))
-        .await;
+    let result =
+        h.service.join(h.admission("general"), &guest, Arc::new(RecordingSink::default())).await;
 
     assert!(matches!(result, Err(ConferenceError::NotAllowed(name)) if name == "guest"));
     assert_eq!(h.service.room_count(), 0);

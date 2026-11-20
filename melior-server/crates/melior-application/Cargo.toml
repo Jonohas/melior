@@ -1,6 +1,6 @@
 [package]
 name = "melior-application"
-description = "The Melior use cases (conference, login, room registry) and the ports they need from the outside world."
+description = "The Melior use cases (conference, login, communities, chat) and the ports they need from the outside world."
 version.workspace = true
 edition.workspace = true
 

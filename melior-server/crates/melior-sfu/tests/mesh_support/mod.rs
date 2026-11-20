@@ -72,6 +72,7 @@ pub struct MeshClient {
 impl MeshClient {
     /// Logs `username` in as a member and joins `channel`.
     pub async fn join(server: &TestServer, channel: &str, username: &str) -> Self {
+        server.voice_channel(channel).await;
         let cookie = server.login(username, &["member"]).await;
         let request = server.ws_request(Some(channel), Some(&cookie));
         let (socket, _) = tokio_tungstenite::connect_async(request).await.expect("connect");

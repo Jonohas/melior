@@ -2,17 +2,20 @@ use super::ports::{
     IceServerProvider, LeaseError, MediaEngine, MediaError, MediaEvents, MediaSession, RoomLeases,
     Signal, SignalSink, TrackOwner,
 };
+use super::presence::{Admission, PresenceContext, PresenceSink, PresenceUpdate};
 use async_trait::async_trait;
 use melior_domain::{
-    ChannelId, DomainError, IceCandidate, MeshPolicy, Negotiation, ParticipantInfo, Room, Sdp,
-    SessionId, Track, TrackId, User,
+    ChannelId, DomainError, IceCandidate, MeshPolicy, Negotiation, ParticipantInfo, Room, RoomPlan,
+    Sdp, SessionId, Track, TrackId, User, VoiceLimit, VoiceState,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::Instant;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 
 mod mesh;
+mod voice;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ConferenceError {
@@ -52,6 +55,10 @@ struct Session {
     room: RoomCell,
     media: Arc<dyn MediaSession>,
     signals: Arc<dyn SignalSink>,
+    username: String,
+    /// Where this participant's presence is reported, if anywhere.
+    presence: Option<PresenceContext>,
+    voice_limit: Mutex<VoiceLimit>,
 }
 
 /// The conference use cases: joining and leaving rooms, and negotiating who receives
@@ -63,6 +70,9 @@ pub struct ConferenceService {
     rooms: Mutex<HashMap<ChannelId, RoomCell>>,
     sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     mesh: MeshPolicy,
+    presence: Arc<dyn PresenceSink>,
+    /// The clock of the voice-state rate limits.
+    started: Instant,
     this: Weak<ConferenceService>,
 }
 
@@ -72,6 +82,7 @@ impl ConferenceService {
         ice_servers: Arc<dyn IceServerProvider>,
         leases: Arc<dyn RoomLeases>,
         mesh: MeshPolicy,
+        presence: Arc<dyn PresenceSink>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             media,
@@ -80,8 +91,16 @@ impl ConferenceService {
             rooms: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
             mesh,
+            presence,
+            started: Instant::now(),
             this: this.clone(),
         })
+    }
+
+    /// The mesh policy rooms on this instance run under.
+    #[must_use]
+    pub fn mesh(&self) -> MeshPolicy {
+        self.mesh
     }
 
     /// Makes sure this instance is the one hosting a room, taking or renewing its
@@ -96,14 +115,16 @@ impl ConferenceService {
     }
 
     /// Adds a user to a channel as a new participant, tells its client who it is and
-    /// who is there, and announces it to the others.
-    #[tracing::instrument(name = "conference.join", skip_all, fields(channel = %channel_id, user = %user.username))]
+    /// who is there, and announces it to the others and to its community. The room
+    /// takes the channel's plan first, so a full channel refuses the join.
+    #[tracing::instrument(name = "conference.join", skip_all, fields(channel = %admission.channel_id, user = %user.username))]
     pub async fn join(
         &self,
-        channel_id: ChannelId,
+        admission: Admission,
         user: &User,
         signals: Arc<dyn SignalSink>,
     ) -> Result<SessionId, ConferenceError> {
+        let Admission { channel_id, plan, presence } = admission;
         if !user.may_join_rooms() {
             return Err(ConferenceError::NotAllowed(user.username.clone()));
         }
@@ -112,7 +133,7 @@ impl ConferenceService {
         let media = self.media.create_session(session_id.clone(), events).await?;
 
         let (cell, mut room) = loop {
-            let cell = self.room_cell(&channel_id);
+            let cell = self.room_cell(&channel_id, plan);
             let room = cell.clone().lock_owned().await;
             // The room may have emptied and been dropped while we waited for it.
             if self.is_current_room(&channel_id, &cell) {
@@ -120,6 +141,7 @@ impl ConferenceService {
             }
         };
 
+        room.apply_plan(plan);
         let joined = match room.join(session_id.clone(), user.username.clone()) {
             Ok(joined) => joined,
             Err(error) => {
@@ -135,6 +157,9 @@ impl ConferenceService {
             room: cell,
             media,
             signals,
+            username: user.username.clone(),
+            presence,
+            voice_limit: Mutex::new(VoiceLimit::standard()),
         });
         lock(&self.sessions).insert(session_id.clone(), session.clone());
 
@@ -148,14 +173,18 @@ impl ConferenceService {
             ice_servers: self.ice_servers.ice_servers_for(user),
             participants: joined.present.clone(),
         });
-        let newcomer =
-            ParticipantInfo { session_id: session_id.clone(), username: user.username.clone() };
+        let newcomer = ParticipantInfo {
+            session_id: session_id.clone(),
+            username: user.username.clone(),
+            voice: VoiceState::default(),
+        };
         for other in joined.present {
             if let Some(other) = self.session(&other.session_id) {
                 other.signals.send(Signal::PeerJoined(newcomer.clone()));
             }
         }
         self.carry_out(&mut room, joined.effects).await;
+        self.report(&session, VoiceState::default(), PresenceUpdate::joined);
         Ok(session_id)
     }
 
@@ -179,6 +208,14 @@ impl ConferenceService {
                     self.carry_out(&mut room, departure.effects).await;
                 }
                 Err(error) => warn!(session = %session_id, %error, "leave"),
+            }
+
+            if let Some(context) = &session.presence {
+                self.presence.report(PresenceUpdate::Left {
+                    community_id: context.community_id.clone(),
+                    channel_id: session.channel_id.clone(),
+                    session_id: session_id.clone(),
+                });
             }
 
             if room.is_empty() {
@@ -331,11 +368,11 @@ impl ConferenceService {
         self.session(id).ok_or(ConferenceError::UnknownSession)
     }
 
-    fn room_cell(&self, channel_id: &ChannelId) -> RoomCell {
+    fn room_cell(&self, channel_id: &ChannelId, plan: RoomPlan) -> RoomCell {
         lock(&self.rooms)
             .entry(channel_id.clone())
             .or_insert_with(|| {
-                Arc::new(AsyncMutex::new(Room::with_mesh(channel_id.clone(), self.mesh)))
+                Arc::new(AsyncMutex::new(Room::with_plan(channel_id.clone(), self.mesh, plan)))
             })
             .clone()
     }
@@ -397,6 +434,7 @@ impl MediaEvents for ConferenceService {
             }
         };
         info!(session = %session_id, track = %track.id, kind = ?track.kind, subscribers = subscribers.len(), "track published");
+        self.reconcile_voice(&mut room, session_id);
 
         for subscriber_id in subscribers {
             let Some(subscriber) = self.session(&subscriber_id) else {
@@ -419,7 +457,9 @@ impl MediaEvents for ConferenceService {
         };
         let mut room = session.room.lock().await;
 
-        for subscriber_id in room.unpublish(session_id, track_id) {
+        let subscribers = room.unpublish(session_id, track_id);
+        self.reconcile_voice(&mut room, session_id);
+        for subscriber_id in subscribers {
             let Some(subscriber) = self.session(&subscriber_id) else {
                 continue;
             };
@@ -447,3 +487,5 @@ mod mesh_tests;
 mod testing;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod voice_tests;

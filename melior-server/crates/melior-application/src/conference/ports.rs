@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use melior_domain::{
     ChannelId, ChatMessage, IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp, SessionId,
-    Track, TrackId, TrackSource, User,
+    Track, TrackId, TrackSource, User, VoiceState,
 };
 use std::sync::{Arc, Weak};
 
@@ -138,6 +138,12 @@ pub enum Signal {
     PeerIce {
         from: SessionId,
         candidate: IceCandidate,
+    },
+    /// A participant's voice state changed; everyone in the room hears it, the
+    /// participant included.
+    VoiceState {
+        session_id: SessionId,
+        voice: VoiceState,
     },
     /// Someone said something in the room. `client_id` is set only for the
     /// author, so its client can tell which of its pending messages this is.

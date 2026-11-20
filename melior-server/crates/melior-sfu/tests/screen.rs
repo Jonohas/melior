@@ -44,6 +44,7 @@ struct Peer {
 impl Peer {
     /// Joins `channel`; sends the first offer, with a camera track when `camera`.
     async fn join(server: &TestServer, channel: &str, username: &str, camera: bool) -> Self {
+        server.voice_channel(channel).await;
         let cookie = server.login(username, &["member"]).await;
         let request = server.ws_request(Some(channel), Some(&cookie));
         let (socket, _) = tokio_tungstenite::connect_async(request).await.expect("connect");

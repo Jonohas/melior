@@ -2,8 +2,9 @@ use super::chat::ChatSendDto;
 use super::limiter::TokenBucket;
 use super::messages::{ClientMessage, CloseReason, SdpType, ServerMessage};
 use super::peer::{PeerCommand, Rejection};
+use super::writer::{finish, spawn_writer};
 use crate::AppState;
-use crate::http::{Authenticated, authenticate, from_foreign_origin};
+use crate::http::{Authenticated, authenticate, community_response, from_foreign_origin};
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -11,25 +12,23 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum_extra::extract::cookie::CookieJar;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use melior_application::{
-    ChatFailure, ChatService, ConferenceError, ConferenceService, RoomsError, SessionState, Signal,
-    SignalSink,
+    Admission, ChatFailure, ChatService, CommunitiesError, ConferenceError, ConferenceService,
+    PresenceContext, SessionState, Signal, SignalSink, VoiceGrant,
 };
-use melior_domain::{AuthSessionId, ChannelId, DomainError, SessionId, User};
+use melior_domain::{AuthSessionId, ChannelId, DomainError, Permissions, SessionId, User};
 use serde::Deserialize;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 
-const DEFAULT_CHANNEL: &str = "general";
-
 /// The largest WebSocket message the server accepts, above the largest SDP it relays.
 pub const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 
-/// `GET /ws?channel_id=<room>`: conference signalling for logged-in users.
+/// `GET /ws?channel_id=<id>`: conference signalling in a voice channel.
 pub fn routes() -> Router<AppState> {
     Router::new().route("/ws", get(upgrade))
 }
@@ -41,8 +40,9 @@ struct ConnectParams {
 
 /// Checks who is asking before any WebSocket exists. In order: a browser must be
 /// on the application's own page; the session cookie must belong to a user with a
-/// Melior role; the user must be allowed into this room; and this server instance
-/// must be the one hosting the room.
+/// Melior role; the channel must be a voice channel the user may view and connect
+/// to (404 unknown, 403 refused); this server instance must be the one hosting the
+/// room (503); and the room must have a free seat (409).
 async fn upgrade(
     Query(params): Query<ConnectParams>,
     State(state): State<AppState>,
@@ -59,20 +59,18 @@ async fn upgrade(
         Err((rejection, jar)) => return (jar, rejection.status()).into_response(),
     };
 
-    let channel_id = params.channel_id.as_deref().unwrap_or(DEFAULT_CHANNEL);
-    let channel_id = match ChannelId::parse(channel_id) {
+    let Some(channel_id) = params.channel_id else {
+        return (jar, (StatusCode::BAD_REQUEST, "channel_id is required")).into_response();
+    };
+    let channel_id = match ChannelId::parse(&channel_id) {
         Ok(channel_id) => channel_id,
         Err(error) => return (jar, (StatusCode::BAD_REQUEST, error.to_string())).into_response(),
     };
 
-    match state.rooms.admit(&channel_id, &user).await {
-        Ok(()) => {}
-        Err(RoomsError::Forbidden) => return (jar, StatusCode::FORBIDDEN).into_response(),
-        Err(error) => {
-            warn!(%error, channel = %channel_id, "room registry unavailable");
-            return (jar, StatusCode::SERVICE_UNAVAILABLE).into_response();
-        }
-    }
+    let grant = match state.communities.admit_voice(&channel_id, &user).await {
+        Ok(grant) => grant,
+        Err(error) => return (jar, community_response(&error)).into_response(),
+    };
 
     // 503 either way: the client retries, and its next attempt is routed to the
     // instance that hosts the room, or lands here again once the lease is free.
@@ -82,8 +80,11 @@ async fn upgrade(
         }
         return (jar, StatusCode::SERVICE_UNAVAILABLE).into_response();
     }
+    if state.conference.is_full(&channel_id, grant.plan(state.conference.mesh())).await {
+        return (jar, (StatusCode::CONFLICT, "this channel is full")).into_response();
+    }
 
-    let guest = Guest { state: state.clone(), auth_session: session_id, channel_id, user };
+    let guest = Guest { state: state.clone(), auth_session: session_id, channel_id, user, grant };
     let response = upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
@@ -97,12 +98,27 @@ struct Guest {
     auth_session: AuthSessionId,
     channel_id: ChannelId,
     user: User,
+    /// What the user may do in the channel, as of the last check.
+    grant: VoiceGrant,
 }
 
 impl Guest {
-    /// Re-checks everything the upgrade checked. Returns why the connection has to
-    /// end, if it does. Only a definite answer ends it: when the session store, the
-    /// registry or the lease cannot be asked, the connection stays.
+    /// How the user joins the channel's room.
+    fn admission(&self) -> Admission {
+        Admission {
+            channel_id: self.channel_id.clone(),
+            plan: self.grant.plan(self.state.conference.mesh()),
+            presence: Some(PresenceContext {
+                community_id: self.grant.community_id.clone(),
+                user_id: self.user.id.clone(),
+            }),
+        }
+    }
+
+    /// Re-checks everything the upgrade checked except the capacity, and takes the
+    /// user's current permissions. Returns why the connection has to end, if it
+    /// does. Only a definite answer ends it: when the session store, the community
+    /// store or the lease cannot be asked, the connection stays.
     async fn overstayed(&mut self) -> Option<CloseReason> {
         match self.state.auth.check(&self.auth_session).await {
             Ok(SessionState::Active(active)) => self.user = active.user,
@@ -111,10 +127,10 @@ impl Guest {
             Err(error) => debug!(%error, "session re-check failed"),
         }
 
-        match self.state.rooms.may_stay(&self.channel_id, &self.user).await {
-            Ok(true) => {}
-            Ok(false) => return Some(CloseReason::Removed),
-            Err(error) => debug!(%error, "room access re-check failed"),
+        match self.state.communities.admit_voice(&self.channel_id, &self.user).await {
+            Ok(grant) => self.grant = grant,
+            Err(CommunitiesError::Store(error)) => debug!(%error, "channel access re-check failed"),
+            Err(_) => return Some(CloseReason::Removed),
         }
 
         match self.state.conference.host(&self.channel_id).await {
@@ -145,29 +161,13 @@ impl SignalSink for Outbox {
 
 /// Runs one participant's connection from join to leave.
 async fn connection(socket: WebSocket, mut guest: Guest) {
-    let (mut sink, mut stream) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
-
-    let mut writer = tokio::spawn(async move {
-        while let Some(message) = rx.recv().await {
-            let text = match serde_json::to_string(&message) {
-                Ok(text) => text,
-                Err(error) => {
-                    warn!(%error, "unserializable message");
-                    continue;
-                }
-            };
-            if sink.send(Message::text(text)).await.is_err() {
-                break;
-            }
-        }
-        let _ = sink.close().await;
-    });
+    let (sink, mut stream) = socket.split();
+    let (tx, writer) = spawn_writer::<ServerMessage>(sink);
 
     let outbox = Arc::new(Outbox(tx));
     let service = guest.state.conference.clone();
     let chat = guest.state.chat.clone();
-    match service.join(guest.channel_id.clone(), &guest.user, outbox.clone()).await {
+    match service.join(guest.admission(), &guest.user, outbox.clone()).await {
         Ok(session_id) => {
             let period = guest.state.session_recheck;
             let mut recheck =
@@ -182,7 +182,11 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                 tokio::select! {
                     message = stream.next() => match message {
                         Some(Ok(Message::Text(text))) => {
-                            let services = Services { conference: &service, chat: &chat };
+                            let services = Services {
+                                conference: &service,
+                                chat: &chat,
+                                permissions: guest.grant.permissions,
+                            };
                             dispatch(&services, &session_id, &outbox, &mut relay_limit, text.as_str())
                                 .await;
                         }
@@ -194,6 +198,9 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                             info!(session = %session_id, user = %guest.user.username, ?reason, "closing connection");
                             outbox.push(ServerMessage::Closed { reason });
                             break;
+                        }
+                        if let Err(error) = service.refresh_presence(&session_id).await {
+                            debug!(%error, "presence refresh failed");
                         }
                     }
                 }
@@ -209,15 +216,15 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
 
     // Dropping the last sender lets the writer flush what is queued and close.
     drop(outbox);
-    if tokio::time::timeout(Duration::from_secs(5), &mut writer).await.is_err() {
-        writer.abort();
-    }
+    finish(writer).await;
 }
 
 /// The use cases a client message can call.
 struct Services<'a> {
     conference: &'a ConferenceService,
     chat: &'a ChatService,
+    /// What the participant may do in the channel.
+    permissions: Permissions,
 }
 
 /// Translates one client message into a use case call.
@@ -269,8 +276,9 @@ async fn dispatch(
             Ok(())
         }
         ClientMessage::ChatSend(message) => {
-            return say(services.chat, session_id, outbox, message).await;
+            return say(services, session_id, outbox, message).await;
         }
+        ClientMessage::VoiceState(voice) => service.set_voice(session_id, voice.into()).await,
     };
 
     if let Err(error) = result {
@@ -313,14 +321,20 @@ async fn peer(
 }
 
 /// Hands a chat message to the room. A refusal goes back to the sender alone.
-async fn say(chat: &ChatService, session_id: &SessionId, outbox: &Outbox, message: ChatSendDto) {
+async fn say(
+    services: &Services<'_>,
+    session_id: &SessionId,
+    outbox: &Outbox,
+    message: ChatSendDto,
+) {
     let ChatSendDto { client_id, text } = message;
-    let Err(error) = chat.send(session_id, client_id.clone(), &text).await else {
+    let sent = services.chat.send(session_id, client_id.clone(), &text, services.permissions);
+    let Err(error) = sent.await else {
         return;
     };
     let message = match &error {
         ChatFailure::Rejected(rule) => rule.to_string(),
-        ChatFailure::Conference(_) | ChatFailure::Store(_) => {
+        ChatFailure::Conference(_) | ChatFailure::Store(_) | ChatFailure::Community(_) => {
             warn!(session = %session_id, %error, "chat message not delivered");
             "the message could not be sent, try again".to_owned()
         }

@@ -1,6 +1,6 @@
 use super::{
     ChannelId, ClientOffer, DomainError, Effects, LinkClose, Links, MediaKind, MeshPolicy,
-    Negotiation, RoomTarget, SessionId, Track, TrackId, TrackSource,
+    Negotiation, RoomPlan, RoomTarget, SessionId, Track, TrackId, TrackSource, VoiceState,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,6 +14,11 @@ pub(super) struct Participant {
     pub(super) subscriptions: BTreeSet<TrackId>,
     /// Whether the participant was last told to send on the SFU connection.
     pub(super) uplink_active: bool,
+    /// What the participant last claimed, kept so the room can accept a screen
+    /// claim once the screen track arrives.
+    pub(super) voice_claim: VoiceState,
+    /// What the others are shown: the claim, as far as the room accepts it.
+    pub(super) voice: VoiceState,
 }
 
 /// Who a participant is, as the others see it.
@@ -21,6 +26,7 @@ pub(super) struct Participant {
 pub struct ParticipantInfo {
     pub session_id: SessionId,
     pub username: String,
+    pub voice: VoiceState,
 }
 
 /// What a join changed.
@@ -54,6 +60,7 @@ pub struct Room {
     pub(super) participants: BTreeMap<SessionId, Participant>,
     pub(super) links: Links,
     pub(super) target: RoomTarget,
+    plan: RoomPlan,
 }
 
 impl Room {
@@ -63,14 +70,38 @@ impl Room {
         Self::with_mesh(id, MeshPolicy::OFF)
     }
 
+    /// A room that switches between direct and forwarded with its size and admits
+    /// anyone: an `Auto` channel without a user limit.
     #[must_use]
     pub fn with_mesh(id: ChannelId, policy: MeshPolicy) -> Self {
-        Self {
-            id,
-            participants: BTreeMap::new(),
-            links: Links::default(),
-            target: RoomTarget::new(policy),
-        }
+        let plan = RoomPlan::resolve(super::ChannelMedia::default(), policy);
+        Self::with_plan(id, policy, plan)
+    }
+
+    /// A room run by its channel's plan (see [`RoomPlan::resolve`]).
+    #[must_use]
+    pub fn with_plan(id: ChannelId, policy: MeshPolicy, plan: RoomPlan) -> Self {
+        let mut target = RoomTarget::new(policy);
+        target.force(plan.forced());
+        Self { id, participants: BTreeMap::new(), links: Links::default(), target, plan }
+    }
+
+    /// Takes a channel's changed plan. The capacity holds from the next join, the
+    /// path from the next join or leave (the target is evaluated then).
+    pub fn apply_plan(&mut self, plan: RoomPlan) {
+        self.plan = plan;
+        self.target.force(plan.forced());
+    }
+
+    #[must_use]
+    pub fn plan(&self) -> RoomPlan {
+        self.plan
+    }
+
+    /// How many participants are in the room.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.participants.len()
     }
 
     #[must_use]
@@ -98,6 +129,9 @@ impl Room {
         if self.participants.contains_key(&id) {
             return Err(DomainError::AlreadyJoined(id));
         }
+        if self.plan.capacity().is_some_and(|capacity| self.participants.len() >= capacity) {
+            return Err(DomainError::ChannelFull);
+        }
         let present = self.roster();
         for other in &present {
             self.links.add(&other.session_id, &id);
@@ -110,6 +144,8 @@ impl Room {
                 published: Vec::new(),
                 subscriptions: BTreeSet::new(),
                 uplink_active: true,
+                voice_claim: VoiceState::default(),
+                voice: VoiceState::default(),
             },
         );
         let effects = self.retarget();
@@ -133,6 +169,7 @@ impl Room {
             .map(|(id, participant)| ParticipantInfo {
                 session_id: id.clone(),
                 username: participant.username.clone(),
+                voice: participant.voice,
             })
             .collect()
     }
@@ -310,7 +347,14 @@ mod tests {
         assert!(room.join(alice.clone(), "alice").unwrap().present.is_empty());
 
         let present = room.join(SessionId::generate(), "bob").unwrap().present;
-        assert_eq!(present, vec![ParticipantInfo { session_id: alice, username: "alice".into() }]);
+        assert_eq!(
+            present,
+            vec![ParticipantInfo {
+                session_id: alice,
+                username: "alice".into(),
+                voice: VoiceState::default()
+            }]
+        );
         assert_eq!(room.roster().len(), 2);
     }
 

@@ -1,9 +1,15 @@
-//! Redis adapters: login sessions and room leases.
+//! Redis adapters: login sessions, room leases, the community event bus and the
+//! voice roster.
 
+mod codec;
+mod events;
 mod leases;
+mod roster;
 mod sessions;
 
+pub use events::RedisCommunityEvents;
 pub use leases::RedisRoomLeases;
+pub use roster::RedisVoiceRoster;
 pub use sessions::RedisSessionStore;
 
 use ::redis::aio::ConnectionManager;
@@ -21,6 +27,10 @@ impl RedisConnection {
     /// `url` looks like `redis://[:password@]host:port[/db]`.
     pub fn new(url: &str) -> Result<Self, ::redis::RedisError> {
         Ok(Self { client: ::redis::Client::open(url)?, manager: OnceCell::new() })
+    }
+
+    fn client(&self) -> &::redis::Client {
+        &self.client
     }
 
     async fn get(&self) -> Result<ConnectionManager, ::redis::RedisError> {

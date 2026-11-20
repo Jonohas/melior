@@ -1,8 +1,10 @@
 //! Fakes for the ports, shared by the conference tests.
 
 use super::*;
-use crate::conference::{MediaOffer, SingleInstance, StaticIceServers};
-use melior_domain::{MediaKind, UserId};
+use crate::conference::{
+    Admission, MediaOffer, PresenceSink, PresenceUpdate, SingleInstance, StaticIceServers,
+};
+use melior_domain::{ChannelMedia, MediaKind, UserId};
 
 /// Records what the application asks of the media plane.
 #[derive(Default)]
@@ -139,9 +141,26 @@ pub(super) struct Client {
     pub(super) media: Arc<FakeSession>,
 }
 
+/// Records the presence reports.
+#[derive(Default)]
+pub(super) struct RecordingPresence(pub(super) Mutex<Vec<PresenceUpdate>>);
+
+impl RecordingPresence {
+    pub(super) fn take(&self) -> Vec<PresenceUpdate> {
+        std::mem::take(&mut lock(&self.0))
+    }
+}
+
+impl PresenceSink for RecordingPresence {
+    fn report(&self, update: PresenceUpdate) {
+        lock(&self.0).push(update);
+    }
+}
+
 pub(super) struct Harness {
     pub(super) engine: Arc<FakeEngine>,
     pub(super) service: Arc<ConferenceService>,
+    pub(super) presence: Arc<RecordingPresence>,
 }
 
 impl Harness {
@@ -151,20 +170,28 @@ impl Harness {
 
     pub(super) fn with_mesh(mesh: MeshPolicy) -> Self {
         let engine = Arc::new(FakeEngine::default());
+        let presence = Arc::new(RecordingPresence::default());
         let service = ConferenceService::new(
             engine.clone(),
             Arc::new(StaticIceServers::default()),
             Arc::new(SingleInstance),
             mesh,
+            presence.clone(),
         );
-        Self { engine, service }
+        Self { engine, service, presence }
+    }
+
+    /// An `Auto` channel without a limit, outside any community.
+    pub(super) fn admission(&self, channel: &str) -> Admission {
+        let plan = RoomPlan::resolve(ChannelMedia::default(), self.service.mesh());
+        Admission::unlisted(ChannelId::parse(channel).unwrap(), plan)
     }
 
     pub(super) async fn join(&self, channel: &str) -> Client {
         let sink = Arc::new(RecordingSink::default());
         let id = self
             .service
-            .join(ChannelId::parse(channel).unwrap(), &member("someone"), sink.clone())
+            .join(self.admission(channel), &member("someone"), sink.clone())
             .await
             .unwrap();
         let media = self.engine.session(&id);

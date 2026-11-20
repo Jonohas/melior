@@ -1,7 +1,7 @@
 //! Delivery mechanisms that drive the application's use cases.
 //!
-//! - [`http`]: the login round trip, identity, health, room and chat history endpoints.
-//! - [`ws`]: the signalling WebSocket.
+//! - [`http`]: the login round trip, identity, health and the community API.
+//! - [`ws`]: the signalling WebSocket and the community feed.
 //!
 //! Invariants of this crate:
 //!
@@ -26,7 +26,7 @@ pub mod http;
 pub mod ws;
 
 use axum::Router;
-use melior_application::{AuthService, ChatService, ConferenceService, RoomAccessService};
+use melior_application::{AuthService, ChatService, CommunityService, ConferenceService};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -36,7 +36,7 @@ pub struct AppState {
     pub conference: Arc<ConferenceService>,
     pub chat: Arc<ChatService>,
     pub auth: Arc<AuthService>,
-    pub rooms: Arc<RoomAccessService>,
+    pub communities: Arc<CommunityService>,
     pub session_cookie_name: Arc<str>,
     /// How often an open connection re-checks that it is still welcome.
     pub session_recheck: Duration,
@@ -46,9 +46,9 @@ pub struct AppState {
 ///
 /// - `GET /login`, `/signin`, `/signout`: the login round trip (see [`http`]).
 /// - `GET /api/identity/me`, `/api/health`.
-/// - `GET /api/rooms`, `GET`/`PUT`/`DELETE /api/rooms/{channel_id}`: the room registry.
-/// - `GET /api/rooms/{channel_id}/messages`: the room's chat history.
-/// - `GET /ws?channel_id=<room>`: conference signalling (see [`ws`]), for logged-in users.
+/// - `/api/communities/...`, `/api/channels/...`, `/api/invites/{code}`: the community API.
+/// - `GET /ws?channel_id=<id>`: conference signalling in a voice channel (see [`ws`]).
+/// - `GET /ws/communities/{id}`: a community's feed of voice presence and messages.
 pub fn router(state: AppState) -> Router {
     Router::new().merge(http::routes()).merge(ws::routes()).with_state(state)
 }
