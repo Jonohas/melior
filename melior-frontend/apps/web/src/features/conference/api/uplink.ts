@@ -1,6 +1,27 @@
 export const UPLINK_RETRY_MS = 500;
 export const UPLINK_MAX_RETRIES = 6;
 
+const isInvalidState = (error: unknown): boolean => error instanceof DOMException && error.name === 'InvalidStateError';
+
+/**
+ * `getParameters()` → modify → `setParameters()` with nothing awaited in between: the browser only honours the
+ * parameters object until the current task ends, and a `setParameters` still running on the same sender clears
+ * it. Retries once at once with fresh parameters when the browser still calls it stale.
+ */
+const writeActive = async (sender: RTCRtpSender, active: boolean, retry = true): Promise<boolean> => {
+    const parameters = sender.getParameters();
+    if (!parameters.encodings?.length) return false;
+    for (const encoding of parameters.encodings) encoding.active = active;
+    try {
+        await sender.setParameters(parameters);
+        return true;
+    } catch (error) {
+        if (retry && isInvalidState(error)) return writeActive(sender, active, false);
+        console.warn('setParameters failed', error);
+        return false;
+    }
+};
+
 /**
  * Sets `encodings[*].active` on every sender: pauses or resumes sending without renegotiating. A paused sender
  * keeps its track published; it only stops sending packets. Returns false when some sender could not be set
@@ -16,18 +37,7 @@ export const setSendersActive = async (
     for (const sender of connection.getSenders()) {
         if (!isCurrent()) return true;
         if (!sender.track) continue;
-        const parameters = sender.getParameters();
-        if (!parameters.encodings?.length) {
-            complete = false;
-            continue;
-        }
-        for (const encoding of parameters.encodings) encoding.active = active;
-        try {
-            await sender.setParameters(parameters);
-        } catch (error) {
-            console.warn('setParameters failed', error);
-            complete = false;
-        }
+        if (!(await writeActive(sender, active))) complete = false;
     }
     return complete;
 };
@@ -49,6 +59,8 @@ export const createUplink = (connection: RTCPeerConnection): Uplink => {
     let wanted: boolean | null = null;
     let generation = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Applies run one after another: two in flight on one sender would clear each other's parameters.
+    let queue: Promise<void> = Promise.resolve();
 
     const stop = () => {
         generation += 1;
@@ -56,16 +68,21 @@ export const createUplink = (connection: RTCPeerConnection): Uplink => {
         timer = null;
     };
 
-    const apply = async (retries: number): Promise<void> => {
-        if (wanted === null) return;
+    const apply = (retries: number): Promise<void> => {
+        if (wanted === null) return Promise.resolve();
         if (timer) clearTimeout(timer);
         timer = null;
         generation += 1;
         const mine = generation;
         const isCurrent = () => mine === generation;
-        const complete = await setSendersActive(connection, wanted, isCurrent);
-        if (complete || !isCurrent() || retries >= UPLINK_MAX_RETRIES) return;
-        timer = setTimeout(() => void apply(retries + 1), UPLINK_RETRY_MS);
+        const run = queue.then(async () => {
+            if (!isCurrent()) return;
+            const complete = await setSendersActive(connection, wanted ?? true, isCurrent);
+            if (complete || !isCurrent() || retries >= UPLINK_MAX_RETRIES) return;
+            timer = setTimeout(() => void apply(retries + 1), UPLINK_RETRY_MS);
+        });
+        queue = run.catch(() => undefined);
+        return run;
     };
 
     return {
