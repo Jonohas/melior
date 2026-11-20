@@ -484,6 +484,37 @@ instance that hosts it.
 
 Traces are in Jaeger at `http://localhost:16686`, service `melior-sfu`.
 
+## Releases
+
+A release is a SemVer tag on `main`:
+
+```sh
+git switch main && git pull
+git tag vX.Y.Z          # or vX.Y.Z-rc.1 for a pre-release
+git push origin vX.Y.Z
+```
+
+`.github/workflows/release.yml` checks that the tag is SemVer and on `main`,
+runs the full checks, then publishes two linux/amd64 images to GitHub Container
+Registry and creates the GitHub Release with generated notes:
+
+| Image | Built from |
+|---|---|
+| `ghcr.io/jonohas/melior-server:X.Y.Z` | `melior-server/Dockerfile` |
+| `ghcr.io/jonohas/melior-frontend:X.Y.Z` | `melior-frontend/Dockerfile` |
+
+Tags carry no leading `v`. Both images also get `:latest`, except for a
+pre-release (`-rc.1`, ...), which is published under its own version only and
+marked as a pre-release on GitHub. The images carry the OCI labels `source`,
+`version` and `revision`.
+
+The first time, GHCR may create the packages as private. Make both public in
+the package settings (Package settings, Danger Zone, Change visibility) so the
+deploy host can pull without credentials.
+
+Deployment is not part of this repository: the infrastructure repository
+(`Jonohas/infra`) pins the version to run and rolls it out.
+
 ## Tests and checks
 
 ```sh
