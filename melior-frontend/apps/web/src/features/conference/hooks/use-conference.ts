@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { createSignallingClient, stopMedia } from '@/features/conference/api';
+import {
+    applyVideoConstraints,
+    canEncryptMedia,
+    createSignallingClient,
+    renewDeviceCertificate,
+    stopMedia,
+} from '@/features/conference/api';
 import {
     type ChannelId,
     type ChannelProbe,
@@ -8,6 +14,8 @@ import {
     createInitialConferenceState,
     type ServerMessage,
     type SessionProbe,
+    screenConstraints,
+    type VideoQuality,
 } from '@/features/conference/domain';
 import { createReconnector } from './reconnector';
 import {
@@ -25,7 +33,14 @@ import { useVoicePublisher } from './use-voice-publisher';
 type UseConferenceReturn = ConferenceState<MediaStream> &
     Pick<
         CallMedia,
-        'activeDevices' | 'changeInput' | 'microphoneMuted' | 'cameraOff' | 'setMicrophoneMuted' | 'setCameraOff'
+        | 'activeDevices'
+        | 'changeInput'
+        | 'microphoneMuted'
+        | 'cameraOff'
+        | 'setMicrophoneMuted'
+        | 'setCameraOff'
+        | 'videoQuality'
+        | 'setVideoQuality'
     > & {
         /** Says something to the room. Returns false when there is no open connection, so nothing was sent. */
         sendChat: (text: string, clientId: string) => boolean;
@@ -38,6 +53,10 @@ type UseConferenceReturn = ConferenceState<MediaStream> &
         /** Whether the own microphone picks up speech right now (always false while muted). */
         speaking: boolean;
     };
+
+/** Shown instead of joining in a browser without `RTCRtpScriptTransform`. */
+export const UNENCRYPTED_BROWSER =
+    'This browser cannot encrypt calls end to end. Update it (Chrome or Edge 141, Firefox 117, Safari 15.4 or later) to join.';
 
 type UseConferenceOptions = {
     /** Route all media through the TURN relay (diagnostics). */
@@ -65,7 +84,14 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
     const checkChannelAccessRef = useRef(checkChannelAccess);
     const onChatRef = useRef(onChat);
     // The open connection, for the use cases that act outside the connection's own effect.
-    const connectionRef = useRef<ConferenceConnection>({ signalling: null, peer: null, mesh: null });
+    const connectionRef = useRef<ConferenceConnection>({
+        signalling: null,
+        peer: null,
+        mesh: null,
+        transforms: null,
+        e2ee: null,
+        e2eeWaiting: null,
+    });
     const media = useCallMedia(connectionRef);
     const screen = useScreenShare(connectionRef);
     const { open: openMedia, adopt: adoptMedia, release: releaseMedia } = media;
@@ -145,6 +171,10 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
                 teardown();
                 fail(`Server error: ${message}`);
             },
+            onFatal: (message) => {
+                teardown();
+                fail(message);
+            },
         });
 
         const handle = async (message: ServerMessage, mine: number) => {
@@ -167,6 +197,15 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
         }
 
         const start = async () => {
+            // Every call is encrypted end to end; a browser that cannot do it would send in the clear.
+            if (!canEncryptMedia()) {
+                fail(UNENCRYPTED_BROWSER);
+                return;
+            }
+            // The realm vouches for this device before the call, never during it: the page comes back here.
+            const here = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+            if (await renewDeviceCertificate(here).catch(() => false)) return;
+            if (disposed) return;
             try {
                 const stream = await openMedia();
                 if (disposed) {
@@ -193,6 +232,17 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
         };
     }, [channelId, forceRelay, openMedia, adoptMedia, releaseMedia, resumeScreen, releaseScreen, screenStream]);
 
+    // A screen being shared takes the new frame rate at once, like the camera takes its quality.
+    const { setVideoQuality: setMediaQuality } = media;
+    const setVideoQuality = useCallback(
+        async (quality: VideoQuality) => {
+            await setMediaQuality(quality);
+            const shared = screenStream()?.getVideoTracks()[0];
+            if (shared) await applyVideoConstraints(shared, screenConstraints(quality.screenFrameRate));
+        },
+        [setMediaQuality, screenStream],
+    );
+
     const sendChat = useCallback(
         (text: string, clientId: string) =>
             connectionRef.current.signalling?.send({
@@ -212,6 +262,8 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
         cameraOff: media.cameraOff,
         setMicrophoneMuted: media.setMicrophoneMuted,
         setCameraOff: media.setCameraOff,
+        videoQuality: media.videoQuality,
+        setVideoQuality,
         screenShareSupported: screen.supported,
         screenSharing: screen.sharing,
         screenSharingAudio: screen.withAudio,

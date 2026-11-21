@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { canChooseSpeaker, saveDevicePreference } from '@/features/conference/api';
 import { DeviceSettingsDialog } from '@/features/conference/components';
+import type { VideoQuality } from '@/features/conference/domain';
 import { useMediaDevices } from '@/features/conference/hooks';
 
 type InputKind = 'audioinput' | 'videoinput';
@@ -12,6 +13,8 @@ type CallDeviceSettingsProps = {
     changeInput: (kind: InputKind, deviceId: string) => Promise<void>;
     speakerId: string;
     onSpeakerChange: (deviceId: string) => void;
+    videoQuality: VideoQuality;
+    setVideoQuality: (quality: VideoQuality) => Promise<void>;
 };
 
 /** The call's microphone, camera and speaker choice, with the error of a switch that failed. */
@@ -22,6 +25,8 @@ export const CallDeviceSettings = ({
     changeInput,
     speakerId,
     onSpeakerChange,
+    videoQuality,
+    setVideoQuality,
 }: CallDeviceSettingsProps) => {
     const devices = useMediaDevices(open);
     const [error, setError] = useState<string | null>(null);
@@ -53,6 +58,15 @@ export const CallDeviceSettings = ({
             onChangeSpeaker={(deviceId) => {
                 onSpeakerChange(deviceId);
                 saveDevicePreference('audiooutput', deviceId);
+            }}
+            quality={videoQuality}
+            onChangeQuality={(quality) => {
+                setError(null);
+                setVideoQuality(quality).catch((failure) => {
+                    setError(
+                        `Could not change the quality: ${failure instanceof Error ? failure.message : String(failure)}`,
+                    );
+                });
             }}
             error={error}
         />

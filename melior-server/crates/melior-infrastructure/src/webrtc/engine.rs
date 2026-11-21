@@ -11,6 +11,8 @@ use webrtc::api::media_engine::MediaEngine as RtcMediaEngine;
 use webrtc::api::{API, APIBuilder};
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::rtp_transceiver::rtp_codec::{RTCRtpHeaderExtensionCapability, RTPCodecType};
+use webrtc::sdp::extmap::{SDES_MID_URI, SDES_RTP_STREAM_ID_URI};
 
 /// [`MediaEngine`] backed by webrtc-rs: one peer connection per participant.
 pub struct WebRtcMediaEngine {
@@ -18,10 +20,23 @@ pub struct WebRtcMediaEngine {
     forwarders: ForwarderRegistry,
 }
 
+/// The header extensions a simulcast camera needs: the MID names the section and
+/// the RID the layer, since its layers carry no SSRC in the offer.
+fn register_simulcast_extensions(media_engine: &mut RtcMediaEngine) -> Result<(), MediaError> {
+    for uri in [SDES_MID_URI, SDES_RTP_STREAM_ID_URI] {
+        let extension = RTCRtpHeaderExtensionCapability { uri: uri.to_owned() };
+        media_engine
+            .register_header_extension(extension, RTPCodecType::Video, None)
+            .map_err(backend)?;
+    }
+    Ok(())
+}
+
 impl WebRtcMediaEngine {
     pub fn new() -> Result<Self, MediaError> {
         let mut media_engine = RtcMediaEngine::default();
         codecs::register(&mut media_engine).map_err(backend)?;
+        register_simulcast_extensions(&mut media_engine)?;
         // NACK, RTCP reports and TWCC feedback: without these there is no loss recovery.
         let interceptors =
             register_default_interceptors(Registry::new(), &mut media_engine).map_err(backend)?;

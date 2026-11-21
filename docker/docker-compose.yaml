@@ -189,6 +189,7 @@ services:
       context: ../melior-frontend
     environment:
       MELIOR_SERVER_URLS: ${MELIOR_SERVER_URLS:-http://host.docker.internal:5000}
+      E2EE_ISSUER: ${KEYCLOAK_PUBLIC_URL:-http://localhost:${KEYCLOAK_PORT:-8300}}/realms/melior
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

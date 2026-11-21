@@ -1,5 +1,16 @@
 import type { Dispatch } from 'react';
-import { createPeerSession, type Mesh, type PeerSession, type SignallingClient } from '@/features/conference/api';
+import {
+    createFrameTransforms,
+    createPeerSession,
+    type E2eeSession,
+    type FrameTransforms,
+    type Mesh,
+    type PeerSession,
+    type SignallingClient,
+    sharedDeviceStore,
+    sharedVoucher,
+    startE2eeSession,
+} from '@/features/conference/api';
 import type { CloseReason, ConferenceAction, ServerMessage, TrackAssignment } from '@/features/conference/domain';
 import { startMesh } from './start-mesh';
 
@@ -11,15 +22,35 @@ export type ConferenceConnection = {
     signalling: SignallingClient | null;
     peer: PeerSession | null;
     mesh: Mesh | null;
+    /** The frame worker and its transforms; every connection's media goes through them. */
+    transforms: FrameTransforms | null;
+    /** The key exchange with the other participants. */
+    e2ee: E2eeSession | null;
+    /**
+     * Key work that arrived while this call's keys were still being created: a peer's hello, a join, a leave.
+     * Run in order once the exchange exists; null when nothing is starting.
+     */
+    e2eeWaiting: Array<(e2ee: E2eeSession) => void> | null;
+};
+
+/** Runs `action` on the key exchange now, or as soon as it exists. Dropped when no call is starting. */
+export const withE2ee = (connection: ConferenceConnection, action: (e2ee: E2eeSession) => void): void => {
+    if (connection.e2ee) action(connection.e2ee);
+    else connection.e2eeWaiting?.push(action);
 };
 
 export const releaseConnection = (connection: ConferenceConnection): void => {
     connection.signalling?.close();
     connection.mesh?.close();
     connection.peer?.close();
+    connection.e2ee?.close();
+    connection.transforms?.close();
     connection.signalling = null;
     connection.peer = null;
     connection.mesh = null;
+    connection.e2ee = null;
+    connection.e2eeWaiting = null;
+    connection.transforms = null;
 };
 
 /** What the handlers need from the hook; created per message, so `isCurrent` pins the connection's generation. */
@@ -39,27 +70,70 @@ export type MessageContext = {
     onServerClosed: (reason: CloseReason) => void;
     /** The server sent an `error`: the connection is useless. */
     onServerError: (message: string) => void;
+    /** Something this client needs failed for good, such as the encryption keys; the call stops. */
+    onFatal: (message: string) => void;
 };
 
 type SessionMessage = Extract<ServerMessage, { channel: 'session' }>['payload'];
 
-/** The `session` message: creates the SFU connection and the mesh, and sends the first offer. */
+/**
+ * Creates this call's keys and starts the key exchange with everyone already in the room. Media flows only after
+ * this: every sender and receiver is created with its transform.
+ */
+const startEncryption = async (
+    context: MessageContext,
+    payload: SessionMessage,
+    transforms: FrameTransforms,
+): Promise<E2eeSession> => {
+    const { connection, dispatch, isCurrent } = context;
+    const device = await (await sharedDeviceStore()).deviceKey();
+    const e2ee = await startE2eeSession({
+        selfId: payload.session_id,
+        device,
+        voucher: await sharedVoucher(device),
+        post: transforms.post,
+        send: (to, message) => {
+            if (isCurrent()) connection.signalling?.send({ channel: 'e2ee', payload: { to, payload: message } });
+        },
+        onTrust: (sessionId, trust) => {
+            if (isCurrent()) dispatch({ type: 'trust_changed', sessionId, trust });
+        },
+    });
+    for (const participant of payload.participants) e2ee.addPeer(participant.session_id, participant.username, false);
+    return e2ee;
+};
+
+/** The `session` message: starts encryption, creates the SFU connection and the mesh, and sends the first offer. */
 export const startSession = async (context: MessageContext, payload: SessionMessage): Promise<void> => {
     const { connection, dispatch, isCurrent } = context;
-    if (connection.peer) {
+    if (connection.transforms) {
         console.warn('duplicate session message ignored');
         return;
     }
+    const transforms = createFrameTransforms();
+    connection.transforms = transforms;
+    connection.e2eeWaiting = [];
     dispatch({
         type: 'session_started',
         sessionId: payload.session_id,
         username: payload.username,
         participants: payload.participants,
     });
+    try {
+        const e2ee = await startEncryption(context, payload, transforms);
+        if (!isCurrent()) return e2ee.close();
+        connection.e2ee = e2ee;
+        for (const action of connection.e2eeWaiting?.splice(0) ?? []) action(e2ee);
+        connection.e2eeWaiting = null;
+    } catch (error) {
+        if (isCurrent()) context.onFatal(`End-to-end encryption could not start: ${String(error)}`);
+        return;
+    }
     const session = createPeerSession({
         iceServers: payload.ice_servers,
         forceRelay: context.forceRelay,
         localStream: context.localStream,
+        protect: transforms.protect,
         onIceCandidate: (candidate) => {
             if (isCurrent()) connection.signalling?.send({ channel: 'ice', payload: candidate });
         },
@@ -86,6 +160,7 @@ export const startSession = async (context: MessageContext, payload: SessionMess
         iceServers: payload.ice_servers,
         forceRelay: context.forceRelay,
         localStream: context.localStream,
+        protect: transforms.protect,
         screen: context.screenStream(),
         peer: () => connection.peer,
         signalling: () => connection.signalling,
@@ -129,7 +204,10 @@ export const handleServerMessage = async (context: MessageContext, message: Serv
         case 'peer_answer':
         case 'peer_ice':
             return connection.mesh?.handle(message);
+        case 'e2ee':
+            return withE2ee(connection, (e2ee) => void e2ee.handle(message.payload.from, message.payload.payload));
         case 'peer_joined':
+            withE2ee(connection, (e2ee) => e2ee.addPeer(message.payload.session_id, message.payload.username, true));
             return dispatch({
                 type: 'peer_joined',
                 sessionId: message.payload.session_id,
@@ -142,6 +220,7 @@ export const handleServerMessage = async (context: MessageContext, message: Serv
         }
         case 'peer_left':
             connection.mesh?.peerLeft(message.payload.session_id);
+            withE2ee(connection, (e2ee) => e2ee.removePeer(message.payload.session_id));
             return dispatch({ type: 'peer_left', sessionId: message.payload.session_id });
         case 'chat':
         case 'chat_error':

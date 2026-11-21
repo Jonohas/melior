@@ -29,6 +29,10 @@ export const parseMeshMessage = (channel: string, payload: unknown): ServerMessa
             const candidate = parseIceCandidate(payload.candidate);
             return isId(payload.from) && candidate ? { channel, payload: { from: payload.from, candidate } } : null;
         }
+        case 'e2ee':
+            return isId(payload.from) && isString(payload.payload)
+                ? { channel, payload: { from: payload.from, payload: payload.payload } }
+                : null;
         default:
             return null;
     }

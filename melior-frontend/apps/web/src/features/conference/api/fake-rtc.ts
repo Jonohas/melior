@@ -15,15 +15,20 @@ export class FakeSender {
     /** Runs while a `replaceTrack` is in flight, before it settles. */
     duringReplace: (() => void) | null = null;
 
-    /** The encodings as `setParameters` last left them. */
+    /** The encodings and degradation preference as `setParameters` last left them. */
     encodings: Record<string, unknown>[] = [{ active: true }];
+    degradationPreference: string | undefined;
 
     getParameters() {
-        return { encodings: this.encodings.map((encoding) => ({ ...encoding })) };
+        return {
+            encodings: this.encodings.map((encoding) => ({ ...encoding })),
+            ...(this.degradationPreference ? { degradationPreference: this.degradationPreference } : {}),
+        };
     }
 
-    async setParameters(parameters: { encodings: Record<string, unknown>[] }) {
+    async setParameters(parameters: { encodings: Record<string, unknown>[]; degradationPreference?: string }) {
         this.encodings = parameters.encodings;
+        this.degradationPreference = parameters.degradationPreference;
     }
 
     async replaceTrack(track: FakeTrack | null) {
@@ -43,10 +48,16 @@ export class FakeTransceiver {
     receiver: { track: FakeTrack };
     /** The codecs `setCodecPreferences` was given, in order. */
     codecPreferences: Array<{ mimeType: string }> | null = null;
-    /** The `sendEncodings` the section was created with. */
-    sendEncodings: unknown[] | undefined;
+    /** The `sendEncodings` the section was created with: priorities, or simulcast layers with a `rid`. */
+    sendEncodings: Array<{ rid?: string } & Record<string, unknown>> | undefined;
 
-    constructor(kind: string, track: FakeTrack | null, direction: string, index: number, sendEncodings?: unknown[]) {
+    constructor(
+        kind: string,
+        track: FakeTrack | null,
+        direction: string,
+        index: number,
+        sendEncodings?: Array<{ rid?: string } & Record<string, unknown>>,
+    ) {
         this.direction = direction;
         this.sendEncodings = sendEncodings;
         this.hasSent = track !== null;
@@ -136,7 +147,10 @@ export class FakePeerConnection {
         if (section) section.direction = 'recvonly';
     }
 
-    addTransceiver(source: FakeTrack | string, init: { direction: string; sendEncodings?: unknown[] }) {
+    addTransceiver(
+        source: FakeTrack | string,
+        init: { direction: string; sendEncodings?: Array<{ rid?: string } & Record<string, unknown>> },
+    ) {
         const track = typeof source === 'string' ? null : source;
         const kind = typeof source === 'string' ? source : source.kind;
         const index = this.transceivers.length;

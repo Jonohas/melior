@@ -3,8 +3,9 @@
 
 use super::red;
 use std::io::Cursor;
-use webrtc::api::media_engine::{MIME_TYPE_OPUS, MediaEngine};
+use webrtc::api::media_engine::{MIME_TYPE_OPUS, MIME_TYPE_VP8, MediaEngine};
 use webrtc::rtp::packet::Packet;
+use webrtc::rtp_transceiver::RTCPFeedback;
 use webrtc::rtp_transceiver::rtp_codec::{
     RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType,
 };
@@ -14,6 +15,7 @@ pub(super) const MIME_TYPE_RED: &str = "audio/red";
 /// The numbers browsers use; a connection keeps whatever its client offered.
 const OPUS_PAYLOAD_TYPE: u8 = 111;
 const RED_PAYLOAD_TYPE: u8 = 63;
+const VP8_PAYLOAD_TYPE: u8 = 96;
 const OPUS_FMTP: &str = "minptime=10;useinbandfec=1";
 
 fn opus() -> RTCRtpCodecCapability {
@@ -26,10 +28,12 @@ fn opus() -> RTCRtpCodecCapability {
     }
 }
 
-/// The webrtc-rs defaults plus RED over Opus. RED repeats the previous frame in
+/// Opus, RED over Opus, and VP8: nothing else. RED repeats the previous frame in
 /// every packet: audio has no retransmission, and the publisher's Opus FEC only
 /// reacts to the loss it hears about, which is its own uplink's, never a
-/// subscriber's downlink.
+/// subscriber's downlink. One video codec keeps one set of media sections per
+/// room, and the end-to-end frame encryption leaves VP8's frame header readable,
+/// so the forwarder can find keyframes to switch simulcast layers at.
 pub(super) fn register(media_engine: &mut MediaEngine) -> Result<(), webrtc::Error> {
     let red = RTCRtpCodecParameters {
         capability: RTCRtpCodecCapability {
@@ -40,8 +44,37 @@ pub(super) fn register(media_engine: &mut MediaEngine) -> Result<(), webrtc::Err
         payload_type: RED_PAYLOAD_TYPE,
         ..Default::default()
     };
+    let opus = RTCRtpCodecParameters {
+        capability: opus(),
+        payload_type: OPUS_PAYLOAD_TYPE,
+        ..Default::default()
+    };
     media_engine.register_codec(red, RTPCodecType::Audio)?;
-    media_engine.register_default_codecs()
+    media_engine.register_codec(opus, RTPCodecType::Audio)?;
+    media_engine.register_codec(vp8(), RTPCodecType::Video)
+}
+
+fn vp8() -> RTCRtpCodecParameters {
+    let feedback = |typ: &str, parameter: &str| RTCPFeedback {
+        typ: typ.to_owned(),
+        parameter: parameter.to_owned(),
+    };
+    RTCRtpCodecParameters {
+        capability: RTCRtpCodecCapability {
+            mime_type: MIME_TYPE_VP8.to_owned(),
+            clock_rate: 90_000,
+            channels: 0,
+            sdp_fmtp_line: String::new(),
+            rtcp_feedback: vec![
+                feedback("goog-remb", ""),
+                feedback("ccm", "fir"),
+                feedback("nack", ""),
+                feedback("nack", "pli"),
+            ],
+        },
+        payload_type: VP8_PAYLOAD_TYPE,
+        ..Default::default()
+    }
 }
 
 /// The audio a participant's connection negotiated, as far as forwarding cares.

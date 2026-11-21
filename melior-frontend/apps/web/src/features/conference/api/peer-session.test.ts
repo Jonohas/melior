@@ -51,6 +51,13 @@ describe('screen sharing on the server connection', () => {
         );
     });
 
+    test('the camera goes to the server in three simulcast layers, the microphone in one', () => {
+        const camera = connection.transceivers.find((t) => t.sender.track?.id === 'cam');
+        const microphone = connection.transceivers.find((t) => t.sender.track?.id === 'mic');
+        expect(camera?.sendEncodings?.map((e) => e.rid)).toEqual(['q', 'h', 'f']);
+        expect(microphone?.sendEncodings).toHaveLength(1);
+    });
+
     test('the screen never lands on a section the server created', () => {
         const serverSections = connection.transceivers.slice(2);
         session.shareScreen(screenStream('scr1'));

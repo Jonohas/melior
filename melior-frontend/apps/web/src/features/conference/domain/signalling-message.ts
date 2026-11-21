@@ -90,7 +90,9 @@ export type ServerMessage =
     | { channel: 'uplink'; payload: { active: boolean } }
     | { channel: 'peer_offer'; payload: { from: SessionId; sdp: string } }
     | { channel: 'peer_answer'; payload: { from: SessionId; sdp: string } }
-    | { channel: 'peer_ice'; payload: { from: SessionId; candidate: IceCandidate } };
+    | { channel: 'peer_ice'; payload: { from: SessionId; candidate: IceCandidate } }
+    /** An end-to-end key message from `from`, relayed unread by the server. */
+    | { channel: 'e2ee'; payload: { from: SessionId; payload: string } };
 
 export type ClientMessage =
     | { channel: 'sdp_offer'; payload: SessionDescription<'offer'> }
@@ -101,5 +103,6 @@ export type ClientMessage =
     | { channel: 'peer_offer'; payload: { to: SessionId; sdp: string } }
     | { channel: 'peer_answer'; payload: { to: SessionId; sdp: string } }
     | { channel: 'peer_ice'; payload: { to: SessionId; candidate: IceCandidate } }
+    | { channel: 'e2ee'; payload: { to: SessionId; payload: string } }
     | { channel: 'chat_send'; payload: { text: string; client_id?: string } }
     | { channel: 'voice_state'; payload: VoiceState };

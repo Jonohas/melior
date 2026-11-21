@@ -4,7 +4,7 @@
 //! application's vocabulary at the edge so the wire format can evolve independently.
 
 use super::chat::{ChatMessageDto, ChatSendDto};
-use super::peer::{LinkFailedDto, PeerDescriptionDto, PeerIceDto, RouteLiveDto};
+use super::peer::{KeyDto, LinkFailedDto, PeerDescriptionDto, PeerIceDto, RouteLiveDto};
 use melior_application::Signal;
 #[cfg(test)]
 use melior_application::TrackOwner;
@@ -24,6 +24,8 @@ pub enum ClientMessage {
     PeerOffer(PeerDescriptionDto),
     PeerAnswer(PeerDescriptionDto),
     PeerIce(PeerIceDto),
+    /// An end-to-end key message for another participant of the room.
+    E2ee(KeyDto),
     Echo(String),
     ChatSend(ChatSendDto),
     VoiceState(VoiceDto),
@@ -34,6 +36,12 @@ impl ClientMessage {
     #[must_use]
     pub fn is_relay(&self) -> bool {
         matches!(self, Self::PeerOffer(_) | Self::PeerAnswer(_) | Self::PeerIce(_))
+    }
+
+    /// Whether the message is an end-to-end key message, limited apart from the relay.
+    #[must_use]
+    pub fn is_key(&self) -> bool {
+        matches!(self, Self::E2ee(_))
     }
 }
 
@@ -82,6 +90,11 @@ pub enum ServerMessage {
     PeerIce {
         from: String,
         candidate: IceCandidateDto,
+    },
+    /// An end-to-end key message from `from`, relayed unread.
+    E2ee {
+        from: String,
+        payload: String,
     },
     Error {
         message: String,
@@ -339,6 +352,9 @@ impl From<Signal> for ServerMessage {
             Signal::VoiceState { session_id, voice } => {
                 Self::VoiceState { session_id: session_id.to_string(), voice: voice.into() }
             }
+            Signal::Key { from, envelope } => {
+                Self::E2ee { from: from.to_string(), payload: envelope.into_string() }
+            }
             Signal::Error(message) => Self::Error { message },
         }
     }
@@ -519,6 +535,13 @@ mod tests {
         assert_eq!(
             wire(Signal::Uplink { active: false }),
             json!({ "channel": "uplink", "payload": { "active": false } })
+        );
+        assert_eq!(
+            wire(Signal::Key {
+                from: peer.clone(),
+                envelope: melior_domain::KeyEnvelope::parse("aGk").unwrap()
+            }),
+            json!({ "channel": "e2ee", "payload": { "from": peer.as_str(), "payload": "aGk" } })
         );
         assert_eq!(
             wire(Signal::PeerOffer { from: peer.clone(), sdp: Sdp::new("v=0") }),

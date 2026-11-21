@@ -1,4 +1,4 @@
-import { Mic, Video, Volume2 } from 'lucide-react';
+import { Gauge, Mic, MonitorUp, Video, Volume2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useId } from 'react';
 import {
@@ -12,7 +12,15 @@ import {
     Label,
     NativeSelect,
 } from '@/components/ui';
-import { type DeviceOption, selectedDevice } from '@/features/conference/domain';
+import {
+    CAMERA_QUALITIES,
+    type CameraQuality,
+    type DeviceOption,
+    SCREEN_FRAME_RATES,
+    type ScreenFrameRate,
+    selectedDevice,
+    type VideoQuality,
+} from '@/features/conference/domain';
 
 type DeviceSettingsDialogProps = {
     open: boolean;
@@ -30,6 +38,9 @@ type DeviceSettingsDialogProps = {
     onChangeMicrophone: (deviceId: string) => void;
     onChangeCamera: (deviceId: string) => void;
     onChangeSpeaker: (deviceId: string) => void;
+    /** How sharp and smooth your video is; `best` caps nothing. */
+    quality: VideoQuality;
+    onChangeQuality: (quality: VideoQuality) => void;
     /** Why the last change failed, if it did. */
     error: string | null;
 };
@@ -67,7 +78,26 @@ const DeviceField = ({ icon, label, options, value, onChange }: DeviceFieldProps
     );
 };
 
-/** Where you pick the microphone, camera and speaker the call uses. A change applies at once. */
+const CAMERA_QUALITY_LABEL: Record<CameraQuality, string> = {
+    best: 'Best the camera offers',
+    '1080p': 'Up to 1080p',
+    '720p': 'Up to 720p',
+    '480p': 'Up to 480p',
+    '360p': 'Up to 360p',
+};
+
+const SCREEN_RATE_LABEL: Record<ScreenFrameRate, string> = {
+    best: 'Smoothest available',
+    '60': 'Up to 60 frames per second',
+    '30': 'Up to 30 frames per second',
+    '15': 'Up to 15 frames per second',
+    '5': 'Up to 5 frames per second',
+};
+
+const toOptions = <T extends string>(values: readonly T[], labels: Record<T, string>): DeviceOption[] =>
+    values.map((value) => ({ deviceId: value, label: labels[value] }));
+
+/** Where you pick the microphone, camera and speaker the call uses, and how sharp your video is. A change applies at once. */
 export const DeviceSettingsDialog = ({
     open,
     onOpenChange,
@@ -81,6 +111,8 @@ export const DeviceSettingsDialog = ({
     onChangeMicrophone,
     onChangeCamera,
     onChangeSpeaker,
+    quality,
+    onChangeQuality,
     error,
 }: DeviceSettingsDialogProps) => (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -116,6 +148,27 @@ export const DeviceSettingsDialog = ({
                     This browser plays sound on the system's speaker. Change it in your system settings.
                 </p>
             )}
+            <DeviceField
+                icon={<Gauge className="size-4" aria-hidden="true" />}
+                label="Camera quality"
+                options={toOptions(CAMERA_QUALITIES, CAMERA_QUALITY_LABEL)}
+                value={quality.camera}
+                onChange={(value) =>
+                    onChangeQuality({ ...quality, camera: CAMERA_QUALITIES.find((q) => q === value) ?? quality.camera })
+                }
+            />
+            <DeviceField
+                icon={<MonitorUp className="size-4" aria-hidden="true" />}
+                label="Screen sharing smoothness"
+                options={toOptions(SCREEN_FRAME_RATES, SCREEN_RATE_LABEL)}
+                value={quality.screenFrameRate}
+                onChange={(value) =>
+                    onChangeQuality({
+                        ...quality,
+                        screenFrameRate: SCREEN_FRAME_RATES.find((rate) => rate === value) ?? quality.screenFrameRate,
+                    })
+                }
+            />
             {error && (
                 <p className="text-sm text-destructive" role="alert">
                     {error}

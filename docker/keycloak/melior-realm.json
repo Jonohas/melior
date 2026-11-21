@@ -30,6 +30,33 @@
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://localhost:3000/*##https://localhost:3000/*"
       }
+    },
+    {
+      "clientId": "melior-e2ee",
+      "name": "Melior device keys",
+      "description": "Vouches for a browser's end-to-end encryption key: DPoP-bound tokens that grant nothing",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "http://localhost:3000/e2ee-callback",
+        "https://localhost:3000/e2ee-callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "https://localhost:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "dpop.bound.access.tokens": "true",
+        "access.token.lifespan": "43200"
+      }
     }
   ],
   "roles": {

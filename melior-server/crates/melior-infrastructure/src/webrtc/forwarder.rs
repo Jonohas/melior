@@ -1,11 +1,14 @@
 use super::codecs::Repack;
-use melior_domain::{MediaKind, TrackId};
+use super::layers::{LayerChoice, Step, vp8_keyframe_start};
+use melior_domain::{MediaKind, ReceiverLayer, SimulcastLayer, TrackId};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use tracing::debug;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtcp::packet::Packet as RtcpPacket;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp::packet::Packet;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
@@ -15,6 +18,8 @@ use webrtc::track::track_remote::TrackRemote;
 
 /// Publishers are asked for a keyframe at most this often per track.
 const KEYFRAME_INTERVAL: Duration = Duration::from_millis(500);
+/// A simulcast layer counts as arriving while its last packet is at most this old.
+const LAYER_SILENCE: Duration = Duration::from_millis(1000);
 
 /// The forwarders of every track currently published, across all sessions.
 #[derive(Clone, Default)]
@@ -40,38 +45,69 @@ impl ForwarderRegistry {
     }
 }
 
+/// One stream of a published track as it arrives: the track itself, or one of its
+/// simulcast layers.
+struct Source {
+    layer: Option<SimulcastLayer>,
+    ssrc: u32,
+    /// When its last packet arrived, in milliseconds since the forwarder started.
+    last_packet_ms: AtomicU64,
+}
+
 /// Relays one published track: RTP read from the publisher is handed to the
-/// outlet of every participant who receives it.
+/// outlet of every participant who receives it. A camera sent in simulcast arrives
+/// as several layers; each outlet carries one of them at a time.
 pub(super) struct Forwarder {
     pub id: TrackId,
     pub kind: MediaKind,
     /// What the publisher sends; an outlet has to be opened with the same codec.
     pub codec: RTCRtpCodecCapability,
-    ssrc: u32,
     publisher: Weak<RTCPeerConnection>,
+    started: Instant,
+    sources: RwLock<Vec<Arc<Source>>>,
     /// Replaced as a whole on every change, so the packet loop only clones an `Arc`.
     outlets: RwLock<Arc<Vec<Arc<OutletTrack>>>>,
     last_keyframe_request: Mutex<Option<Instant>>,
-    /// Wakes [`Self::run`] to end the track when its publisher stopped sending.
-    stopped: Notify,
+    /// Set, and every [`Self::run`] woken, to end the track when its publisher
+    /// stopped sending.
+    stopped: AtomicBool,
+    stop_signal: Notify,
+    /// How many [`Self::run`] loops are reading, one per source.
+    running: AtomicUsize,
 }
 
 impl Forwarder {
     pub fn new(remote: &TrackRemote, kind: MediaKind, publisher: Weak<RTCPeerConnection>) -> Self {
-        Self {
+        let forwarder = Self {
             id: TrackId::generate(),
             kind,
             codec: remote.codec().capability,
-            ssrc: remote.ssrc(),
             publisher,
+            started: Instant::now(),
+            sources: RwLock::new(Vec::new()),
             outlets: RwLock::new(Arc::new(Vec::new())),
             last_keyframe_request: Mutex::new(None),
-            stopped: Notify::new(),
-        }
+            stopped: AtomicBool::new(false),
+            stop_signal: Notify::new(),
+            running: AtomicUsize::new(0),
+        };
+        forwarder.add_layer(remote);
+        forwarder
+    }
+
+    /// Adds a stream that arrives for this track: another simulcast layer.
+    pub fn add_layer(&self, remote: &TrackRemote) {
+        let source = Source {
+            layer: SimulcastLayer::from_rid(remote.rid()),
+            ssrc: remote.ssrc(),
+            last_packet_ms: AtomicU64::new(0),
+        };
+        self.sources.write().unwrap_or_else(PoisonError::into_inner).push(Arc::new(source));
     }
 
     /// Starts sending this track to an outlet.
     pub fn attach(&self, outlet: Arc<OutletTrack>) {
+        outlet.restart_layers();
         let mut outlets = self.outlets.write().unwrap_or_else(PoisonError::into_inner);
         let mut next: Vec<Arc<OutletTrack>> = outlets.as_ref().clone();
         next.push(outlet);
@@ -86,38 +122,97 @@ impl Forwarder {
         *outlets = Arc::new(next);
     }
 
-    /// Ends [`Self::run`], as a failing read does. Remembered if `run` is not
+    /// Ends every [`Self::run`], as a failing read does. Remembered if a loop is not
     /// waiting yet, so it cannot be missed.
     pub fn stop(&self) {
-        self.stopped.notify_one();
+        self.stopped.store(true, Ordering::SeqCst);
+        self.stop_signal.notify_waiters();
     }
 
-    /// Forwards packets until the publisher's track ends or is stopped.
-    pub async fn run(&self, remote: Arc<TrackRemote>) {
+    fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// The simulcast layers whose packets still arrive.
+    fn arriving_layers(&self) -> Vec<SimulcastLayer> {
+        let now = self.elapsed_ms();
+        let silence = u64::try_from(LAYER_SILENCE.as_millis()).unwrap_or(u64::MAX);
+        self.sources
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|source| {
+                let last = source.last_packet_ms.load(Ordering::Relaxed);
+                last > 0 && now.saturating_sub(last) <= silence
+            })
+            .filter_map(|source| source.layer)
+            .collect()
+    }
+
+    fn source_of(&self, ssrc: u32) -> Option<Arc<Source>> {
+        let sources = self.sources.read().unwrap_or_else(PoisonError::into_inner);
+        sources.iter().find(|source| source.ssrc == ssrc).cloned()
+    }
+
+    /// Reads one stream of the track until it ends or the track is stopped, handing
+    /// each packet to the outlets that carry its layer. Returns whether this was the
+    /// last stream of the track still being read: then the track has ended.
+    pub async fn run(&self, remote: Arc<TrackRemote>) -> bool {
+        self.running.fetch_add(1, Ordering::SeqCst);
+        if let Some(source) = self.source_of(remote.ssrc()) {
+            self.forward(&remote, &source).await;
+        }
+        self.running.fetch_sub(1, Ordering::SeqCst) == 1
+    }
+
+    async fn forward(&self, remote: &TrackRemote, source: &Source) {
         loop {
+            let stop = self.stop_signal.notified();
+            tokio::pin!(stop);
+            stop.as_mut().enable();
+            if self.stopped.load(Ordering::SeqCst) {
+                return;
+            }
             let read = tokio::select! {
                 read = remote.read_rtp() => read,
-                () = self.stopped.notified() => return,
+                () = &mut stop => return,
             };
             let Ok((mut packet, _)) = read else { return };
             // Header extension ids are negotiated per connection; the publisher's
-            // (notably its MID) would be wrong for subscribers. Each outlet's track
-            // re-adds the ones its own connection negotiated.
+            // (notably its MID and RID) would be wrong for subscribers. Each outlet's
+            // track re-adds the ones its own connection negotiated.
             packet.header.extension = false;
             packet.header.extension_profile = 0;
             packet.header.extensions.clear();
             packet.header.extensions_padding = 0;
-
-            let outlets = self.outlets.read().unwrap_or_else(PoisonError::into_inner).clone();
-            for outlet in outlets.iter() {
-                // A failing subscriber must not stop the track for everyone else.
-                outlet.write(&packet).await;
+            source.last_packet_ms.store(self.elapsed_ms().max(1), Ordering::Relaxed);
+            if self.hand_out(&packet, source.layer).await {
+                self.request_keyframe().await;
             }
         }
     }
 
-    /// Asks the publisher for a keyframe so a new or recovering subscriber can start
-    /// decoding. Rate limited; a no-op for audio.
+    /// Writes `packet` to every outlet that carries its layer. Returns whether some
+    /// outlet waits for a keyframe of another layer.
+    async fn hand_out(&self, packet: &Packet, layer: Option<SimulcastLayer>) -> bool {
+        let keyframe = layer.is_some() && vp8_keyframe_start(&packet.payload);
+        let arriving = if layer.is_some() { self.arriving_layers() } else { Vec::new() };
+        let outlets = self.outlets.read().unwrap_or_else(PoisonError::into_inner).clone();
+        let mut waiting = false;
+        for outlet in outlets.iter() {
+            let (step, waits) = outlet.route(layer, keyframe, &arriving);
+            waiting |= waits;
+            if step != Step::Skip {
+                // A failing subscriber must not stop the track for everyone else.
+                outlet.write(packet).await;
+            }
+        }
+        waiting
+    }
+
+    /// Asks the publisher for a keyframe on every stream of the track, so a new or
+    /// recovering subscriber, or one moving to another layer, can start decoding.
+    /// Rate limited; a no-op for audio.
     pub async fn request_keyframe(&self) {
         if self.kind != MediaKind::Video {
             return;
@@ -134,8 +229,17 @@ impl Forwarder {
         let Some(publisher) = self.publisher.upgrade() else {
             return;
         };
-        let pli = PictureLossIndication { sender_ssrc: 0, media_ssrc: self.ssrc };
-        if let Err(error) = publisher.write_rtcp(&[Box::new(pli)]).await {
+        let requests: Vec<Box<dyn RtcpPacket + Send + Sync>> = self
+            .sources
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|source| {
+                Box::new(PictureLossIndication { sender_ssrc: 0, media_ssrc: source.ssrc })
+                    as Box<dyn RtcpPacket + Send + Sync>
+            })
+            .collect();
+        if let Err(error) = publisher.write_rtcp(&requests).await {
             debug!(track = %self.id, %error, "keyframe request failed");
         }
     }
@@ -154,6 +258,14 @@ pub(super) struct OutletTrack {
     continuity: Mutex<Continuity>,
     /// How packets change for this participant's codecs; fixed for the section's life.
     repack: Repack,
+    layer: Mutex<OutletLayer>,
+}
+
+/// The simulcast layer an outlet carries, and what its receiver's network allows.
+#[derive(Debug, Clone, Copy, Default)]
+struct OutletLayer {
+    current: Option<SimulcastLayer>,
+    receiver: ReceiverLayer,
 }
 
 impl OutletTrack {
@@ -169,7 +281,47 @@ impl OutletTrack {
             // whichever audio plays latest, which adds hundreds of milliseconds.
             TrackId::generate().as_str().to_owned(),
         );
-        Self { local: Arc::new(local), continuity: Mutex::new(Continuity::default()), repack }
+        Self {
+            local: Arc::new(local),
+            continuity: Mutex::new(Continuity::default()),
+            repack,
+            layer: Mutex::new(OutletLayer::default()),
+        }
+    }
+
+    /// Forgets the layer carried: the outlet starts on another track.
+    fn restart_layers(&self) {
+        self.layer.lock().unwrap_or_else(PoisonError::into_inner).current = None;
+    }
+
+    /// Takes the packet loss the receiver reported for this outlet's stream: the
+    /// domain decides whether its network calls for another layer.
+    pub fn receiver_report(&self, fraction_lost: u8) {
+        let mut state = self.layer.lock().unwrap_or_else(PoisonError::into_inner);
+        state.receiver = state.receiver.report(fraction_lost);
+    }
+
+    /// Whether this outlet sends a packet of `layer` (`None`: a track without
+    /// simulcast, always sent), and whether it waits for a keyframe of another layer.
+    /// A switch of layer continues the sequence numbers like a switch of source.
+    fn route(
+        &self,
+        layer: Option<SimulcastLayer>,
+        keyframe: bool,
+        arriving: &[SimulcastLayer],
+    ) -> (Step, bool) {
+        let Some(layer) = layer else {
+            return (Step::Write, false);
+        };
+        let mut state = self.layer.lock().unwrap_or_else(PoisonError::into_inner);
+        let target = SimulcastLayer::best_available(state.receiver.layer(), arriving);
+        let choice = LayerChoice { current: state.current, target };
+        let step = choice.step(layer, keyframe);
+        if step == Step::SwitchAndWrite {
+            state.current = Some(layer);
+            self.switch_source();
+        }
+        (step, choice.waiting() && step != Step::SwitchAndWrite)
     }
 
     /// Announces that the next packet comes from a different published track.

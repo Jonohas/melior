@@ -1,5 +1,11 @@
 import type { Dispatch } from 'react';
-import { createMesh, type Mesh, type PeerSession, type SignallingClient } from '@/features/conference/api';
+import {
+    createMesh,
+    type Mesh,
+    type PeerSession,
+    type Protect,
+    type SignallingClient,
+} from '@/features/conference/api';
 import type { ConferenceAction, IceServer, SessionId } from '@/features/conference/domain';
 
 type StartMeshOptions = {
@@ -7,6 +13,8 @@ type StartMeshOptions = {
     iceServers: IceServer[];
     forceRelay: boolean;
     localStream: MediaStream | null;
+    /** Encrypts every direct link's media end to end. */
+    protect: Protect;
     /** The screen being shared when the mesh starts, or none. */
     screen: MediaStream | null;
     /** The current SFU connection and socket; read at call time because both are replaced on reconnect. */
@@ -24,6 +32,7 @@ export const startMesh = ({
     forceRelay,
     localStream,
     screen,
+    protect,
     peer,
     signalling,
     dispatch,
@@ -35,6 +44,7 @@ export const startMesh = ({
         forceRelay,
         localStream,
         screen,
+        protect,
         sfu: () => peer()?.statsSource ?? null,
         send: (message) => {
             if (isCurrent()) signalling()?.send(message);

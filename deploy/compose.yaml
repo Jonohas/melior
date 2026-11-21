@@ -67,6 +67,8 @@ services:
     image: ghcr.io/jonohas/melior-frontend:${MELIOR_VERSION:?missing from version.env}
     environment:
       MELIOR_SERVER_URLS: http://host.docker.internal:5000
+      # The realm vouches for device keys; its melior-e2ee client must exist (README, End-to-end encryption).
+      E2EE_ISSUER: ${IDP_ISSUER:?missing from .env}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

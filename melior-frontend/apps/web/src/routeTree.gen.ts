@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ErrorRouteImport } from './routes/error'
+import { Route as E2eeCallbackRouteImport } from './routes/e2ee-callback'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as AuthenticatedInviteCodeRouteImport } from './routes/_authenticated/invite/$code'
@@ -20,6 +21,11 @@ import { Route as AuthenticatedCCommunityIdChannelIdRouteImport } from './routes
 const ErrorRoute = ErrorRouteImport.update({
   id: '/error',
   path: '/error',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const E2eeCallbackRoute = E2eeCallbackRouteImport.update({
+  id: '/e2ee-callback',
+  path: '/e2ee-callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
@@ -57,6 +63,7 @@ const AuthenticatedCCommunityIdChannelIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
+  '/e2ee-callback': typeof E2eeCallbackRoute
   '/error': typeof ErrorRoute
   '/c/$communityId': typeof AuthenticatedCCommunityIdRouteWithChildren
   '/invite/$code': typeof AuthenticatedInviteCodeRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/c/$communityId/': typeof AuthenticatedCCommunityIdIndexRoute
 }
 export interface FileRoutesByTo {
+  '/e2ee-callback': typeof E2eeCallbackRoute
   '/error': typeof ErrorRoute
   '/': typeof AuthenticatedIndexRoute
   '/invite/$code': typeof AuthenticatedInviteCodeRoute
@@ -73,6 +81,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/e2ee-callback': typeof E2eeCallbackRoute
   '/error': typeof ErrorRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/c/$communityId': typeof AuthenticatedCCommunityIdRouteWithChildren
@@ -84,6 +93,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/e2ee-callback'
     | '/error'
     | '/c/$communityId'
     | '/invite/$code'
@@ -91,6 +101,7 @@ export interface FileRouteTypes {
     | '/c/$communityId/'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/e2ee-callback'
     | '/error'
     | '/'
     | '/invite/$code'
@@ -99,6 +110,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_authenticated'
+    | '/e2ee-callback'
     | '/error'
     | '/_authenticated/'
     | '/_authenticated/c/$communityId'
@@ -109,6 +121,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  E2eeCallbackRoute: typeof E2eeCallbackRoute
   ErrorRoute: typeof ErrorRoute
 }
 
@@ -119,6 +132,13 @@ declare module '@tanstack/react-router' {
       path: '/error'
       fullPath: '/error'
       preLoaderRoute: typeof ErrorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/e2ee-callback': {
+      id: '/e2ee-callback'
+      path: '/e2ee-callback'
+      fullPath: '/e2ee-callback'
+      preLoaderRoute: typeof E2eeCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated': {
@@ -201,6 +221,7 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
+  E2eeCallbackRoute: E2eeCallbackRoute,
   ErrorRoute: ErrorRoute,
 }
 export const routeTree = rootRouteImport
