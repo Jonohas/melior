@@ -1,4 +1,4 @@
-use super::{SessionId, TrackId};
+use super::{MediaKind, SessionId, TrackId};
 
 /// A violated domain rule.
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
@@ -18,8 +18,8 @@ pub enum DomainError {
     #[error("track {0} is already published")]
     DuplicateTrack(TrackId),
 
-    #[error("participant {0} already shares a screen next to its camera")]
-    TooManyVideoTracks(SessionId),
+    #[error("participant {0} already shares a screen next to its camera ({1:?})")]
+    TooManyTracks(SessionId, MediaKind),
 
     #[error("an offer was received while a server offer is still awaiting its answer")]
     OfferDuringRenegotiation,

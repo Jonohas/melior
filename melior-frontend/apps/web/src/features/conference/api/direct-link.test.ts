@@ -4,7 +4,7 @@ import { createDirectLink, type DirectLink } from './direct-link';
 import type { LocalTracks } from './direct-sections';
 import { FakePeerConnection, stubRtc } from './fake-rtc';
 
-const NO_LOCAL_TRACKS: LocalTracks = { audio: null, video: null, screen: null };
+const NO_LOCAL_TRACKS: LocalTracks = { audio: null, video: null, screen: null, screenAudio: null };
 
 describe('createDirectLink local candidates', () => {
     let sent: ClientMessage[];

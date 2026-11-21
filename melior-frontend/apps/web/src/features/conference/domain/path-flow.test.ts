@@ -42,6 +42,11 @@ describe('directKindOf', () => {
         expect(directKindOf({ kind: 'video', trackIdentifier: 'ts' }, ids)).toBe('screen');
         expect(directKindOf({ kind: 'video', trackIdentifier: 'other' }, ids)).toBeUndefined();
     });
+
+    test("the screen's sound is no kind: it decides nothing about the path", () => {
+        const ids = ['ta', 'tc', 'ts', 'tsa'];
+        expect(directKindOf({ kind: 'audio', trackIdentifier: 'tsa' }, ids)).toBeUndefined();
+    });
 });
 
 describe('countInbound', () => {

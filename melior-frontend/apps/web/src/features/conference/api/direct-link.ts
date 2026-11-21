@@ -1,6 +1,7 @@
 import {
     type ClientMessage,
     DIRECT_SECTIONS,
+    type DirectSection,
     type IceCandidate,
     type IceServer,
     type SessionId,
@@ -10,6 +11,7 @@ import {
     attachAnsweredSections,
     type LocalTracks,
     NO_SENDERS,
+    type ScreenTracks,
     type SectionSenders,
     sectionOf,
 } from './direct-sections';
@@ -44,16 +46,20 @@ export type DirectLink = {
     handleOffer: (sdp: string) => Promise<void>;
     handleAnswer: (sdp: string) => Promise<void>;
     addIceCandidate: (candidate: IceCandidate) => Promise<void>;
-    /** Sends the screen track (or none) from now on, in place of the previous one; no renegotiation. */
-    setScreen: (track: MediaStreamTrack | null) => Promise<void>;
+    /** Sends the screen's tracks (or none) from now on, in place of the previous ones; no renegotiation. */
+    setScreen: (tracks: ScreenTracks) => Promise<void>;
     /** Sends another microphone or camera track from now on; no renegotiation. */
     replaceInput: (track: MediaStreamTrack) => Promise<void>;
     connection: RTCPeerConnection;
-    /** The ids of the receiving tracks in section order (audio, camera, screen), for the stats. */
+    /** The ids of the receiving tracks in section order (audio, camera, screen, screen audio), for the stats. */
     sectionTrackIds: () => string[];
     isConnected: () => boolean;
     close: () => void;
 };
+
+/** The sections that carry the peer's screen: its picture and its sound. */
+const isScreenSection = (section: DirectSection | undefined): boolean =>
+    section === 'screen' || section === 'screenAudio';
 
 export const createDirectLink = ({
     peerId,
@@ -87,7 +93,7 @@ export const createDirectLink = ({
         if (event.candidate) signals.localCandidate(event.candidate.toJSON());
     };
     connection.ontrack = (event) => {
-        if (DIRECT_SECTIONS[connection.getTransceivers().indexOf(event.transceiver)] === 'screen') {
+        if (isScreenSection(DIRECT_SECTIONS[connection.getTransceivers().indexOf(event.transceiver)])) {
             peerScreen.trackArrived(event.track);
             return;
         }
@@ -122,9 +128,12 @@ export const createDirectLink = ({
         },
         addIceCandidate: (candidate: IceCandidate) => candidates.add(candidate),
         sectionTrackIds: () => connection.getTransceivers().map((t) => t.receiver.track.id),
-        setScreen: async (track) => {
+        setScreen: async (tracks) => {
             try {
-                await senders.screen?.replaceTrack(track);
+                await Promise.all([
+                    senders.screen?.replaceTrack(tracks.screen),
+                    senders.screenAudio?.replaceTrack(tracks.screenAudio),
+                ]);
             } finally {
                 // The peer learns the new state even when this link's sender could not take the track.
                 channel.announce();

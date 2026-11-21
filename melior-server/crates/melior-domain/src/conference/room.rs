@@ -1,6 +1,6 @@
 use super::{
-    ChannelId, ClientOffer, DomainError, Effects, LinkClose, Links, MediaKind, MeshPolicy,
-    Negotiation, RoomPlan, RoomTarget, SessionId, Track, TrackId, TrackSource, VoiceState,
+    ChannelId, ClientOffer, DomainError, Effects, LinkClose, Links, MeshPolicy, Negotiation,
+    RoomPlan, RoomTarget, SessionId, Track, TrackId, TrackSource, VoiceState,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -200,9 +200,10 @@ impl Room {
 
     /// Adds a published track. Returns the participants that now have to receive it.
     ///
-    /// A client does not say what a track shows, so the room works it out: a participant's
-    /// first video is its camera, and a video it publishes next to that one is its screen.
-    /// A third video is refused, so one participant shows at most one screen at a time.
+    /// A client does not say what a track shows, so the room works it out per kind: a
+    /// participant's first audio and first video are its microphone and camera, and an audio
+    /// or video it publishes next to those is its screen's sound or picture. A third track of
+    /// a kind is refused, so one participant shows at most one screen at a time.
     pub fn publish(
         &mut self,
         publisher: &SessionId,
@@ -212,14 +213,12 @@ impl Room {
             return Err(DomainError::DuplicateTrack(track.id));
         }
         let participant = self.participant_mut(publisher)?;
-        if track.kind == MediaKind::Video {
-            let videos = participant.published.iter().filter(|t| t.kind == MediaKind::Video);
-            track.source = match videos.count() {
-                0 => TrackSource::Camera,
-                1 => TrackSource::Screen,
-                _ => return Err(DomainError::TooManyVideoTracks(publisher.clone())),
-            };
-        }
+        let same_kind = participant.published.iter().filter(|t| t.kind == track.kind).count();
+        track.source = match same_kind {
+            0 => TrackSource::Camera,
+            1 => TrackSource::Screen,
+            _ => return Err(DomainError::TooManyTracks(publisher.clone(), track.kind)),
+        };
         participant.published.push(track.clone());
 
         let subscribers: Vec<SessionId> = self
@@ -503,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_belongs_to_the_camera_whatever_is_published_around_it() {
+    fn the_first_audio_is_the_microphone_whatever_is_published_around_it() {
         let mut room = room();
         let (alice, _) = join_ready(&mut room);
         let (voice, camera, screen) = (audio(), video(), video());
@@ -516,6 +515,20 @@ mod tests {
     }
 
     #[test]
+    fn an_audio_next_to_the_microphone_is_the_screens_sound() {
+        let mut room = room();
+        let (alice, _) = join_ready(&mut room);
+        let (voice, camera, screen, sound) = (audio(), video(), video(), audio());
+
+        room.publish(&alice, voice).unwrap();
+        room.publish(&alice, camera).unwrap();
+        room.publish(&alice, screen).unwrap();
+        room.publish(&alice, sound.clone()).unwrap();
+
+        assert_eq!(room.source_of(&sound.id), Some(TrackSource::Screen));
+    }
+
+    #[test]
     fn a_participant_shows_one_screen_at_a_time() {
         let mut room = room();
         let (alice, _) = join_ready(&mut room);
@@ -524,7 +537,20 @@ mod tests {
 
         assert_eq!(
             room.publish(&alice, video()),
-            Err(DomainError::TooManyVideoTracks(alice.clone()))
+            Err(DomainError::TooManyTracks(alice.clone(), MediaKind::Video))
+        );
+    }
+
+    #[test]
+    fn a_participant_shares_the_sound_of_one_screen_at_a_time() {
+        let mut room = room();
+        let (alice, _) = join_ready(&mut room);
+        room.publish(&alice, audio()).unwrap();
+        room.publish(&alice, audio()).unwrap();
+
+        assert_eq!(
+            room.publish(&alice, audio()),
+            Err(DomainError::TooManyTracks(alice.clone(), MediaKind::Audio))
         );
     }
 

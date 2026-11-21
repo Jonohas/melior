@@ -45,7 +45,7 @@ export type PeerSession = {
     statsSource: StatsSource;
     /** Sends another microphone or camera from now on, in place of the one in use; no renegotiation. */
     replaceInput: (track: MediaStreamTrack) => Promise<void>;
-    /** Starts sending a captured screen next to the camera. The change is offered to the server. */
+    /** Starts sending a captured screen, and its sound if it has one, next to the camera. The change is offered to the server. */
     shareScreen: (screen: MediaStream) => void;
     /** Stops sending the screen. The change is offered to the server. */
     stopScreen: () => void;
@@ -113,7 +113,8 @@ export const createPeerSession = ({
     let firstAnswerApplied = false;
     let offerInFlight = false;
     let changeWaiting = false;
-    let screenSender: RTCRtpSender | null = null;
+    // The screen's picture and, when it was captured with sound, its audio.
+    let screenSenders: RTCRtpSender[] = [];
     let current: TracksBySession<MediaStreamTrack> = {};
     const remoteStreams = createRemoteStreams(onRemoteMedia);
 
@@ -233,21 +234,26 @@ export const createPeerSession = ({
             await inputSenders.get(track.kind)?.replaceTrack(track);
         },
         shareScreen: (screen) => {
-            const [track] = screen.getVideoTracks();
-            if (!track || screenSender) return;
+            const [video] = screen.getVideoTracks();
+            if (!video || screenSenders.length > 0) return;
             // Never `addTrack`: Chromium would put the screen on any section that has not sent yet, including
             // one the server made to forward someone else's media, and the server never accepts a publisher
-            // on its own sending sections. A section of our own is one the server did not create.
-            screenSender = connection.addTransceiver(track, { direction: 'sendonly', streams: [screen] }).sender;
+            // on its own sending sections. A section of our own is one the server did not create. The picture
+            // goes first, so the server has the sharer's camera and microphone before either screen track.
+            const tracks = [video, ...screen.getAudioTracks().slice(0, 1)];
+            screenSenders = tracks.map(
+                (track) => connection.addTransceiver(track, { direction: 'sendonly', streams: [screen] }).sender,
+            );
             // A paused uplink covers the new sender like the others.
             reapplyUplinkSoon();
         },
         stopScreen: () => {
-            if (!screenSender) return;
-            // The section stays and goes quiet (the server sees it end in the next offer, as before); the
-            // track itself is stopped by whoever captured it. A later share gets a section of its own again.
-            if (connection.signalingState !== 'closed') connection.removeTrack(screenSender);
-            screenSender = null;
+            // The sections stay and go quiet (the server sees them end in the next offer, as before); the
+            // tracks themselves are stopped by whoever captured them. A later share gets sections of its own.
+            if (connection.signalingState !== 'closed') {
+                for (const sender of screenSenders) connection.removeTrack(sender);
+            }
+            screenSenders = [];
         },
         close: () => {
             connection.onicecandidate = null;

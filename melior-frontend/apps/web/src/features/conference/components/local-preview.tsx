@@ -1,7 +1,9 @@
 import { MicOff, VideoOff } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { Badge } from '@/components/ui';
+import { useFullscreen } from '@/features/conference/hooks';
 import { cn } from '@/lib/utils';
+import { FULLSCREEN_TILE, FullscreenButton } from './fullscreen-button';
 
 type LocalPreviewProps = {
     stream: MediaStream | null;
@@ -13,7 +15,7 @@ type LocalPreviewProps = {
     speaking?: boolean;
 };
 
-/** Your own camera, mirrored and muted. */
+/** Your own camera, mirrored and muted. A double click or the corner button shows it fullscreen. */
 export const LocalPreview = ({
     stream,
     username,
@@ -22,6 +24,8 @@ export const LocalPreview = ({
     speaking = false,
 }: LocalPreviewProps) => {
     const ref = useRef<HTMLVideoElement>(null);
+    const tileRef = useRef<HTMLDivElement>(null);
+    const fullscreen = useFullscreen(tileRef);
 
     useEffect(() => {
         if (ref.current) ref.current.srcObject = stream;
@@ -29,9 +33,12 @@ export const LocalPreview = ({
 
     return (
         <div
+            ref={tileRef}
             data-speaking={speaking}
+            onDoubleClick={fullscreen.toggle}
             className={cn(
                 'relative aspect-video overflow-hidden rounded-lg border-2 border-border bg-muted transition-colors',
+                FULLSCREEN_TILE,
                 speaking && 'border-success',
             )}
         >
@@ -51,6 +58,7 @@ export const LocalPreview = ({
             <Badge variant="secondary" className="absolute bottom-2 left-2">
                 {username ? `${username} (you)` : 'You'}
             </Badge>
+            {!cameraOff && <FullscreenButton fullscreen={fullscreen} what="your camera" />}
         </div>
     );
 };

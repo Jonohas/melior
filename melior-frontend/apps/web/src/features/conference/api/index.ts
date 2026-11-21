@@ -1,3 +1,4 @@
+export { canFullscreen, isFullscreen, toggleFullscreen, watchFullscreen } from './fullscreen';
 export { createLevelMeter, type LevelMeter } from './level-meter';
 export {
     canChooseSpeaker,
@@ -16,7 +17,7 @@ export {
     stopMedia,
     watchDevices,
 } from './local-media';
-export { playStream } from './media-element';
+export { playStream, watchVideoSize } from './media-element';
 export { createMesh, type Mesh, type MeshMessage } from './mesh';
 export { createPeerSession, type PeerSession } from './peer-session';
 export { createSignallingClient, type SignallingClient } from './signalling-client';

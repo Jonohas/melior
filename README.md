@@ -391,17 +391,26 @@ community feed.
 ### Screen sharing
 
 A participant shares its screen by adding a second video track to its own
-connection and sending an `sdp_offer` for the change. Nothing else is signalled:
-the server works out what a track shows. A participant's first video track is its
-camera, the next one is its screen, and a third is refused, so one participant
-shows at most one screen at a time. Audio belongs to the camera, and a screen has
-no sound. Everyone else receives the screen as one more track in their `tracks`
-list, with `source: "screen"`. When the sharer stops, the track ends and the next
-offer no longer lists it. A screen share is sent on the server connection. In a
-mesh room it also travels over each direct link, in a fixed third media section
-(after audio and camera video) that the link negotiates once. Starting and
-stopping the share uses `replaceTrack` on that section's sender, so no direct
-link is renegotiated. The sharer tells each peer with `{"screen": true}` or
+connection, and a second audio track when it shares the screen's sound, and
+sending an `sdp_offer` for the change. Nothing else is signalled: the server
+works out what a track shows, per kind. A participant's first audio and first
+video track are its microphone and camera, the next one of each kind is its
+screen's sound and picture, and a third of a kind is refused, so one participant
+shows at most one screen at a time. The client adds the screen's tracks only
+after its connection is up, so the microphone and camera are always published
+first. Everyone else receives the screen's tracks as more entries in their
+`tracks` list, with `source: "screen"`. When the sharer stops, the tracks end and
+the next offer no longer lists them. A screen share is sent on the server
+connection. In a mesh room it also travels over each direct link, in fixed third
+(screen video) and fourth (screen audio) media sections, after audio and camera
+video, that the link negotiates once. Starting and stopping the share uses
+`replaceTrack` on those sections' senders, so no direct link is renegotiated.
+
+The browser's screen picker decides whether the sound is shared: the person
+ticks "Share audio" (Chromium shares a tab's sound everywhere and the whole
+system's sound on Windows and ChromeOS). The client asks for it without echo
+cancellation, noise suppression or gain control, and plays a screen's sound
+next to the sharer's voice. The sharer tells each peer with `{"screen": true}` or
 `{"screen": false}` on the link's `melior` data channel, and the peer shows the
 screen from the direct path only while the last state it got is `true`. On
 forwarded links the screen travels as before, as a track in `tracks`. The paused

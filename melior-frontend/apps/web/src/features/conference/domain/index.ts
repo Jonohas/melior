@@ -30,6 +30,7 @@ export { parseServerMessage } from './parse-server-message';
 export {
     countInbound,
     DIRECT_SECTIONS,
+    type DirectSection,
     directKindOf,
     FLOW_WINDOW_MS,
     type FlowState,
@@ -68,6 +69,7 @@ export {
     type TracksBySession,
 } from './remote-tracks';
 export { type RoomMediaPath, roomMediaPath } from './room-path';
+export { aspectOf, DEFAULT_SCREEN_ASPECT } from './screen-fit';
 export { parseScreenState, screenStateMessage, sharingPeers } from './screen-state';
 export type { SessionId } from './session-id';
 export type {

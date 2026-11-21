@@ -6,7 +6,7 @@ import {
     type SessionId,
 } from '@/features/conference/domain';
 import { createDirectLink, type DirectLink } from './direct-link';
-import { type LocalTracks, sectionOf } from './direct-sections';
+import { type LocalTracks, screenTracksOf, sectionOf } from './direct-sections';
 import type { StatsSource } from './stats-sampler';
 
 type LinkRegistryOptions = {
@@ -15,7 +15,7 @@ type LinkRegistryOptions = {
     forceRelay: boolean;
     localStream: MediaStream | null;
     /** The screen being shared when the mesh starts (a share survives a reconnect), or none. */
-    screenTrack: MediaStreamTrack | null;
+    screen: MediaStream | null;
     send: (message: ClientMessage) => void;
     /** A peer's direct media arrived (a stream) or went away (null). */
     onMedia: (peer: SessionId, stream: MediaStream | null) => void;
@@ -32,8 +32,8 @@ export type LinkRegistry = {
     get: (peer: SessionId) => DirectLink | undefined;
     close: (peer: SessionId) => void;
     closeAll: () => void;
-    /** Sends the screen (or none) on every open link, and on every link opened later. Never rejects. */
-    setScreen: (track: MediaStreamTrack | null) => Promise<void>;
+    /** Sends the screen and its sound (or none) on every open link, and on every link opened later. Never rejects. */
+    setScreen: (screen: MediaStream | null) => Promise<void>;
     /**
      * Sends another microphone or camera track on every open link, and on every link opened later. Call it once
      * the server connection has taken the track. A link that cannot take it is logged and keeps its old track;
@@ -48,7 +48,7 @@ export const createLinkRegistry = ({
     iceServers,
     forceRelay,
     localStream,
-    screenTrack,
+    screen,
     send,
     onMedia,
     onScreen,
@@ -58,7 +58,7 @@ export const createLinkRegistry = ({
     const local: LocalTracks = {
         audio: localStream?.getAudioTracks()[0] ?? null,
         video: localStream?.getVideoTracks()[0] ?? null,
-        screen: screenTrack,
+        ...screenTracksOf(screen),
     };
     const links = new Map<SessionId, DirectLink>();
     const sources = new Map<SessionId, StatsSource>();
@@ -120,9 +120,10 @@ export const createLinkRegistry = ({
             for (const peer of [...links.keys()]) close(peer);
         },
         statsSources: () => [...sources.values()],
-        setScreen: async (track) => {
-            local.screen = track;
-            await onEveryLink('sharing the screen', (link) => link.setScreen(track));
+        setScreen: async (next) => {
+            const tracks = screenTracksOf(next);
+            Object.assign(local, tracks);
+            await onEveryLink('sharing the screen', (link) => link.setScreen(tracks));
         },
         replaceInput: async (track) => {
             local[sectionOf(track)] = track;

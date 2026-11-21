@@ -1,11 +1,17 @@
 import type { SessionId } from './session-id';
 import type { TrackAssignment } from './signalling-message';
 
-/** What a peer sends: microphone, camera video, and shared screen video. */
+/** What a peer sends that decides its path: microphone, camera video, and shared screen video. */
 export type MediaKind = 'audio' | 'video' | 'screen';
 
-/** The kinds of the three media sections of a direct link, in section order. */
-export const DIRECT_SECTIONS: readonly MediaKind[] = ['audio', 'video', 'screen'];
+/** A media section of a direct link: one of the kinds, or the shared screen's sound. */
+export type DirectSection = MediaKind | 'screenAudio';
+
+/**
+ * The four media sections of a direct link, in section order. The screen's sound comes last, so a link to a
+ * peer that has only the first three still lines up.
+ */
+export const DIRECT_SECTIONS: readonly DirectSection[] = ['audio', 'video', 'screen', 'screenAudio'];
 
 /** Whose media a stats entry shows, and which of the peer's kinds it is. */
 export type InboundSource = { peer: SessionId; kind: MediaKind };
@@ -51,11 +57,13 @@ export const sfuSourceOf = (
 
 /**
  * Which of its peer's kinds a direct-link stats entry shows: the position of its receiving track among the
- * link's sections (audio, camera, screen), given as the receiving track ids in section order.
+ * link's sections, given as the receiving track ids in section order. The screen's sound decides nothing
+ * (as on the forwarded path, where it counts no frames), so it yields undefined.
  */
 export const directKindOf = (entry: InboundEntry, trackIds: readonly string[]): MediaKind | undefined => {
     const index = trackIds.findIndex((id) => id === entry.trackIdentifier);
-    return DIRECT_SECTIONS[index];
+    const section = DIRECT_SECTIONS[index];
+    return section === 'screenAudio' ? undefined : section;
 };
 
 /** Sums the counters per peer; `sourceOf` says whose media an entry shows (undefined: nobody's). */
@@ -79,7 +87,7 @@ export type FlowState = {
     increasedAt: Record<MediaKind, number | null>;
 };
 
-const KINDS = DIRECT_SECTIONS;
+const KINDS: readonly MediaKind[] = ['audio', 'video', 'screen'];
 
 /** Folds a new counter sample taken at `now` (ms) into the state. The first sample only sets the baseline. */
 export const updateFlow = (previous: FlowState | undefined, counters: InboundCounters, now: number): FlowState => {
