@@ -69,6 +69,7 @@ export {
     type TracksBySession,
 } from './remote-tracks';
 export { type RoomMediaPath, roomMediaPath } from './room-path';
+export { aspectOf, DEFAULT_SCREEN_ASPECT } from './screen-fit';
 export { parseScreenState, screenStateMessage, sharingPeers } from './screen-state';
 export type { SessionId } from './session-id';
 export type {

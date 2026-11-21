@@ -61,11 +61,19 @@ const ParticipantList = ({ tiles }: { tiles: Tile[] }) => (
 );
 
 /**
- * A single screen fills the stage as large as fits while keeping its 16:9 shape, centred both ways: the stage is
- * a size container and the screen takes the smaller of its width and its height scaled to 16:9. Several screens
- * share the stage in two columns.
+ * The shared screens fill the stage: one screen gets all of it, several split it into equal cells (two columns on
+ * wide screens). Each cell is a size container, and its screen is the largest box of the screen's shape that
+ * fits, centred both ways.
  */
-const SINGLE_SCREEN = 'w-[min(100cqw,calc(100cqh*16/9))]';
+const ScreenStage = ({ cells }: { cells: Tile[] }) => (
+    <div className={cn('grid min-h-48 min-w-0 flex-1 auto-rows-fr gap-3', cells.length > 1 && 'lg:grid-cols-2')}>
+        {cells.map((cell) => (
+            <div key={cell.key} className="grid min-h-0 min-w-0 place-items-center [container-type:size]">
+                {cell.node}
+            </div>
+        ))}
+    </div>
+);
 
 /** Everyone in the room. A participant whose media has not arrived yet shows their initials. */
 export const RemoteVideoGrid = ({
@@ -100,27 +108,21 @@ export const RemoteVideoGrid = ({
     const sharing = sharingPeers(screens, directScreens, shownPaths);
     if (sharing.length === 0) return <CameraGrid tiles={tiles} />;
 
-    const single = sharing.length === 1;
+    const cells: Tile[] = sharing.map((sessionId) => ({
+        key: sessionId,
+        node: (
+            <ScreenVideo
+                forwarded={screens[sessionId]}
+                direct={directScreens[sessionId]}
+                shownPath={shownPaths[sessionId] ?? 'forwarded'}
+                username={usernames[sessionId]}
+            />
+        ),
+    }));
     return (
         <div className="flex min-h-0 w-full flex-1 flex-col gap-3 md:flex-row">
             <ParticipantList tiles={tiles} />
-            <div
-                className={cn(
-                    'grid min-h-48 min-w-0 flex-1 place-items-center gap-3 [container-type:size]',
-                    !single && 'content-center lg:grid-cols-2',
-                )}
-            >
-                {sharing.map((sessionId) => (
-                    <ScreenVideo
-                        key={sessionId}
-                        forwarded={screens[sessionId]}
-                        direct={directScreens[sessionId]}
-                        shownPath={shownPaths[sessionId] ?? 'forwarded'}
-                        username={usernames[sessionId]}
-                        className={single ? SINGLE_SCREEN : undefined}
-                    />
-                ))}
-            </div>
+            <ScreenStage cells={cells} />
         </div>
     );
 };

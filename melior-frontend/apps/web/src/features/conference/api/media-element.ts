@@ -14,3 +14,21 @@ export const playStream = (element: HTMLMediaElement, stream: MediaStream): (() 
         stream.removeEventListener('removetrack', nudge);
     };
 };
+
+/**
+ * Calls `onSize` with a video's frame size now and whenever it changes (a sharer who resizes the shared window,
+ * or the first frame arriving). Returns the function that stops watching.
+ */
+export const watchVideoSize = (
+    video: HTMLVideoElement,
+    onSize: (width: number, height: number) => void,
+): (() => void) => {
+    const report = () => onSize(video.videoWidth, video.videoHeight);
+    video.addEventListener('loadedmetadata', report);
+    video.addEventListener('resize', report);
+    report();
+    return () => {
+        video.removeEventListener('loadedmetadata', report);
+        video.removeEventListener('resize', report);
+    };
+};
