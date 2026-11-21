@@ -76,6 +76,20 @@ describe('the sections of a direct link', () => {
         expect(connection().offersCreated).toBe(1);
     });
 
+    test('both audio sections of each side prefer RED and send at high priority', async () => {
+        await link(true).start();
+        await link(false).handleOffer('offer');
+        for (const instance of FakePeerConnection.instances) {
+            const audio = instance.transceivers.filter((t) => t.receiver.track.kind === 'audio');
+            expect(audio).toHaveLength(2);
+            for (const section of audio) {
+                expect(section.codecPreferences?.[0]?.mimeType).toBe('audio/red');
+                const priorities = [...(section.sendEncodings ?? []), ...section.sender.encodings];
+                expect(priorities).toContainEqual(expect.objectContaining({ priority: 'high' }));
+            }
+        }
+    });
+
     test('an offerer without a camera still has all four sections', async () => {
         local = { audio: MIC, video: null, ...NOT_SHARED };
         await link(true).start();

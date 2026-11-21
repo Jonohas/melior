@@ -15,6 +15,17 @@ export class FakeSender {
     /** Runs while a `replaceTrack` is in flight, before it settles. */
     duringReplace: (() => void) | null = null;
 
+    /** The encodings as `setParameters` last left them. */
+    encodings: Record<string, unknown>[] = [{ active: true }];
+
+    getParameters() {
+        return { encodings: this.encodings.map((encoding) => ({ ...encoding })) };
+    }
+
+    async setParameters(parameters: { encodings: Record<string, unknown>[] }) {
+        this.encodings = parameters.encodings;
+    }
+
     async replaceTrack(track: FakeTrack | null) {
         this.duringReplace?.();
         if (this.failing) throw new Error('replaceTrack failed');
@@ -30,12 +41,21 @@ export class FakeTransceiver {
     hasSent: boolean;
     sender: FakeSender;
     receiver: { track: FakeTrack };
+    /** The codecs `setCodecPreferences` was given, in order. */
+    codecPreferences: Array<{ mimeType: string }> | null = null;
+    /** The `sendEncodings` the section was created with. */
+    sendEncodings: unknown[] | undefined;
 
-    constructor(kind: string, track: FakeTrack | null, direction: string, index: number) {
+    constructor(kind: string, track: FakeTrack | null, direction: string, index: number, sendEncodings?: unknown[]) {
         this.direction = direction;
+        this.sendEncodings = sendEncodings;
         this.hasSent = track !== null;
         this.sender = new FakeSender(track);
         this.receiver = { track: { id: `remote-${index}`, kind } };
+    }
+
+    setCodecPreferences(codecs: Array<{ mimeType: string }>) {
+        this.codecPreferences = codecs;
     }
 }
 
@@ -116,10 +136,11 @@ export class FakePeerConnection {
         if (section) section.direction = 'recvonly';
     }
 
-    addTransceiver(source: FakeTrack | string, init: { direction: string }) {
+    addTransceiver(source: FakeTrack | string, init: { direction: string; sendEncodings?: unknown[] }) {
         const track = typeof source === 'string' ? null : source;
         const kind = typeof source === 'string' ? source : source.kind;
-        const transceiver = new FakeTransceiver(kind, track, init.direction, this.transceivers.length);
+        const index = this.transceivers.length;
+        const transceiver = new FakeTransceiver(kind, track, init.direction, index, init.sendEncodings);
         this.transceivers.push(transceiver);
         return transceiver;
     }
@@ -213,8 +234,18 @@ export class FakeMediaStream {
     }
 }
 
+/** The audio codecs the fake browser can receive, in Chromium's order. */
+export const FAKE_AUDIO_CODECS = [
+    { mimeType: 'audio/opus', clockRate: 48000, channels: 2 },
+    { mimeType: 'audio/red', clockRate: 48000, channels: 2 },
+    { mimeType: 'audio/PCMU', clockRate: 8000 },
+];
+
 export const stubRtc = () => {
     FakePeerConnection.instances = [];
     vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    vi.stubGlobal('RTCRtpReceiver', {
+        getCapabilities: (kind: string) => (kind === 'audio' ? { codecs: FAKE_AUDIO_CODECS } : null),
+    });
     vi.stubGlobal('MediaStream', FakeMediaStream);
 };

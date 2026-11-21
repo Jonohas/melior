@@ -35,6 +35,22 @@ describe('screen sharing on the server connection', () => {
 
     const sending = () => connection.transceivers.filter((t) => t.sender.track?.id.startsWith('scr'));
 
+    test('the microphone and the screen sound prefer RED and send at high priority; the pictures do not', () => {
+        session.shareScreen(
+            new FakeMediaStream([track('scr1', 'video'), track('scra', 'audio')]) as unknown as MediaStream,
+        );
+        const mine = connection.transceivers.filter((t) => t.sender.track !== null);
+        const audio = mine.filter((t) => t.sender.track?.kind === 'audio');
+        expect(audio.map((t) => t.sender.track?.id)).toEqual(['mic', 'scra']);
+        for (const section of audio) {
+            expect(section.codecPreferences?.[0]?.mimeType).toBe('audio/red');
+            expect(section.sendEncodings).toEqual([{ priority: 'high', networkPriority: 'high' }]);
+        }
+        expect(mine.filter((t) => t.sender.track?.kind === 'video').every((t) => t.codecPreferences === null)).toBe(
+            true,
+        );
+    });
+
     test('the screen never lands on a section the server created', () => {
         const serverSections = connection.transceivers.slice(2);
         session.shareScreen(screenStream('scr1'));

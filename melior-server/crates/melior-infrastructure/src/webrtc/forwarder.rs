@@ -1,3 +1,4 @@
+use super::codecs::Repack;
 use melior_domain::{MediaKind, TrackId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
@@ -151,10 +152,13 @@ impl Forwarder {
 pub(super) struct OutletTrack {
     pub local: Arc<TrackLocalStaticRTP>,
     continuity: Mutex<Continuity>,
+    /// How packets change for this participant's codecs; fixed for the section's life.
+    repack: Repack,
 }
 
 impl OutletTrack {
-    pub fn new(codec: RTCRtpCodecCapability) -> Self {
+    /// An outlet sending as `codec`, which `repack` turns published packets into.
+    pub fn new(codec: RTCRtpCodecCapability, repack: Repack) -> Self {
         let local = TrackLocalStaticRTP::new(
             codec,
             TrackId::generate().as_str().to_owned(),
@@ -165,7 +169,7 @@ impl OutletTrack {
             // whichever audio plays latest, which adds hundreds of milliseconds.
             TrackId::generate().as_str().to_owned(),
         );
-        Self { local: Arc::new(local), continuity: Mutex::new(Continuity::default()) }
+        Self { local: Arc::new(local), continuity: Mutex::new(Continuity::default()), repack }
     }
 
     /// Announces that the next packet comes from a different published track.
@@ -174,12 +178,15 @@ impl OutletTrack {
     }
 
     async fn write(&self, packet: &Packet) {
+        let Some(mut packet) = self.repack.apply(packet.clone()) else {
+            debug!("malformed redundant audio packet dropped");
+            return;
+        };
         let (sequence_number, timestamp) = self
             .continuity
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .map(packet.header.sequence_number, packet.header.timestamp);
-        let mut packet = packet.clone();
         packet.header.sequence_number = sequence_number;
         packet.header.timestamp = timestamp;
         if let Err(error) = self.local.write_rtp(&packet).await {
