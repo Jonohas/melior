@@ -111,11 +111,21 @@ export const canShareScreen = (): boolean =>
     typeof navigator !== 'undefined' && typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
 /**
- * Asks the person to pick a screen, window or tab and captures it, without sound. Rejects with a
- * `NotAllowedError` when they cancel the picker.
+ * The sound of a shared screen is played back as it is: no processing meant for a voice, which would cut music
+ * and game sound. `systemAudio` lets the picker offer the whole system's sound (Chromium on Windows and ChromeOS);
+ * elsewhere only a tab's sound can be shared. Browsers that do not know an option ignore it.
  */
-export const captureScreen = (): Promise<MediaStream> =>
-    navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+const SCREEN_CAPTURE_OPTIONS = {
+    video: true,
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    systemAudio: 'include',
+} as DisplayMediaStreamOptions;
+
+/**
+ * Asks the person to pick a screen, window or tab and captures it, with its sound when they tick the picker's
+ * "share audio" box. Rejects with a `NotAllowedError` when they cancel the picker.
+ */
+export const captureScreen = (): Promise<MediaStream> => navigator.mediaDevices.getDisplayMedia(SCREEN_CAPTURE_OPTIONS);
 
 /** True when the person closed the screen picker or refused to share, which is not an error to report. */
 export const isScreenShareCancelled = (error: unknown): boolean =>

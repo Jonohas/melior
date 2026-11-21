@@ -31,6 +31,7 @@ type UseConferenceReturn = ConferenceState<MediaStream> &
         sendChat: (text: string, clientId: string) => boolean;
         screenShareSupported: ScreenShare['supported'];
         screenSharing: ScreenShare['sharing'];
+        screenSharingAudio: ScreenShare['withAudio'];
         screenError: ScreenShare['error'];
         startScreenShare: ScreenShare['start'];
         stopScreenShare: ScreenShare['stop'];
@@ -68,7 +69,7 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
     const media = useCallMedia(connectionRef);
     const screen = useScreenShare(connectionRef);
     const { open: openMedia, adopt: adoptMedia, release: releaseMedia } = media;
-    const { resume: resumeScreen, release: releaseScreen, track: screenTrack } = screen;
+    const { resume: resumeScreen, release: releaseScreen, stream: screenStream } = screen;
     useEffect(() => {
         checkSessionRef.current = checkSession;
         checkChannelAccessRef.current = checkChannelAccess;
@@ -129,7 +130,7 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
             dispatch,
             forceRelay,
             localStream: local,
-            screenTrack,
+            screenStream,
             isCurrent: () => !disposed && mine === generation,
             onConnected: () => {
                 reconnector.markConnected();
@@ -190,7 +191,7 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
             releaseMedia();
             releaseScreen();
         };
-    }, [channelId, forceRelay, openMedia, adoptMedia, releaseMedia, resumeScreen, releaseScreen, screenTrack]);
+    }, [channelId, forceRelay, openMedia, adoptMedia, releaseMedia, resumeScreen, releaseScreen, screenStream]);
 
     const sendChat = useCallback(
         (text: string, clientId: string) =>
@@ -213,6 +214,7 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
         setCameraOff: media.setCameraOff,
         screenShareSupported: screen.supported,
         screenSharing: screen.sharing,
+        screenSharingAudio: screen.withAudio,
         screenError: screen.error,
         startScreenShare: screen.start,
         stopScreenShare: screen.stop,

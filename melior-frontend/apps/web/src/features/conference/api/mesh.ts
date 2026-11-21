@@ -26,7 +26,7 @@ type MeshOptions = {
     forceRelay: boolean;
     localStream: MediaStream | null;
     /** The screen being shared when the mesh starts, or none. */
-    screenTrack: MediaStreamTrack | null;
+    screen: MediaStream | null;
     /** The SFU connection, for sampling the forwarded path. */
     sfu: () => StatsSource | null;
     send: (message: ClientMessage) => void;
@@ -39,8 +39,8 @@ export type Mesh = {
     handle: (message: MeshMessage) => Promise<void>;
     /** Closes the direct link to a peer and forgets its route. */
     peerLeft: (peer: SessionId) => void;
-    /** Starts (a track) or stops (null) sending the screen on every direct link, without renegotiation. */
-    setScreen: (track: MediaStreamTrack | null) => Promise<void>;
+    /** Starts (a stream) or stops (null) sending the screen and its sound on every direct link, without renegotiation. */
+    setScreen: (screen: MediaStream | null) => Promise<void>;
     /** Sends another microphone or camera track on every direct link, without renegotiation. */
     replaceInput: (track: MediaStreamTrack) => Promise<void>;
     close: () => void;

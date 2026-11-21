@@ -30,6 +30,7 @@ export { parseServerMessage } from './parse-server-message';
 export {
     countInbound,
     DIRECT_SECTIONS,
+    type DirectSection,
     directKindOf,
     FLOW_WINDOW_MS,
     type FlowState,

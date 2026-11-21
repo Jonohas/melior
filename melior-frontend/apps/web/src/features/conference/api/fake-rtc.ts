@@ -71,7 +71,7 @@ export class FakeDataChannel {
 }
 
 /** What an offer carries when the test does not say otherwise: audio, camera, screen. */
-const OFFERED_SECTIONS = ['audio', 'video', 'video'];
+const OFFERED_SECTIONS = ['audio', 'video', 'video', 'audio'];
 
 /** Test double for the parts of RTCPeerConnection the conference code uses. Only imported by tests. */
 export class FakePeerConnection {

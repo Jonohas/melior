@@ -1,5 +1,6 @@
 export { ConferenceStatusBadges } from './conference-status-badges';
 export { DeviceSettingsDialog } from './device-settings-dialog';
+export { FullscreenButton } from './fullscreen-button';
 export { LocalPreview } from './local-preview';
 export { RemoteAudio } from './remote-audio';
 export { RemoteVideo } from './remote-video';

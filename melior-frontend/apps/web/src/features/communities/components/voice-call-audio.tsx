@@ -10,6 +10,8 @@ export const VoiceCallAudio = () => {
         <RemoteAudio
             streams={conference.remoteStreams}
             directStreams={conference.directStreams}
+            screens={conference.screenStreams}
+            directScreens={conference.directScreens}
             shownPaths={conference.shownPaths}
             speakerId={speakerId}
         />

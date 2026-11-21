@@ -11,7 +11,7 @@ pub enum MediaKind {
 pub enum TrackSource {
     /// The participant's camera and microphone.
     Camera,
-    /// The participant's screen.
+    /// The participant's screen: its picture and, when the sharer included it, its sound.
     Screen,
 }
 

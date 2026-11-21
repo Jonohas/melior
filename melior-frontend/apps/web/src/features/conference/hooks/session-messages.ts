@@ -29,7 +29,7 @@ export type MessageContext = {
     forceRelay: boolean;
     localStream: MediaStream | null;
     /** The screen shared now, or none; a mesh started on a new connection sends it too. */
-    screenTrack: () => MediaStreamTrack | null;
+    screenStream: () => MediaStream | null;
     /** False once the connection this message belongs to was torn down; late callbacks then do nothing. */
     isCurrent: () => boolean;
     onConnected: () => void;
@@ -86,7 +86,7 @@ export const startSession = async (context: MessageContext, payload: SessionMess
         iceServers: payload.ice_servers,
         forceRelay: context.forceRelay,
         localStream: context.localStream,
-        screenTrack: context.screenTrack(),
+        screen: context.screenStream(),
         peer: () => connection.peer,
         signalling: () => connection.signalling,
         dispatch,

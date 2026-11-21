@@ -54,7 +54,9 @@ const CallNotices = ({ call }: { call: VoiceCall }) => {
                 <Alert role="status">
                     <MonitorUp />
                     <AlertDescription className="flex items-center justify-between gap-2">
-                        You are sharing your screen with everyone in the channel.
+                        {conference.screenSharingAudio
+                            ? 'You are sharing your screen and its sound with everyone in the channel.'
+                            : 'You are sharing your screen, without sound, with everyone in the channel.'}
                         <Button type="button" size="sm" variant="outline" onClick={conference.stopScreenShare}>
                             Stop sharing
                         </Button>

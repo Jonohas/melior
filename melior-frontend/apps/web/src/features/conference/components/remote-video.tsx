@@ -1,7 +1,10 @@
 import { MicOff } from 'lucide-react';
+import { useRef } from 'react';
 import { Avatar, AvatarFallback, Badge, Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui';
 import type { Path, VoiceState } from '@/features/conference/domain';
+import { useFullscreen } from '@/features/conference/hooks';
 import { cn, initialsOf } from '@/lib/utils';
+import { FULLSCREEN_TILE, FullscreenButton } from './fullscreen-button';
 import { tilePathLabel } from './media-path-labels';
 import { PathVideo } from './path-video';
 
@@ -16,15 +19,24 @@ type RemoteVideoProps = {
     voice?: VoiceState;
 };
 
-/** One remote participant: their video, or their initials until it arrives. Both paths stay attached and playing; only the shown one is visible. Their sound plays from `RemoteAudio`. */
+/**
+ * One remote participant: their video, or their initials until it arrives. Both paths stay attached and playing;
+ * only the shown one is visible. Their sound plays from `RemoteAudio`. A double click or the corner button shows
+ * the tile fullscreen.
+ */
 export const RemoteVideo = ({ forwarded, direct, shownPath, username, voice }: RemoteVideoProps) => {
+    const ref = useRef<HTMLDivElement>(null);
+    const fullscreen = useFullscreen(ref);
     const hasMedia = forwarded !== undefined || direct !== undefined;
     const path = tilePathLabel(shownPath, username);
     return (
         <div
+            ref={ref}
             data-speaking={voice?.speaking === true}
+            onDoubleClick={fullscreen.toggle}
             className={cn(
                 'relative aspect-video overflow-hidden rounded-lg border-2 border-border bg-muted transition-colors',
+                FULLSCREEN_TILE,
                 voice?.speaking && 'border-success',
             )}
         >
@@ -57,6 +69,7 @@ export const RemoteVideo = ({ forwarded, direct, shownPath, username, voice }: R
                     </Tooltip>
                 )}
             </div>
+            {hasMedia && <FullscreenButton fullscreen={fullscreen} what={`${username ?? 'this'}'s camera`} />}
         </div>
     );
 };

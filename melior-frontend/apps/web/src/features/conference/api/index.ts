@@ -1,3 +1,4 @@
+export { canFullscreen, isFullscreen, toggleFullscreen, watchFullscreen } from './fullscreen';
 export { createLevelMeter, type LevelMeter } from './level-meter';
 export {
     canChooseSpeaker,
