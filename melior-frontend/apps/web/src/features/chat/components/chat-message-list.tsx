@@ -2,7 +2,7 @@ import { MessageSquare, RotateCcw } from 'lucide-react';
 import { useLayoutEffect, useRef } from 'react';
 import { Avatar, AvatarFallback, Button, Skeleton } from '@/components/ui';
 import { buildTimeline, type ChatState, type TimelineItem } from '@/features/chat/domain';
-import { cn } from '@/lib/utils';
+import { cn, initialsOf } from '@/lib/utils';
 
 type ChatMessageListProps = {
     state: ChatState;
@@ -43,7 +43,7 @@ const MessageRow = ({
                 {item.showHeader && (
                     <Avatar className="size-7">
                         <AvatarFallback className="bg-primary/15 text-xs text-primary">
-                            {item.username.slice(0, 2).toUpperCase()}
+                            {initialsOf(item.username)}
                         </AvatarFallback>
                     </Avatar>
                 )}

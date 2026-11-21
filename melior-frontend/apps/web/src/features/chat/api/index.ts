@@ -1,1 +1,1 @@
-export { fetchHistory, HISTORY_PAGE_SIZE } from './chat-api';
+export { fetchHistory, HISTORY_PAGE_SIZE, postChatMessage } from './chat-api';

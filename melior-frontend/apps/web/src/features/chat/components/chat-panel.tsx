@@ -1,27 +1,39 @@
 import { Lock, TriangleAlert, X } from 'lucide-react';
 import { Alert, AlertDescription, Button } from '@/components/ui';
 import type { ChatState, DraftCheck } from '@/features/chat/domain';
+import { cn } from '@/lib/utils';
 import { ChatComposer } from './chat-composer';
 import { ChatMessageList } from './chat-message-list';
 
 type ChatPanelProps = {
     state: ChatState;
     ownName: string | null;
-    /** Whether the room connection is up. */
+    /** Whether a message can be sent now. */
     canSend: boolean;
+    /** Why sending is not possible, shown while `canSend` is false. */
+    pausedReason?: string;
+    title?: string;
+    placeholder?: string;
+    /** Fills the main pane (a text channel) instead of sitting beside a call. */
+    fill?: boolean;
     onSend: (draft: string) => DraftCheck;
     onRetry: (clientId: string) => void;
     onLoadEarlier: () => void;
     onReloadHistory: () => void;
     onDismissNotice: () => void;
-    onClose: () => void;
+    /** Without it the panel has no close button. */
+    onClose?: () => void;
 };
 
-/** The room's chat: its messages, newest at the bottom, and the box to write a new one. */
+/** A channel's chat: its messages, newest at the bottom, and the box to write a new one. */
 export const ChatPanel = ({
     state,
     ownName,
     canSend,
+    pausedReason,
+    title = 'Channel chat',
+    placeholder,
+    fill = false,
     onSend,
     onRetry,
     onLoadEarlier,
@@ -32,14 +44,23 @@ export const ChatPanel = ({
     return (
         <aside
             aria-label="Chat"
-            className="flex max-h-[60vh] min-h-0 w-full shrink-0 flex-col border-t border-border bg-card lg:max-h-none lg:w-96 lg:border-t-0 lg:border-l"
+            className={cn(
+                'flex min-h-0 w-full flex-col bg-card',
+                fill
+                    ? 'flex-1'
+                    : 'max-h-[60vh] shrink-0 border-t border-border lg:max-h-none lg:w-96 lg:border-t-0 lg:border-l',
+            )}
         >
-            <header className="flex items-center justify-between border-b border-border px-4 py-2">
-                <h2 className="text-sm font-semibold">Room chat</h2>
-                <Button type="button" variant="ghost" size="icon-sm" aria-label="Close chat" onClick={onClose}>
-                    <X />
-                </Button>
-            </header>
+            {!fill && (
+                <header className="flex items-center justify-between border-b border-border px-4 py-2">
+                    <h2 className="text-sm font-semibold">{title}</h2>
+                    {onClose && (
+                        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close chat" onClick={onClose}>
+                            <X />
+                        </Button>
+                    )}
+                </header>
+            )}
             {state.notice && (
                 <Alert variant="destructive" className="m-2 w-auto">
                     <TriangleAlert />
@@ -60,9 +81,9 @@ export const ChatPanel = ({
             />
             <p className="flex items-center gap-1.5 px-4 pb-2 text-xs text-muted-foreground">
                 <Lock className="size-3" aria-hidden="true" />
-                Saved with the room. Anyone who can join it can read this.
+                Saved with the channel. Anyone who can read its history can read this.
             </p>
-            <ChatComposer canSend={canSend} onSend={onSend} />
+            <ChatComposer canSend={canSend} pausedReason={pausedReason} placeholder={placeholder} onSend={onSend} />
         </aside>
     );
 };

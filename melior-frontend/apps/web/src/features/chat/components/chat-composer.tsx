@@ -7,8 +7,13 @@ import { cn } from '@/lib/utils';
 type ChatComposerProps = {
     /** False while there is no connection to the room: the draft is kept, sending is paused. */
     canSend: boolean;
+    /** What to say while sending is not possible; the default is about a lost connection. */
+    pausedReason?: string;
+    placeholder?: string;
     onSend: (draft: string) => DraftCheck;
 };
+
+const CONNECTION_DOWN = 'Sending is paused while the connection is down. Your draft is kept.';
 
 const COUNTER_FROM = Math.floor(MAX_CHAT_CHARS * 0.8);
 
@@ -18,7 +23,12 @@ const REFUSALS: Record<Extract<DraftCheck, { ok: false }>['reason'], string> = {
     invalid_character: 'A message cannot contain control characters.',
 };
 
-export const ChatComposer = ({ canSend, onSend }: ChatComposerProps) => {
+export const ChatComposer = ({
+    canSend,
+    pausedReason = CONNECTION_DOWN,
+    placeholder = 'Message the channel',
+    onSend,
+}: ChatComposerProps) => {
     const [draft, setDraft] = useState('');
     const [refusal, setRefusal] = useState<string | null>(null);
     const length = Array.from(draft).length;
@@ -49,9 +59,7 @@ export const ChatComposer = ({ canSend, onSend }: ChatComposerProps) => {
             {!canSend && (
                 <Alert role="status">
                     <TriangleAlert />
-                    <AlertDescription>
-                        Sending is paused while the connection is down. Your draft is kept.
-                    </AlertDescription>
+                    <AlertDescription>{pausedReason}</AlertDescription>
                 </Alert>
             )}
             <div className="flex items-end gap-2">
@@ -60,7 +68,7 @@ export const ChatComposer = ({ canSend, onSend }: ChatComposerProps) => {
                     rows={2}
                     value={draft}
                     disabled={!canSend}
-                    placeholder="Message the room"
+                    placeholder={placeholder}
                     onChange={(event) => {
                         setDraft(event.target.value);
                         setRefusal(null);

@@ -1,4 +1,4 @@
-export { AppShell, type ShellRoom } from './app-shell';
+export { AppShell } from './app-shell';
 export { MeliorLogo } from './melior-logo';
 export { NoAccessPage } from './no-access-page';
 export { RouterErrorPage } from './router-error-page';

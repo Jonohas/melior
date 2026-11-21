@@ -2,14 +2,21 @@
 //! provider that accepts anyone and sessions kept in memory.
 #![allow(dead_code)]
 
+pub mod client;
+
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use melior_application::{
     AuthService, AuthSettings, Authentication, AuthorizationRequest, ChatService,
-    ConferenceService, IdentityProvider, IdpError, InMemoryChatRepository, InMemoryRoomRepository,
-    InMemorySessionStore, LeaseError, RoomAccessService, RoomLeases, StaticIceServers, Tokens,
+    CommunityRepository, CommunityService, ConferenceService, IdentityProvider, IdpError,
+    InMemoryChatRepository, InMemoryCommunityEvents, InMemoryCommunityRepository,
+    InMemorySessionStore, InMemoryVoiceRoster, LeaseError, PresenceQueue, RoomLeases,
+    StaticIceServers, Tokens,
 };
-use melior_domain::{ChannelId, MeshPolicy, User, UserId};
+use melior_domain::{
+    Channel, ChannelId, ChannelKind, ChannelMedia, CommunityId, CommunityState, Invite,
+    InviteSettings, Member, MeshPolicy, Name, Topic, User, UserId,
+};
 use melior_infrastructure::webrtc::WebRtcMediaEngine;
 use melior_interfaces::{AppState, router};
 use serde_json::Value;
@@ -121,12 +128,20 @@ impl RoomLeases for SwitchableLeases {
 /// How often the test server re-checks open connections.
 pub const RECHECK: Duration = Duration::from_millis(150);
 
+/// How long a voice roster entry lives without a refresh: three re-checks.
+pub const ROSTER_TTL: Duration = Duration::from_millis(450);
+
 pub struct TestServer {
     pub address: SocketAddr,
     pub auth: Arc<AuthService>,
     pub sessions: Arc<InMemorySessionStore>,
-    pub rooms: Arc<RoomAccessService>,
+    pub communities: Arc<CommunityService>,
+    pub repository: Arc<InMemoryCommunityRepository>,
+    pub events: Arc<InMemoryCommunityEvents>,
     pub leases: Arc<SwitchableLeases>,
+    /// A community every user who logs in with a role joins, owned by nobody who
+    /// logs in. Voice channels named by the media tests live here.
+    pub lobby: CommunityId,
 }
 
 impl TestServer {
@@ -138,15 +153,23 @@ impl TestServer {
     pub async fn start_with_mesh(mesh: MeshPolicy) -> Self {
         let media = Arc::new(WebRtcMediaEngine::new().expect("media engine"));
         let leases = Arc::new(SwitchableLeases::default());
+        let repository = Arc::new(InMemoryCommunityRepository::default());
+        let events = Arc::new(InMemoryCommunityEvents::default());
+        let roster = Arc::new(InMemoryVoiceRoster::default());
+        let presence = PresenceQueue::start(roster.clone(), events.clone(), ROSTER_TTL);
         let conference = ConferenceService::new(
             media,
             Arc::new(StaticIceServers::default()),
             leases.clone(),
             mesh,
+            presence,
         );
+        let communities =
+            Arc::new(CommunityService::new(repository.clone(), events.clone(), roster, mesh));
         let chat = Arc::new(ChatService::new(
             conference.clone(),
             Arc::new(InMemoryChatRepository::default()),
+            communities.clone(),
         ));
         let sessions = Arc::new(InMemorySessionStore::default());
         let auth = Arc::new(AuthService::new(
@@ -154,12 +177,12 @@ impl TestServer {
             sessions.clone(),
             AuthSettings::new(FRONTEND, Duration::from_secs(3600), Duration::from_secs(30)),
         ));
-        let rooms = Arc::new(RoomAccessService::new(Arc::new(InMemoryRoomRepository::default())));
+        let lobby = lobby(&repository).await;
         let app = router(AppState {
             conference,
             chat,
             auth: auth.clone(),
-            rooms: rooms.clone(),
+            communities: communities.clone(),
             session_cookie_name: SESSION_COOKIE.into(),
             session_recheck: RECHECK,
         });
@@ -169,7 +192,42 @@ impl TestServer {
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        Self { address, auth, sessions, rooms, leases }
+        let server =
+            Self { address, auth, sessions, communities, repository, events, leases, lobby };
+        server.voice_channel("general").await;
+        server
+    }
+
+    /// Makes sure the lobby has a voice channel with this id (an `Auto` channel
+    /// without a limit, open to every member), and returns its id.
+    pub async fn voice_channel(&self, id: &str) -> ChannelId {
+        let id = ChannelId::parse(id).expect("channel id");
+        let state = self.repository.load(&self.lobby).await.unwrap().unwrap();
+        if state.channel(&id).is_some() {
+            return id;
+        }
+        let channel = Channel {
+            id: id.clone(),
+            name: Name::parse(id.as_str()).unwrap(),
+            topic: Topic::default(),
+            kind: ChannelKind::Voice,
+            category_id: None,
+            position: 100,
+            synced: false,
+            overrides: Vec::new(),
+            media: ChannelMedia::default(),
+        };
+        self.repository.save_channel(&self.lobby, &channel).await.unwrap();
+        id
+    }
+
+    /// Makes `user` a member of `community` through a fresh invite.
+    pub async fn admit(&self, community: &CommunityId, user: &UserId, username: &str) {
+        let creator = Member::new(UserId::new("sub-lobby-owner"), "lobby-owner");
+        let invite = Invite::new(community.clone(), &creator, InviteSettings::default(), 0);
+        self.repository.save_invite(&invite).await.unwrap();
+        let member = Member::new(user.clone(), username);
+        self.repository.redeem_invite(&invite.code, &member, 0).await.unwrap();
     }
 
     pub fn url(&self, path: &str) -> String {
@@ -181,6 +239,9 @@ impl TestServer {
         let code = format!("{username}:{}", roles.join(","));
         let login =
             self.auth.complete_login(&code, None, Some("verifier.nonce")).await.expect("login");
+        if !roles.is_empty() {
+            self.admit(&self.lobby, &user_id(username), username).await;
+        }
         format!("{SESSION_COOKIE}={}", login.session_id.as_str())
     }
 
@@ -193,6 +254,20 @@ impl TestServer {
         }
         request
     }
+}
+
+/// The user id the fake identity provider gives `username`.
+pub fn user_id(username: &str) -> UserId {
+    UserId::new(format!("sub-{username}"))
+}
+
+/// The lobby community, owned by a user nobody logs in as.
+async fn lobby(repository: &InMemoryCommunityRepository) -> CommunityId {
+    let owner = User::new(user_id("lobby-owner"), "lobby-owner", None, ["member".to_owned()]);
+    let name = Name::parse("Lobby").unwrap();
+    let (state, member) = CommunityState::create(CommunityId::generate(), name, &owner);
+    repository.create(&state, &member).await.unwrap();
+    state.id().clone()
 }
 
 /// A WebRTC peer connection that speaks every default codec, like a browser's. It

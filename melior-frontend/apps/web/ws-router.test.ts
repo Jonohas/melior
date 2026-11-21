@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { backendEndpoint, isSignallingUpgrade, serializeUpgradeRequest } from './ws-router';
+import { backendEndpoint, serializeUpgradeRequest, upgradeRoutingKey } from './ws-router';
 
 describe('backendEndpoint', () => {
     test('reads host and port, with the scheme defaults', () => {
@@ -10,15 +10,25 @@ describe('backendEndpoint', () => {
     });
 });
 
-describe('isSignallingUpgrade', () => {
-    test('matches /ws only, not Vite internals or lookalikes', () => {
-        expect(isSignallingUpgrade('/ws?channel_id=a')).toBe(true);
-        expect(isSignallingUpgrade('/ws')).toBe(true);
-        expect(isSignallingUpgrade('/')).toBe(false);
-        expect(isSignallingUpgrade('/?token=abc')).toBe(false);
-        expect(isSignallingUpgrade('/wsx')).toBe(false);
-        expect(isSignallingUpgrade('/ws/other')).toBe(false);
-        expect(isSignallingUpgrade(undefined)).toBe(false);
+describe('upgradeRoutingKey', () => {
+    test('routes the room socket by its channel id', () => {
+        expect(upgradeRoutingKey('/ws?channel_id=a&x=1')).toBe('a');
+        expect(upgradeRoutingKey('/ws')).toBe('');
+    });
+
+    test('routes the community feed by its community id', () => {
+        expect(upgradeRoutingKey('/ws/communities/c-1')).toBe('c-1');
+        expect(upgradeRoutingKey('/ws/communities/a%20b')).toBe('a b');
+    });
+
+    test('leaves Vite internals and lookalikes alone', () => {
+        expect(upgradeRoutingKey('/')).toBeNull();
+        expect(upgradeRoutingKey('/?token=abc')).toBeNull();
+        expect(upgradeRoutingKey('/wsx')).toBeNull();
+        expect(upgradeRoutingKey('/ws/other')).toBeNull();
+        expect(upgradeRoutingKey('/ws/communities/')).toBeNull();
+        expect(upgradeRoutingKey('/ws/communities/a/b')).toBeNull();
+        expect(upgradeRoutingKey(undefined)).toBeNull();
     });
 });
 

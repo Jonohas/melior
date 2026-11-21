@@ -1,6 +1,8 @@
 //! The Melior domain model, one module per bounded context.
 //!
 //! - [`chat`]: chat messages and the rules on what may be said.
+//! - [`community`]: communities, their roles, channels and invites, and who may
+//!   do what where.
 //! - [`conference`]: rooms, participants, tracks and the negotiation rules.
 //! - [`identity`]: who a user is and what they may do.
 //!
@@ -23,14 +25,21 @@
 )]
 
 pub mod chat;
+pub mod community;
 pub mod conference;
 pub mod identity;
 
 pub use chat::{ChatError, ChatMessage, ChatText, MessageId, SendLimit};
+pub use community::{
+    Category, CategoryChanges, CategoryId, Channel, ChannelChanges, ChannelDraft, ChannelKind,
+    Community, CommunityError, CommunityId, CommunityState, Invite, InviteCode, InviteSettings,
+    Member, Name, Override, OverrideTarget, Permissions, Rank, Refusal, Rejected, Role,
+    RoleChanges, RoleDraft, RoleId, Standing, Topic,
+};
 pub use conference::{
-    ChannelId, ClientOffer, Departure, DomainError, Effects, IceCandidate, IceServer, Joined,
-    LinkClose, LinkTimeout, MediaKind, MediaPath, MeshPolicy, Negotiation, NegotiationPhase, Pair,
-    ParticipantInfo, Room, RoomAccess, RoomTarget, Route, RouteNotice, Sdp, SessionId, Track,
-    TrackId, TrackSource,
+    ChannelId, ChannelMedia, ClientOffer, Departure, DomainError, Effects, IceCandidate, IceServer,
+    Joined, LinkClose, LinkTimeout, MediaKind, MediaMode, MediaPath, MediaWarning, MeshPolicy,
+    Negotiation, NegotiationPhase, Pair, ParticipantInfo, Room, RoomPlan, RoomTarget, Route,
+    RouteNotice, Sdp, SessionId, Track, TrackId, TrackSource, VoiceLimit, VoiceState,
 };
 pub use identity::{AuthSessionId, ReturnPath, User, UserId, Username};

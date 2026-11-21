@@ -28,7 +28,7 @@ export const parseChatMessage = (raw: unknown): ChatMessage | null => {
     return { id, username, text, sentAtMs: sent_at_ms };
 };
 
-/** Validates a `GET /api/rooms/{id}/messages` response; null when it is not the documented shape. */
+/** Validates a `GET /api/channels/{id}/messages` response; null when it is not the documented shape. */
 export const parseHistoryPage = (raw: unknown): HistoryPage | null => {
     if (!isObject(raw) || !Array.isArray(raw.messages) || typeof raw.has_more !== 'boolean') return null;
     const messages = raw.messages.map(parseChatMessage);

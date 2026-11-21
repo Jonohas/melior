@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { type Path, sharingPeers } from '@/features/conference/domain';
+import { type Path, sharingPeers, type VoiceState } from '@/features/conference/domain';
 import { cn } from '@/lib/utils';
 import { RemoteVideo } from './remote-video';
 import { ScreenVideo } from './screen-video';
@@ -17,8 +17,8 @@ type RemoteVideoGridProps = {
     usernames: Record<string, string>;
     /** Screens that participants share, by the session id of the one sharing. */
     screens: Record<string, MediaStream>;
-    /** The speaker everyone's sound plays on; empty means the browser's default. */
-    speakerId?: string;
+    /** Mute and speaking per participant. */
+    voices: Record<string, VoiceState>;
     /** Your own tile, shown after the others. */
     local: ReactNode;
 };
@@ -31,7 +31,7 @@ export const RemoteVideoGrid = ({
     shownPaths,
     usernames,
     screens,
-    speakerId,
+    voices,
     local,
 }: RemoteVideoGridProps) => {
     const sessionIds = [
@@ -71,7 +71,7 @@ export const RemoteVideoGrid = ({
                         direct={directStreams[sessionId]}
                         shownPath={shownPaths[sessionId] ?? 'forwarded'}
                         username={usernames[sessionId]}
-                        speakerId={speakerId}
+                        voice={voices[sessionId]}
                     />
                 ))}
                 {local}

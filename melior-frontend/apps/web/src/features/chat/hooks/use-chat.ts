@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { fetchHistory } from '@/features/chat/api';
 import {
+    type ChatMessage,
     type ChatState,
     chatReducer,
     checkDraft,
@@ -14,7 +15,7 @@ import type { ChatEvent } from '@/features/conference/hooks';
 export type ChatTransport = (text: string, clientId: string) => boolean;
 
 type UseChatOptions = {
-    /** Whether the room connection is up. History loads on every (re)connect: joining registers the room. */
+    /** Whether the live connection is up. History loads on every (re)connect, to catch what was missed. */
     connected: boolean;
     /** The user's own name, shown on messages still on their way. */
     username: string | null;
@@ -26,6 +27,10 @@ export type UseChatReturn = {
     state: ChatState;
     /** Feeds the room's chat events (from the conference connection) into the chat. */
     receive: (event: ChatEvent) => void;
+    /** A saved message from anywhere (a feed, a POST response); `clientId` names the pending one it settles. */
+    receiveSaved: (message: ChatMessage, clientId: string | null) => void;
+    /** The server refused a message; with a `clientId` that message is marked failed. */
+    refuse: (clientId: string | null, message: string) => void;
     /** Checks and sends a draft. The result says whether it was accepted, and why not if it was not. */
     submit: (draft: string, transport: ChatTransport) => DraftCheck;
     retry: (clientId: string, transport: ChatTransport) => void;
@@ -40,7 +45,7 @@ const NOT_CONNECTED = 'Not sent: the connection is down. Try again when it is ba
 const newClientId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 /**
- * One room's chat: the history from the server, the live messages from the connection, and the
+ * One channel's chat: the history from the server, the live messages from the connection, and the
  * messages this client has sent and not yet seen come back. The rules are in the chat domain.
  */
 export const useChat = (channelId: string, { connected, username, open }: UseChatOptions): UseChatReturn => {
@@ -87,18 +92,27 @@ export const useChat = (channelId: string, { connected, username, open }: UseCha
         };
     }, [connected, loadNewest]);
 
-    const receive = useCallback((event: ChatEvent) => {
-        if (event.channel === 'chat_error') {
-            dispatch({ type: 'refused', clientId: event.payload.client_id ?? null, message: event.payload.message });
-            return;
-        }
-        const message = parseChatMessage(event.payload);
-        if (!message) return;
-        const clientId = event.payload.client_id ?? null;
+    const receiveSaved = useCallback((message: ChatMessage, clientId: string | null) => {
         // What a person sent themselves is not news to them, and neither is anything while the panel is open.
         const countUnread = clientId === null && !openRef.current;
         dispatch({ type: 'received', message, clientId, countUnread });
     }, []);
+
+    const refuse = useCallback((clientId: string | null, message: string) => {
+        dispatch({ type: 'refused', clientId, message });
+    }, []);
+
+    const receive = useCallback(
+        (event: ChatEvent) => {
+            if (event.channel === 'chat_error') {
+                refuse(event.payload.client_id ?? null, event.payload.message);
+                return;
+            }
+            const message = parseChatMessage(event.payload);
+            if (message) receiveSaved(message, event.payload.client_id ?? null);
+        },
+        [receiveSaved, refuse],
+    );
 
     const deliver = useCallback((text: string, clientId: string, transport: ChatTransport) => {
         if (!transport(text, clientId)) dispatch({ type: 'send_failed', clientId, error: NOT_CONNECTED });
@@ -140,5 +154,5 @@ export const useChat = (channelId: string, { connected, username, open }: UseCha
     const reloadHistory = useCallback(() => loadNewest(() => true), [loadNewest]);
     const dismissNotice = useCallback(() => dispatch({ type: 'notice_cleared' }), []);
 
-    return { state, receive, submit, retry, loadEarlier, reloadHistory, dismissNotice };
+    return { state, receive, receiveSaved, refuse, submit, retry, loadEarlier, reloadHistory, dismissNotice };
 };

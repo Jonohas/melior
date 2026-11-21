@@ -62,6 +62,23 @@ server {
         proxy_send_timeout 1h;
     }
 
+    # Community feed WebSocket (/ws/communities/<id>). Every instance can serve any community (the events go
+    # through Redis), so it uses the round-robin upstream; `^~` keeps the regex location below from matching it.
+    # No failover: the client reconnects with backoff and lands on whichever instance is up.
+    location ^~ /ws/communities/ {
+        proxy_pass ${MELIOR_UPSTREAM_SCHEME}://melior_http;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        $connection_upgrade;
+        proxy_set_header Host              $http_host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
+        proxy_buffering    off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+
     # API and the OIDC flow (/login, /signin, /signout), same backend and same list as the Vite dev
     # proxy. Regex locations win over the prefix `location /` below, so the SPA fallback never
     # swallows these paths.
@@ -81,7 +98,7 @@ server {
         proxy_send_timeout 1h;
     }
 
-    # SPA fallback for client-side routes (/rooms/<channel>).
+    # SPA fallback for client-side routes (/c/<community>/<channel>, /invite/<code>).
     location / {
         try_files $uri $uri/ /index.html;
     }

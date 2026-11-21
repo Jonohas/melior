@@ -1,6 +1,8 @@
 # Melior
 
-Melior is a video-conferencing system. Signed-in users join rooms in the
+Melior is a video-conferencing system. Signed-in users meet in communities
+(the UI calls them servers, as Discord does): each has text channels and voice
+channels, roles and invites. A voice channel is a conference room in the
 browser. Rooms of up to `MELIOR_MESH_MAX_PARTICIPANTS` people send audio and
 video browser to browser; bigger rooms use a selective forwarding unit (SFU)
 written in Rust, which receives each participant's audio and video and forwards
@@ -12,8 +14,9 @@ come and go, without freezing any video.
 - `melior-server/` - the SFU (binary `melior-sfu`), built on axum and webrtc-rs.
   It also acts as the backend-for-frontend (BFF) for login: it runs the OpenID
   Connect flow against Keycloak and keeps sessions in Redis, so tokens never
-  reach the browser. Room ownership, invitations and chat history are stored in
-  Postgres. Media flows over WebRTC on arbitrary UDP ports. In a mesh room (see
+  reach the browser. Communities (roles, members, channels, permission
+  overrides, invites) and chat history are stored in Postgres; who is in which
+  voice channel and the community events travel through Redis. Media flows over WebRTC on arbitrary UDP ports. In a mesh room (see
   "Mesh" below) the server only signals: media goes straight between browsers,
   with TURN as the fallback, and the SFU forwards nothing for that room.
 - `melior-frontend/` - a Bun workspace run by Turborepo with one app,
@@ -36,26 +39,35 @@ direction is checked by the compiler and by `cargo xtask layers`, not by
 convention.
 
 ```
-melior-domain          L0  conference/  Room aggregate, participants, tracks, negotiation rules,
-                                        RoomAccess (owner, open or invite-only, invitations)
+melior-domain          L0  conference/  Room aggregate, participants, tracks, negotiation rules, mesh
+                                        target, RoomPlan (media mode, capacity), VoiceState
+                           community/   Community, roles, members, categories, channels, overrides,
+                                        invites; Permissions, the permission resolution (Standing)
+                                        and the hierarchy rules
                            identity/    User and roles, Username, session id, post-login return path
 melior-application     L1  conference/  ConferenceService (join, leave, offer, answer, ICE, track events,
-                                        hosting); ports MediaEngine, MediaSession, MediaEvents,
-                                        SignalSink, IceServerProvider, RoomLeases
+                                        voice states, hosting); ports MediaEngine, MediaSession,
+                                        MediaEvents, SignalSink, IceServerProvider, RoomLeases,
+                                        PresenceSink
+                           communities/ CommunityService (structure, members, roles, invites, voice
+                                        admission, feed filter); ports CommunityRepository,
+                                        CommunityEvents, VoiceRoster; PresenceQueue
                            auth/        AuthService (login round trip, session checks with token
                                         refresh, logout); ports IdentityProvider, SessionStore
-                           rooms/       RoomAccessService (admit, configure, list, delete); port RoomRepository
-                           chat/        ChatService (send to the room, history); port ChatRepository
+                           chat/        ChatService (room chat, text channel posts, history); port ChatRepository
 melior-infrastructure  L2  webrtc/      webrtc-rs media engine: peer connections, RTP forwarding with
                                         reusable outlets, keyframe requests
                            oidc/        OpenID Connect identity provider (code flow with PKCE, verification)
-                           redis/       session store, token-refresh claims, room leases
-                           postgres/    room registry and chat history on sqlx, with embedded migrations
+                           redis/       session store, token-refresh claims, room leases, community
+                                        events (pub/sub), voice roster
+                           postgres/    communities and chat history on sqlx, with embedded migrations
                            turn.rs      per-user, expiring TURN credentials
                            telemetry.rs logging and OpenTelemetry trace export
                            config.rs    environment configuration
-melior-interfaces      L2  http/        /login, /signin, /signout, /api/identity/me, /api/rooms, /api/rooms/{id}/messages, /api/health
-                           ws/          the signalling WebSocket: wire-format DTOs and connection handler
+melior-interfaces      L2  http/        /login, /signin, /signout, /api/identity/me, /api/health, and the
+                                        community API (/api/communities, /api/channels, /api/invites)
+                           ws/          the signalling WebSocket and the community feed: wire-format
+                                        DTOs and connection handlers
 melior-sfu             L3  main.rs      composition root; tests/ holds the integration tests
 xtask/                     cargo xtask layers
 ```
@@ -74,8 +86,8 @@ commands; `.github/workflows/checks.yml` runs them.
 ### Frontend layers (`melior-frontend/apps/web/src`)
 
 `routes/` (file-based, with an `_authenticated` layout that gates everything),
-`lib/auth` (login gate and session loading), and two features,
-`features/conference` and `features/rooms`, each split into
+`lib/auth` (login gate and session loading), and three features,
+`features/communities`, `features/conference` and `features/chat`, each split into
 `{domain,api,hooks,components}`: pure TypeScript domain, browser adapters, the
 application hooks, and presentation. See `melior-frontend/README.md`.
 
@@ -127,7 +139,8 @@ application hooks, and presentation. See `melior-frontend/README.md`.
    bun dev
    ```
 
-4. Open `http://localhost:3000`, sign in, pick a room. To see two participants
+4. Open `http://localhost:3000`, sign in, create a server (or join one with an
+   invite code) and open a voice channel. To see two participants
    on one machine, sign in as a second user in a private window. Audio is on:
    use headphones, or the tabs will feed back into each other.
 
@@ -157,42 +170,177 @@ same-origin for the browser; the frontend proxies them to the server.
 - With several server instances, a claim in Redis makes sure only one of them
   redeems a session's refresh token; the others wait for the result.
 - Roles are the client roles on the `melior` client
-  (`resource_access.melior.roles`): `member` may join rooms, `admin` implies
-  that and may manage every room. Realm roles are ignored.
+  (`resource_access.melior.roles`): `member` or `admin` may use Melior (create
+  and join communities); a user with neither is refused everywhere. The `admin`
+  role gives no powers inside a community. Realm roles are ignored.
 - `redirectTo` and `state` only ever lead to app-relative paths.
 
-## Rooms and access
+## Communities
 
-A room is registered the first time someone joins it: open to every member,
-owned by that person. The owner (or an admin) can make it invite-only.
+A community (called a server in the UI) has members, roles, categories and
+channels. A **voice channel** is a conference room with its own chat; a **text
+channel** holds messages only. Any user with a Melior role may create a
+community and becomes its owner; others join through an invite. A channel is
+never created by joining it: an unknown channel is refused.
+
+### Permissions
+
+Permissions are bits with wire names: `view_channel`, `connect`,
+`send_messages`, `read_history`, `create_invite`, `manage_channels`,
+`manage_roles`, `kick_members`, `administrator`. A new community's `@everyone`
+role (its id equals the community id) has `view_channel`, `connect`,
+`send_messages`, `read_history` and `create_invite`. A category or channel may
+carry overrides: per role or per member, permissions to allow and to deny.
+
+What a member may do in a channel is resolved in this order:
+
+1. The owner has every permission everywhere.
+2. Base = `@everyone`'s permissions plus those of each of the member's roles.
+3. With `administrator` in the base, the member has every permission.
+4. A channel that is `synced` and in a category uses the category's overrides,
+   otherwise its own.
+5. `@everyone`'s override removes its deny and adds its allow; then the union of
+   the member's roles' denies is removed and the union of their allows added;
+   then the member's own override, deny then allow.
+6. Without `view_channel`, nothing is left.
+
+Community-wide actions (`create_invite`, `manage_channels`, `manage_roles`,
+`kick_members`, renaming) use the base permissions (steps 1 to 3). Renaming
+needs `administrator` (or the owner); deleting is for the owner alone.
+
+Hierarchy: a member's rank is the highest position of their roles (0 without
+any); the owner outranks everyone. Creating, editing or deleting a role, and
+assigning or unassigning it, needs `manage_roles` and the role (its old and new
+position) below the actor's rank; a role cannot be given permissions the actor
+lacks (unless owner or administrator); only permissions a change adds are
+checked. A new role is placed just below the actor's rank, positions may be
+shared. Kicking needs `kick_members` and a target ranked below the actor, never
+the owner. Everyone but the owner may leave; the owner may only delete the
+community. Editing a channel's overrides unsyncs it from its category; setting
+`synced` again restores the category's overrides.
+
+### Media mode and user limit
+
+A voice channel has a `media_mode` (`auto`, `peer_to_peer`, `server`) and an
+optional `user_limit` (2 to 99). With this instance's mesh limit (see Mesh):
+
+| Mode | Room | Capacity |
+| --- | --- | --- |
+| `server` | always forwarded | `user_limit` |
+| `peer_to_peer`, mesh on | always direct (a failed link still pins the room forwarded until the next join or leave) | `min(user_limit or mesh limit, mesh limit)`; `limit_clamped` when the limit is above the mesh limit |
+| `peer_to_peer`, mesh off | forwarded, warning `mesh_off` | `user_limit` |
+| `auto`, `user_limit` at most the mesh limit | as `peer_to_peer` | `user_limit` |
+| `auto` otherwise | switches with the room's size, as described under Mesh | `user_limit` |
+
+Saving a `peer_to_peer` channel with a `user_limit` above the mesh limit is
+refused (above 8 when mesh is off). A text channel has no media settings. The
+channel view reports `effective_mode`, `effective_limit` and `media_warning`. A
+room takes its channel's plan at every join; a full room refuses the join.
+
+### Community API
+
+All bodies are JSON; invalid input is a 400 with a plain-text reason. 401
+without a session, 403 without a Melior role, for a non-member or for a missing
+permission (with the reason as text), 404 for something unknown, 503 when the
+store cannot be reached. Requests that change something must come from the
+application's own origin.
 
 | Path | What it does |
 | --- | --- |
-| `GET /api/rooms` | The rooms the caller owns or is invited to; all rooms for an admin. |
-| `GET /api/rooms/{channel_id}` | One room. 404 if nobody registered the channel, 403 if it is invite-only and the caller is not invited. |
-| `PUT /api/rooms/{channel_id}` | Body `{ "restricted": bool, "members": [username] }`. Registers the room for the caller if it does not exist; otherwise owner or admin only. |
-| `DELETE /api/rooms/{channel_id}` | Owner or admin only. The channel is unregistered, and its chat history is deleted with it; whoever joins next owns it. |
-| `GET /api/rooms/{channel_id}/messages?before=<id>&limit=<n>` | A page of the room's chat history, `{ "messages": [...], "has_more": bool }`, oldest first. Without `before` it is the newest page; with it, the messages before that id. `limit` is 1 to 100 (default 50). Same access as `GET /api/rooms/{channel_id}`: 404 for an unregistered channel, 403 for a room the caller may not enter. |
+| `GET /api/communities` | `[{ id, name, owner_username }]`, the caller's communities. |
+| `POST /api/communities` `{ name }` | Creates one: the caller owns it; it starts with `Text channels`/`general` and `Voice channels`/`General`. Returns the community view. |
+| `GET /api/communities/{id}` | The community view: `{ id, name, owner_id, owner_username, me: { user_id, role_ids, permissions, rank, is_owner }, roles, categories, channels }`. `channels` holds only the channels the caller may view, by position. |
+| `PATCH /api/communities/{id}` `{ name }` | Owner or `administrator`. |
+| `DELETE /api/communities/{id}` | Owner only; deletes the channels and their history. 204. |
+| `GET /api/communities/{id}/members` | `[{ user_id, username, role_ids }]`. |
+| `DELETE /api/communities/{id}/members/{user_id}` | Kick, or leave when it is the caller. 204. |
+| `PUT /api/communities/{id}/members/{user_id}/roles` `{ role_ids }` | Replaces the member's roles. |
+| `POST /api/communities/{id}/roles` `{ name, color?, permissions }` | A role just below the caller's rank. |
+| `PATCH /api/communities/{id}/roles/{role_id}` `{ name?, color?, permissions?, position? }` | `@everyone` changes its permissions only. |
+| `DELETE /api/communities/{id}/roles/{role_id}` | Not `@everyone`. 204. |
+| `POST /api/communities/{id}/categories` `{ name }` | `manage_channels`. |
+| `PATCH /api/communities/{id}/categories/{category_id}` `{ name?, position?, overrides? }` | |
+| `DELETE /api/communities/{id}/categories/{category_id}` | Its channels stay, without a category. 204. |
+| `POST /api/communities/{id}/channels` `{ name, kind, topic?, category_id?, media_mode?, user_limit? }` | `manage_channels`; returns the channel view. |
+| `GET /api/channels/{channel_id}` | The channel view: `{ id, community_id, name, topic, kind, category_id, position, synced, overrides, media_mode, user_limit, effective_mode, effective_limit, media_warning, my_permissions }`. |
+| `PATCH /api/channels/{channel_id}` `{ name?, topic?, category_id?, position?, media_mode?, user_limit?, overrides?, synced? }` | `category_id: null` takes it out of its category, `user_limit: null` removes the limit. |
+| `DELETE /api/channels/{channel_id}` | With its history. 204. |
+| `GET /api/channels/{channel_id}/admission` | 204 if the caller may join the voice channel now, else the status the WebSocket upgrade would give (403, 404, 409 full by the community's voice roster). For clients, which cannot see a refused upgrade's status. |
+| `GET /api/channels/{channel_id}/messages?before=<id>&limit=<n>` | `{ "messages": [...], "has_more": bool }`, oldest first; `limit` 1 to 100 (default 50). Needs `view_channel` and `read_history`. |
+| `POST /api/channels/{channel_id}/messages` `{ text, client_id? }` | Text channels only (409 for voice). Needs `view_channel` and `send_messages`; 429 over the rate limit. Returns the message with the `client_id`; the others get it on the feed. |
+| `POST /api/communities/{id}/invites` `{ max_age_seconds?, max_uses? }` | `create_invite`. Lifetime 1800, 3600, 21600, 43200, 86400 or 604800 seconds, or none (never expires); uses 1 to 100 or none. |
+| `GET /api/communities/{id}/invites` | `manage_channels`. |
+| `GET /api/invites/{code}` | `{ code, community: { id, name }, member_count, usable }` for anyone with a Melior role. |
+| `POST /api/invites/{code}` | Joins: `{ community_id }`. A member gets the id again without using the invite; an expired or used-up invite is 410. |
+| `DELETE /api/invites/{code}` | Its creator, or `manage_channels`. 204. |
 
-A room object is `{ channel_id, owner, restricted, members, is_owner }`.
-Usernames are lower-case, 1 to 64 characters of `a-z`, `0-9`, `.`, `_`, `@`,
-`-`. Requests that change something must come from the application's own
-origin. Every open connection re-checks its access every
-`SESSION_RECHECK_SECONDS`, so someone who loses access is removed within that
-time.
+An override is `{ "target": { "kind": "role" | "member", "id": ... }, "allow": [...], "deny": [...] }`;
+an invite `{ code, community_id, created_by, expires_at_ms, max_uses, uses }`.
+An invite code is 10 characters of `A-Z`, `a-z`, `0-9`. Redeeming is one
+conditional update, so two people cannot both take an invite's last use.
+
+Every open connection re-checks its access every `SESSION_RECHECK_SECONDS`, so
+someone who is kicked, loses a permission or whose channel is deleted is removed
+within that time.
+
+### Community feed
+
+`GET /ws/communities/{id}` is a server-to-client WebSocket of
+`{channel, payload}` messages; what the client sends is ignored. The upgrade
+needs the own origin, a session and membership (403; 404 for an unknown
+community).
+
+| `channel` | `payload` |
+| --- | --- |
+| `snapshot` | `{ "voice": [VoiceEntry] }`: first, and again after every re-check. Replaces what the client knew |
+| `voice_joined`, `voice_updated` | `VoiceEntry` |
+| `voice_left` | `{ channel_id, session_id }` |
+| `message` | `{ channel_id, message }`, a new message in a text channel |
+| `structure_changed` | `{}`: fetch `GET /api/communities/{id}` again |
+| `members_changed` | `{}`: someone joined through an invite, left or was kicked; fetch `GET /api/communities/{id}/members` again |
+| `removed` | `{ reason: "kicked" \| "left" \| "deleted" }`, then the server closes |
+| `closed` | `{ reason: "session_ended" }`, then the server closes |
+
+A `VoiceEntry` is `{ channel_id, session_id, user_id, username, muted, camera,
+screen, speaking }`. The feed carries entries and messages only for channels
+the member may view. Presence is kept in Redis: one key per participant that
+lives three re-check intervals and is renewed on every re-check, so the
+participants of an instance that stopped disappear with the next snapshot.
+Events travel over Redis pub/sub (`melior:community:<id>`), one subscription per
+instance.
+
+### Existing rooms
+
+Migration `0003_communities` turns the `rooms` table into `channels`. If any
+rooms exist, they all join one community named `Melior`, owned by the owner of
+the oldest room: every room owner becomes a member, `@everyone` gets the
+default permissions, and the community gets one invite that never expires (see
+`GET /api/communities/{id}/invites`). Each room becomes a voice channel named
+after its channel id, without a category, in mode `auto`, keeping its chat
+history. A restricted room is hidden from `@everyone` and shown to its owner by
+overrides. Invitation lists are dropped: they held usernames, not user ids, so
+invited users rejoin through the invite.
 
 ## Signalling
 
-`GET /ws?channel_id=<room>` upgrades to a WebSocket. The upgrade is refused
-with 401 without a session, 403 without a role or an invitation (or from a
-foreign origin), and 503 when another server instance hosts the room.
+`GET /ws?channel_id=<id>` upgrades to a WebSocket in a voice channel. The
+upgrade is refused with 400 without a valid `channel_id`, 401 without a
+session, 403 without a role, for a non-member, without `view_channel` or
+`connect`, for a text channel (or from a foreign origin), 404 for an unknown
+channel, 409 when the channel is full, and 503 when another server instance
+hosts the room. A browser cannot see these statuses; it asks
+`GET /api/channels/{channel_id}/admission`.
 
 JSON messages of the form `{channel, payload}`:
 
 - Server to client:
   - `session` (`session_id`, `channel_id`, `username`, `ice_servers`,
-    `participants`), always first.
-  - `peer_joined` (`session_id`, `username`), `peer_left` (`session_id`).
+    `participants`), always first. Each participant is `{ session_id,
+    username, voice }`, and `voice` is `{ muted, camera, screen, speaking }`.
+  - `peer_joined` (`session_id`, `username`, `voice`), `peer_left` (`session_id`).
+  - `voice_state` (`session_id`, `muted`, `camera`, `screen`, `speaking`): a
+    participant's voice state changed; everyone in the room gets it, the
+    participant included.
   - `sdp_answer` (`type`, `sdp`): the answer to the client's first offer.
   - `sdp_offer` (`type`, `sdp`, `tracks`): a renegotiation. `tracks` is the
     complete list of `{ mid, session_id, source }`: which media section carries
@@ -215,12 +363,13 @@ JSON messages of the form `{channel, payload}`:
     offer and answer of the direct link with `from`.
   - `peer_ice` (`from`, `candidate`): a relayed ICE candidate for that link.
   - `closed` (`reason`): the last message before the server closes the socket.
-    `session_ended` (log in again), `removed` (no access to this room any
-    more), `room_moved` (reconnect).
+    `session_ended` (log in again), `removed` (no access to this channel any
+    more: kicked, a permission lost, or the channel deleted), `room_moved`
+    (reconnect).
 - Client to server: `sdp_offer` (the first offer, and later one for each track
   the client adds or removes), `sdp_answer`, `ice` (an
   `RTCIceCandidateInit`), `echo`, `chat_send` (`text`, optional `client_id`),
-  and:
+  `voice_state` (`muted`, `camera`, `screen`, `speaking`, all booleans), and:
   - `route_live` (`peer`, `epoch`): I now play `peer`'s media over the path of
     route `epoch`, or I already did when the route arrived.
   - `peer_offer` (`to`, `sdp`), `peer_answer` (`to`, `sdp`): the offer and
@@ -230,6 +379,14 @@ JSON messages of the form `{channel, payload}`:
 
 Every `peer` (and `from`, `to`) is a session id. The server drops a relayed SDP
 over 64 KiB and a candidate over 1 KiB.
+
+A `voice_state` is a claim the room checks: a muted participant is not
+speaking, and `screen` counts only while the room records a screen track of
+the participant, or while its uplink is paused (every link direct: the screen
+then travels over the direct links only and the SFU never sees its track). An
+unchanged state is not sent again. At most 10 updates per second are taken from
+one participant; the rest are dropped. Every change also goes to the
+community feed.
 
 ### Screen sharing
 
@@ -257,11 +414,12 @@ change again once the connection is stable.
 ### Chat
 
 A `chat_send` is checked, saved and sent to everyone in the room, the sender
-included. The text is trimmed and must be 1 to 2000 characters with no control
+included. It needs `send_messages` in the channel; without it the sender gets a
+`chat_error` saying "you may not send messages in this channel". The text is trimmed and must be 1 to 2000 characters with no control
 characters other than line breaks and tabs. A participant may send 5 messages
 per 10 seconds. A refused message gets a `chat_error` and nothing else happens.
-Messages are stored in the `chat_messages` table, and the history endpoint above
-reads them back, so people who join later see what was said. A room lives on one
+Messages are stored in the `chat_messages` table, and
+`GET /api/channels/{channel_id}/messages` reads them back, so people who join later see what was said. A room lives on one
 instance (see [Several server instances](#several-server-instances)), so its
 messages are delivered from that instance's memory; the store only orders and
 keeps them.
@@ -335,21 +493,21 @@ the browsers switch without a gap.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `DATABASE_URL` | required | Room registry, `postgres://user:password@host:port/db`. Migrations run on first use |
+| `DATABASE_URL` | required | Communities and chat history, `postgres://user:password@host:port/db`. Migrations run on first use |
 | `MELIOR_BIND` | `0.0.0.0:5000` | Listen address |
 | `MELIOR_INSTANCE_ID` | `melior-1` | Names this instance; must differ between instances sharing one Redis |
 | `FRONTEND_URL` | `http://localhost:3000` | The origin browsers use for the app |
-| `REDIS_URL` | `redis://127.0.0.1:6379` | Sessions and room leases, `redis://[:password@]host:port[/db]` |
+| `REDIS_URL` | `redis://127.0.0.1:6379` | Sessions, room leases, community events and the voice roster, `redis://[:password@]host:port[/db]` |
 | `IDP_ISSUER` | `http://localhost:8300/realms/melior` | OIDC issuer; endpoints and keys are discovered from it |
 | `IDP_CLIENT_ID` | `melior` | Public client (PKCE, no secret) |
 | `IDP_SCOPE` | `openid email profile` | Must include `openid`; `offline_access` is refused |
 | `SESSION_COOKIE_NAME` | `melior_session_id` | |
 | `SESSION_TTL_SECONDS` | `3600` | Session lifetime without a token refresh |
 | `TOKEN_REFRESH_LEAD_SECONDS` | `30` | Refresh tokens this long before they expire |
-| `SESSION_RECHECK_SECONDS` | `15` | How often an open connection re-checks its session, its room access and the room lease. A room lease lasts three times this |
+| `SESSION_RECHECK_SECONDS` | `15` | How often an open connection re-checks its session, its channel or community access and the room lease, and renews its voice roster entry. A room lease and a roster entry last three times this |
 | `MELIOR_TURN_URLS` | unset | Comma-separated ICE server URLs handed to browsers. The server itself connects directly |
 | `MELIOR_TURN_SECRET` | unset | Secret shared with the TURN server; per-user credentials are derived from it |
-| `MELIOR_MESH_MAX_PARTICIPANTS` | `4` | The largest room that sends media browser to browser. `0` turns mesh off; otherwise `2` to `8`, anything else fails startup. Effectively `0` when `MELIOR_TURN_URLS` is unset: mesh needs TURN as its fallback, and the server logs that once at startup |
+| `MELIOR_MESH_MAX_PARTICIPANTS` | `4` | The largest room that sends media browser to browser, and the largest `peer_to_peer` channel. `0` turns mesh off; otherwise `2` to `8`, anything else fails startup. Effectively `0` when `MELIOR_TURN_URLS` is unset: mesh needs TURN as its fallback, and the server logs that once at startup |
 | `MELIOR_TURN_TTL_SECONDS` | `3600` | Lifetime of a TURN credential |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP gRPC endpoint for traces, e.g. `http://127.0.0.1:4317` |
 | `RUST_LOG` | warnings, plus info for Melior's crates | Log filter (tracing) |
@@ -451,8 +609,10 @@ room is pinned to one instance:
 - A lease expires three re-check intervals after its instance stops renewing it
   (45 seconds by default). Clients reconnect on their own with backoff, and the
   next instance they reach takes the room over.
-- Sessions (Redis) and the room registry (Postgres) are shared, so a user stays
-  logged in whichever instance answers.
+- Sessions (Redis) and communities (Postgres) are shared, so a user stays
+  logged in whichever instance answers. Community events go over Redis
+  pub/sub, and the voice roster lives in Redis, so every instance's feeds see
+  every instance's voice channels.
 
 Every instance needs its own `MELIOR_INSTANCE_ID`. There is no media relay
 between instances: a room's participants all send to and receive from the
@@ -568,7 +728,7 @@ cd /opt/melior && docker compose --env-file .env --env-file version.env -f compo
 
 ```sh
 cd melior-server
-cargo test --workspace --locked      # unit tests per crate; HTTP tests for login and rooms; forced-close
+cargo test --workspace --locked      # unit tests per crate; HTTP tests for login and communities; feed and forced-close
                                      # tests; end-to-end tests with real WebRTC clients. Needs no
                                      # Keycloak, Redis, Postgres or TURN: fakes sit behind the ports.
 cargo fmt --all --check
@@ -580,14 +740,17 @@ cd melior-frontend
 bun run test:unit && bun run check-types && bun run biome-check && bun run build
 ```
 
-CI runs the same commands (`.github/workflows/checks.yml`). The Redis,
-OIDC, TURN and the Redis and room-registry adapters are exercised only by running
-the stack; see `AGENTS.md` section 5. The chat history adapter has an ignored test
-that needs a database:
+CI runs the same commands (`.github/workflows/checks.yml`). The OIDC, TURN,
+session and lease adapters are exercised only by running the stack; see
+`AGENTS.md` section 5. The Postgres and Redis adapters for communities and chat
+have ignored tests that need a database and a Redis (use a database of its own:
+the migrations run on it):
 
 ```sh
 MELIOR_TEST_DATABASE_URL=postgres://user:password@127.0.0.1:5432/db \
-    cargo test -p melior-infrastructure --test postgres_chat -- --ignored
+    cargo test -p melior-infrastructure --test postgres_chat --test postgres_communities -- --ignored
+MELIOR_TEST_REDIS_URL=redis://127.0.0.1:6379/9 \
+    cargo test -p melior-infrastructure --test redis_communities -- --ignored
 ```
 
 ## Limitations
@@ -604,6 +767,12 @@ MELIOR_TEST_DATABASE_URL=postgres://user:password@127.0.0.1:5432/db \
   are interrupted until their lease expires and the participants reconnect.
 - A participant who loses access or whose session ends is disconnected at the
   next re-check, up to `SESSION_RECHECK_SECONDS` later, not instantly.
+- A channel's changed media mode or limit applies to its room at the next join;
+  participants already in a room over a new limit stay.
+- The full check at the WebSocket upgrade and the admission probe can race with
+  another join; the join itself then refuses with an `error`.
+- Feed events published while an instance's Redis subscription reconnects are
+  lost; the next snapshot and `structure_changed` put the client right.
 - A media section is reused only for a track of the same codec, so a room with
   mixed codecs keeps one set of sections per codec.
 - The server needs host networking in Docker, so the `app` profile works on

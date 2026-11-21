@@ -26,10 +26,6 @@ export const hashString = (value: string): number => {
     return hash >>> 0;
 };
 
-/** The `channel_id` query parameter of a request URL (path and query), or null. */
-export const channelIdFromUrl = (requestUrl: string | undefined): string | null =>
-    new URL(requestUrl ?? '/', 'http://localhost').searchParams.get('channel_id');
-
-/** The backend that owns a room: the same channel always maps to the same backend. */
-export const pickBackend = (targets: readonly string[], channelId: string | null): string =>
-    targets[hashString(channelId ?? '') % targets.length] ?? '';
+/** The backend for a routing key (a room's channel id): the same key always maps to the same backend. */
+export const pickBackend = (targets: readonly string[], key: string | null): string =>
+    targets[hashString(key ?? '') % targets.length] ?? '';

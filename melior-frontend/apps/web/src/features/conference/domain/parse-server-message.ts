@@ -11,6 +11,7 @@ import {
     TRACK_SOURCES,
     type TrackAssignment,
 } from './signalling-message';
+import { parseVoiceState, SILENT_VOICE } from './voice-state';
 
 const isWholeNumber = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value);
 
@@ -40,7 +41,16 @@ const parseIceServer = (value: unknown): IceServer | null => {
 
 const parseParticipant = (value: unknown): Participant | null => {
     if (!isObject(value) || !isString(value.session_id) || !isString(value.username)) return null;
-    return { session_id: value.session_id, username: value.username };
+    // A server that predates voice states sends none: everything is off then.
+    const voice = value.voice === undefined ? SILENT_VOICE : parseVoiceState(value.voice);
+    if (!voice) return null;
+    return { session_id: value.session_id, username: value.username, voice };
+};
+
+const parseVoiceMessage = (payload: unknown): ServerMessage | null => {
+    const voice = parseVoiceState(payload);
+    if (!voice || !isObject(payload) || !isString(payload.session_id)) return null;
+    return { channel: 'voice_state', payload: { ...voice, session_id: payload.session_id } };
 };
 
 const parseTrackAssignment = (value: unknown): TrackAssignment | null => {
@@ -117,6 +127,8 @@ const parseEnvelope = (value: unknown): ServerMessage | null => {
             return isObject(payload) && isString(payload.session_id)
                 ? { channel: 'peer_left', payload: { session_id: payload.session_id } }
                 : null;
+        case 'voice_state':
+            return parseVoiceMessage(payload);
         case 'chat': {
             const chat = parseChatPayload(payload);
             return chat ? { channel: 'chat', payload: chat } : null;

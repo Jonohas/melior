@@ -1,6 +1,7 @@
-import { createFileRoute, Outlet } from '@tanstack/react-router';
+import { createFileRoute, Outlet, useParams } from '@tanstack/react-router';
 import { AppShell, NoAccessPage, RouterErrorPage } from '@/components';
-import { useRoomsQuery } from '@/features/rooms/hooks';
+import { ServerRail, VoiceCallAudio, VoicePanel } from '@/features/communities/components';
+import { useCommunitiesQuery, VoiceSessionProvider } from '@/features/communities/hooks';
 import { ForbiddenError, loadAuthenticatedContext, useAuth } from '@/lib/auth';
 
 /**
@@ -9,6 +10,8 @@ import { ForbiddenError, loadAuthenticatedContext, useAuth } from '@/lib/auth';
  * `beforeLoad` is what makes it authenticated: it loads the identity through the BFF and, on a 401,
  * routes through the single login gate with a full-page redirect. No page under here renders before that
  * resolves. A 403 (signed in, no Melior role) renders the no-access state instead of looping to login.
+ *
+ * The voice call lives here, above the routes, so it goes on while the user moves between pages.
  */
 export const Route = createFileRoute('/_authenticated')({
     beforeLoad: ({ context, location, preload }) =>
@@ -24,11 +27,20 @@ export const Route = createFileRoute('/_authenticated')({
 
 function AuthenticatedLayout() {
     const { user } = useAuth();
-    const rooms = useRoomsQuery();
+    const communities = useCommunitiesQuery();
+    // A server's pages show the call panel in their channel column; every other page shows it in the corner.
+    const { communityId } = useParams({ strict: false });
 
     return (
-        <AppShell username={user.username} rooms={rooms.data ?? []}>
-            <Outlet />
-        </AppShell>
+        <VoiceSessionProvider>
+            <AppShell
+                username={user.username}
+                rail={<ServerRail communities={communities.data ?? []} />}
+                corner={communityId ? undefined : <VoicePanel className="border-t-0" />}
+            >
+                <Outlet />
+            </AppShell>
+            <VoiceCallAudio />
+        </VoiceSessionProvider>
     );
 }

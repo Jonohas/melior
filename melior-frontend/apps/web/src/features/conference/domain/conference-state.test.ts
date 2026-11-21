@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { type ConferenceAction, conferenceReducer, createInitialConferenceState } from './conference-state';
 import { streamKey } from './remote-tracks';
+import { SILENT_VOICE } from './voice-state';
+
+const voice = SILENT_VOICE;
 
 type Stream = { id: string };
 
@@ -13,6 +16,7 @@ describe('conferenceReducer', () => {
             sessionId: null,
             username: null,
             participants: {},
+            voices: {},
             localStream: null,
             remoteStreams: {},
             directStreams: {},
@@ -66,8 +70,8 @@ describe('conferenceReducer', () => {
             sessionId: 's1',
             username: 'alice',
             participants: [
-                { session_id: 's1', username: 'alice' },
-                { session_id: 's2', username: 'bob' },
+                { session_id: 's1', username: 'alice', voice },
+                { session_id: 's2', username: 'bob', voice },
             ],
         });
         expect(state.username).toBe('alice');
@@ -85,7 +89,7 @@ describe('conferenceReducer', () => {
 
     test('the screen goes away when sharing stops, and when the participant leaves', () => {
         const sharing = run(
-            { type: 'peer_joined', sessionId: 's2', username: 'bob' },
+            { type: 'peer_joined', sessionId: 's2', username: 'bob', voice },
             {
                 type: 'remote_media_updated',
                 streams: { s2: { id: 'cam' }, [streamKey('s2', 'screen')]: { id: 'scr' } },
@@ -103,14 +107,31 @@ describe('conferenceReducer', () => {
     test('peer_joined adds to the roster and peer_left removes the entry and its stream', () => {
         const state = run(
             { type: 'session_started', sessionId: 's1', username: 'alice', participants: [] },
-            { type: 'peer_joined', sessionId: 's2', username: 'bob' },
-            { type: 'peer_joined', sessionId: 's3', username: 'carol' },
-            { type: 'peer_joined', sessionId: 's1', username: 'alice' },
+            { type: 'peer_joined', sessionId: 's2', username: 'bob', voice },
+            { type: 'peer_joined', sessionId: 's3', username: 'carol', voice },
+            { type: 'peer_joined', sessionId: 's1', username: 'alice', voice },
             { type: 'remote_media_updated', streams: { s2: { id: 'm' } } },
             { type: 'peer_left', sessionId: 's2' },
         );
         expect(state.participants).toEqual({ s3: 'carol' });
         expect(state.remoteStreams).toEqual({});
+    });
+
+    test('records voice states from the session, joins and updates, and forgets them on leave', () => {
+        const muted = { ...SILENT_VOICE, muted: true };
+        const state = run(
+            {
+                type: 'session_started',
+                sessionId: 's1',
+                username: 'alice',
+                participants: [{ session_id: 's2', username: 'bob', voice: muted }],
+            },
+            { type: 'peer_joined', sessionId: 's3', username: 'carol', voice },
+            { type: 'voice_changed', sessionId: 's1', voice: { ...SILENT_VOICE, speaking: true } },
+        );
+        expect(state.voices).toEqual({ s1: { ...SILENT_VOICE, speaking: true }, s2: muted, s3: voice });
+        expect(conferenceReducer(state, { type: 'peer_left', sessionId: 's2' }).voices.s2).toBeUndefined();
+        expect(conferenceReducer(state, { type: 'reconnecting', attempt: 1 }).voices).toEqual({});
     });
 
     test('failed sets error status and message', () => {
@@ -126,7 +147,7 @@ describe('conferenceReducer', () => {
                 type: 'session_started',
                 sessionId: 's1',
                 username: 'alice',
-                participants: [{ session_id: 's2', username: 'bob' }],
+                participants: [{ session_id: 's2', username: 'bob', voice }],
             },
             { type: 'remote_media_updated', streams: { s2: { id: 'm' } } },
             { type: 'connected' },
@@ -170,7 +191,7 @@ describe('direct paths', () => {
         type: 'session_started',
         sessionId: 'me',
         username: 'm',
-        participants: [{ session_id: 'p', username: 'peer' }],
+        participants: [{ session_id: 'p', username: 'peer', voice }],
     });
 
     test('tracks the direct stream and the shown path, and drops both when the peer leaves', () => {

@@ -61,6 +61,12 @@ pub struct ChannelId(String);
 impl ChannelId {
     pub const MAX_LEN: usize = 64;
 
+    /// A new channel's id: a UUID, which fits [`Self::parse`]'s rules.
+    #[must_use]
+    pub fn generate() -> Self {
+        Self(Uuid::new_v4().to_string())
+    }
+
     pub fn parse(value: &str) -> Result<Self, DomainError> {
         let valid_len = (1..=Self::MAX_LEN).contains(&value.len());
         let valid_chars =
@@ -127,6 +133,12 @@ mod tests {
         ] {
             assert_eq!(SessionId::parse(&bad), None, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_generated_channel_id_parses() {
+        let id = ChannelId::generate();
+        assert_eq!(ChannelId::parse(id.as_str()), Ok(id));
     }
 
     #[test]

@@ -1,12 +1,12 @@
 import type { Dispatch } from 'react';
 import {
+    type ChannelProbe,
     type CloseDecision,
     type CloseReason,
     type ConferenceAction,
     decideAfterDiagnosis,
     decideOnClose,
     nextAttempt,
-    type RoomProbe,
     reconnectDelayMs,
     type SessionProbe,
     type StopReason,
@@ -25,7 +25,7 @@ type ReconnectorDeps = {
     release: () => void;
     connect: () => void;
     checkSession: Check<SessionProbe>;
-    checkRoomAccess: Check<RoomProbe>;
+    checkChannelAccess: Check<ChannelProbe>;
 };
 
 export type Reconnector = {
@@ -48,7 +48,7 @@ const probe = async <T>(check: (() => Promise<T>) | undefined, fallback: T): Pro
 
 /**
  * Executes the pure decisions of the domain after a lost connection: reconnect after a delay, stop for good,
- * or re-check the login session and the room access first. Owns the attempt counter and the retry timer.
+ * or re-check the login session and the channel access first. Owns the attempt counter and the retry timer.
  */
 export const createReconnector = (deps: ReconnectorDeps): Reconnector => {
     const { dispatch, isDisposed, generation, teardown, release, connect } = deps;
@@ -75,13 +75,15 @@ export const createReconnector = (deps: ReconnectorDeps): Reconnector => {
         }, delay);
     };
 
-    const diagnose = async (checkRoom: boolean) => {
+    const diagnose = async (checkChannel: boolean) => {
         const mine = generation();
         const session = await probe<SessionProbe>(deps.checkSession.current, 'error');
-        const room =
-            session === 'ok' && checkRoom ? await probe<RoomProbe>(deps.checkRoomAccess.current, 'unknown') : 'unknown';
+        const channel =
+            session === 'ok' && checkChannel
+                ? await probe<ChannelProbe>(deps.checkChannelAccess.current, 'unknown')
+                : 'unknown';
         if (isDisposed() || mine !== generation()) return;
-        execute(decideAfterDiagnosis(session, room));
+        execute(decideAfterDiagnosis(session, channel));
     };
 
     const execute = (decision: CloseDecision) => {
@@ -94,7 +96,7 @@ export const createReconnector = (deps: ReconnectorDeps): Reconnector => {
                 stop(decision.reason);
                 break;
             case 'diagnose':
-                void diagnose(decision.checkRoom);
+                void diagnose(decision.checkChannel);
                 break;
         }
     };

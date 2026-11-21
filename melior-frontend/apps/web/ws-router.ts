@@ -9,9 +9,20 @@ export const backendEndpoint = (baseUrl: string): BackendEndpoint => {
     return { host: url.hostname, port: url.port ? Number(url.port) : secure ? 443 : 80, secure };
 };
 
-/** True for upgrades aimed at the signalling socket: exactly `/ws`, with or without a query. */
-export const isSignallingUpgrade = (requestUrl: string | undefined): boolean =>
-    new URL(requestUrl ?? '/', 'http://localhost').pathname === '/ws';
+const COMMUNITY_FEED_PATH = /^\/ws\/communities\/([^/]+)$/;
+
+/**
+ * What a backend WebSocket upgrade is routed by, or null when the upgrade is not for the backend (Vite's HMR
+ * socket, lookalike paths). The room socket (`/ws?channel_id=`) hashes by channel, so everyone in a room reaches
+ * the instance that hosts it. The community feed (`/ws/communities/<id>`) works on any instance; it hashes by
+ * community only to spread the feeds out.
+ */
+export const upgradeRoutingKey = (requestUrl: string | undefined): string | null => {
+    const url = new URL(requestUrl ?? '/', 'http://localhost');
+    if (url.pathname === '/ws') return url.searchParams.get('channel_id') ?? '';
+    const feed = COMMUNITY_FEED_PATH.exec(url.pathname);
+    return feed ? decodeURIComponent(feed[1] ?? '') : null;
+};
 
 /**
  * The upgrade request exactly as the browser sent it: request line and raw headers, in order and with their

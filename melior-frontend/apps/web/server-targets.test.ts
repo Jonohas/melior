@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { channelIdFromUrl, hashString, parseBackendUrls, pickBackend } from './server-targets';
+import { hashString, parseBackendUrls, pickBackend } from './server-targets';
 
 describe('parseBackendUrls', () => {
     test('defaults to the local backend in http form', () => {
@@ -34,13 +34,5 @@ describe('pickBackend', () => {
     test('hashString is deterministic', () => {
         expect(hashString('general')).toBe(hashString('general'));
         expect(hashString('a')).not.toBe(hashString('b'));
-    });
-});
-
-describe('channelIdFromUrl', () => {
-    test('reads channel_id from the query', () => {
-        expect(channelIdFromUrl('/ws?channel_id=abc&x=1')).toBe('abc');
-        expect(channelIdFromUrl('/ws')).toBeNull();
-        expect(channelIdFromUrl(undefined)).toBeNull();
     });
 });

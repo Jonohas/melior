@@ -4,6 +4,7 @@ import {
     parseServerMessage,
     type ServerMessage,
 } from '@/features/conference/domain';
+import { sameOriginSocketUrl } from '@/lib/socket-url';
 
 type SignallingClientOptions = {
     channelId: ChannelId;
@@ -24,8 +25,7 @@ export const createSignallingClient = ({
     onMessage,
     onClose,
 }: SignallingClientOptions): SignallingClient => {
-    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const socket = new WebSocket(`${scheme}://${window.location.host}/ws?channel_id=${encodeURIComponent(channelId)}`);
+    const socket = new WebSocket(sameOriginSocketUrl(`/ws?channel_id=${encodeURIComponent(channelId)}`));
     let chain: Promise<void> = Promise.resolve();
     let opened = false;
 

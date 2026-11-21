@@ -1,9 +1,10 @@
-//! Postgres adapters: the room registry and the chat history.
+//! Postgres adapters: communities (with their channels, roles and invites) and the
+//! chat history.
 
 mod chat;
+mod communities;
 mod database;
-mod rooms;
 
 pub use chat::PostgresChatRepository;
+pub use communities::PostgresCommunityRepository;
 pub use database::Database;
-pub use rooms::PostgresRoomRepository;

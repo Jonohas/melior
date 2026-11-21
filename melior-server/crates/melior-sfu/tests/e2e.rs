@@ -74,6 +74,7 @@ impl Client {
     // scatter the shared connection, channels and tasks across helpers.
     #[allow(clippy::too_many_lines)]
     async fn join(server: &TestServer, channel: &str, username: &str) -> Self {
+        server.voice_channel(channel).await;
         let cookie = server.login(username, &["member"]).await;
         let request = server.ws_request(Some(channel), Some(&cookie));
         let (socket, _) = tokio_tungstenite::connect_async(request).await.expect("connect");
@@ -382,8 +383,13 @@ async fn invalid_channel_ids_are_refused_and_bad_messages_get_an_error() {
             .await;
     assert!(refused.is_err(), "upgrade must be refused");
 
+    let without_channel = tokio_tungstenite::connect_async(server.ws_request(None, Some(&cookie)));
+    assert!(without_channel.await.is_err(), "channel_id is required");
+
     let (mut socket, _) =
-        tokio_tungstenite::connect_async(server.ws_request(None, Some(&cookie))).await.unwrap();
+        tokio_tungstenite::connect_async(server.ws_request(Some("general"), Some(&cookie)))
+            .await
+            .unwrap();
     let hello = next_json(&mut socket).await;
     assert_eq!(hello["payload"]["channel_id"], "general");
     assert_eq!(hello["payload"]["participants"], json!([]));
@@ -391,17 +397,27 @@ async fn invalid_channel_ids_are_refused_and_bad_messages_get_an_error() {
     // A second participant sees the first in the roster, and the first is told.
     let bob = server.login("bob", &["member"]).await;
     let (mut second, _) =
-        tokio_tungstenite::connect_async(server.ws_request(None, Some(&bob))).await.unwrap();
+        tokio_tungstenite::connect_async(server.ws_request(Some("general"), Some(&bob)))
+            .await
+            .unwrap();
     let second_hello = next_json(&mut second).await;
     assert_eq!(
         second_hello["payload"]["participants"],
-        json!([{ "session_id": hello["payload"]["session_id"], "username": "alice" }])
+        json!([{
+            "session_id": hello["payload"]["session_id"],
+            "username": "alice",
+            "voice": { "muted": false, "camera": false, "screen": false, "speaking": false }
+        }])
     );
     assert_eq!(
         next_json(&mut socket).await,
         json!({
             "channel": "peer_joined",
-            "payload": { "session_id": second_hello["payload"]["session_id"], "username": "bob" }
+            "payload": {
+                "session_id": second_hello["payload"]["session_id"],
+                "username": "bob",
+                "voice": { "muted": false, "camera": false, "screen": false, "speaking": false }
+            }
         })
     );
     drop(second);
@@ -426,6 +442,7 @@ async fn invalid_channel_ids_are_refused_and_bad_messages_get_an_error() {
 #[tokio::test]
 async fn an_oversized_message_ends_that_connection_and_nothing_else() {
     let server = TestServer::start().await;
+    server.voice_channel("big").await;
     let cookie = server.login("alice", &["member"]).await;
     let (mut socket, _) =
         tokio_tungstenite::connect_async(server.ws_request(Some("big"), Some(&cookie)))

@@ -12,7 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as ErrorRouteImport } from './routes/error'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
-import { Route as AuthenticatedRoomsChannelIdRouteImport } from './routes/_authenticated/rooms/$channelId'
+import { Route as AuthenticatedInviteCodeRouteImport } from './routes/_authenticated/invite/$code'
+import { Route as AuthenticatedCCommunityIdRouteImport } from './routes/_authenticated/c/$communityId'
+import { Route as AuthenticatedCCommunityIdIndexRouteImport } from './routes/_authenticated/c/$communityId/index'
+import { Route as AuthenticatedCCommunityIdChannelIdRouteImport } from './routes/_authenticated/c/$communityId/$channelId'
 
 const ErrorRoute = ErrorRouteImport.update({
   id: '/error',
@@ -28,41 +31,80 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedRoomsChannelIdRoute =
-  AuthenticatedRoomsChannelIdRouteImport.update({
-    id: '/rooms/$channelId',
-    path: '/rooms/$channelId',
+const AuthenticatedInviteCodeRoute = AuthenticatedInviteCodeRouteImport.update({
+  id: '/invite/$code',
+  path: '/invite/$code',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedCCommunityIdRoute =
+  AuthenticatedCCommunityIdRouteImport.update({
+    id: '/c/$communityId',
+    path: '/c/$communityId',
     getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedCCommunityIdIndexRoute =
+  AuthenticatedCCommunityIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedCCommunityIdRoute,
+  } as any)
+const AuthenticatedCCommunityIdChannelIdRoute =
+  AuthenticatedCCommunityIdChannelIdRouteImport.update({
+    id: '/$channelId',
+    path: '/$channelId',
+    getParentRoute: () => AuthenticatedCCommunityIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/error': typeof ErrorRoute
-  '/rooms/$channelId': typeof AuthenticatedRoomsChannelIdRoute
+  '/c/$communityId': typeof AuthenticatedCCommunityIdRouteWithChildren
+  '/invite/$code': typeof AuthenticatedInviteCodeRoute
+  '/c/$communityId/$channelId': typeof AuthenticatedCCommunityIdChannelIdRoute
+  '/c/$communityId/': typeof AuthenticatedCCommunityIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/error': typeof ErrorRoute
   '/': typeof AuthenticatedIndexRoute
-  '/rooms/$channelId': typeof AuthenticatedRoomsChannelIdRoute
+  '/invite/$code': typeof AuthenticatedInviteCodeRoute
+  '/c/$communityId/$channelId': typeof AuthenticatedCCommunityIdChannelIdRoute
+  '/c/$communityId': typeof AuthenticatedCCommunityIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/error': typeof ErrorRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
-  '/_authenticated/rooms/$channelId': typeof AuthenticatedRoomsChannelIdRoute
+  '/_authenticated/c/$communityId': typeof AuthenticatedCCommunityIdRouteWithChildren
+  '/_authenticated/invite/$code': typeof AuthenticatedInviteCodeRoute
+  '/_authenticated/c/$communityId/$channelId': typeof AuthenticatedCCommunityIdChannelIdRoute
+  '/_authenticated/c/$communityId/': typeof AuthenticatedCCommunityIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/error' | '/rooms/$channelId'
+  fullPaths:
+    | '/'
+    | '/error'
+    | '/c/$communityId'
+    | '/invite/$code'
+    | '/c/$communityId/$channelId'
+    | '/c/$communityId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/error' | '/' | '/rooms/$channelId'
+  to:
+    | '/error'
+    | '/'
+    | '/invite/$code'
+    | '/c/$communityId/$channelId'
+    | '/c/$communityId'
   id:
     | '__root__'
     | '/_authenticated'
     | '/error'
     | '/_authenticated/'
-    | '/_authenticated/rooms/$channelId'
+    | '/_authenticated/c/$communityId'
+    | '/_authenticated/invite/$code'
+    | '/_authenticated/c/$communityId/$channelId'
+    | '/_authenticated/c/$communityId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -93,24 +135,64 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/rooms/$channelId': {
-      id: '/_authenticated/rooms/$channelId'
-      path: '/rooms/$channelId'
-      fullPath: '/rooms/$channelId'
-      preLoaderRoute: typeof AuthenticatedRoomsChannelIdRouteImport
+    '/_authenticated/invite/$code': {
+      id: '/_authenticated/invite/$code'
+      path: '/invite/$code'
+      fullPath: '/invite/$code'
+      preLoaderRoute: typeof AuthenticatedInviteCodeRouteImport
       parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/c/$communityId': {
+      id: '/_authenticated/c/$communityId'
+      path: '/c/$communityId'
+      fullPath: '/c/$communityId'
+      preLoaderRoute: typeof AuthenticatedCCommunityIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/c/$communityId/': {
+      id: '/_authenticated/c/$communityId/'
+      path: '/'
+      fullPath: '/c/$communityId/'
+      preLoaderRoute: typeof AuthenticatedCCommunityIdIndexRouteImport
+      parentRoute: typeof AuthenticatedCCommunityIdRoute
+    }
+    '/_authenticated/c/$communityId/$channelId': {
+      id: '/_authenticated/c/$communityId/$channelId'
+      path: '/$channelId'
+      fullPath: '/c/$communityId/$channelId'
+      preLoaderRoute: typeof AuthenticatedCCommunityIdChannelIdRouteImport
+      parentRoute: typeof AuthenticatedCCommunityIdRoute
     }
   }
 }
 
+interface AuthenticatedCCommunityIdRouteChildren {
+  AuthenticatedCCommunityIdChannelIdRoute: typeof AuthenticatedCCommunityIdChannelIdRoute
+  AuthenticatedCCommunityIdIndexRoute: typeof AuthenticatedCCommunityIdIndexRoute
+}
+
+const AuthenticatedCCommunityIdRouteChildren: AuthenticatedCCommunityIdRouteChildren =
+  {
+    AuthenticatedCCommunityIdChannelIdRoute:
+      AuthenticatedCCommunityIdChannelIdRoute,
+    AuthenticatedCCommunityIdIndexRoute: AuthenticatedCCommunityIdIndexRoute,
+  }
+
+const AuthenticatedCCommunityIdRouteWithChildren =
+  AuthenticatedCCommunityIdRoute._addFileChildren(
+    AuthenticatedCCommunityIdRouteChildren,
+  )
+
 interface AuthenticatedRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
-  AuthenticatedRoomsChannelIdRoute: typeof AuthenticatedRoomsChannelIdRoute
+  AuthenticatedCCommunityIdRoute: typeof AuthenticatedCCommunityIdRouteWithChildren
+  AuthenticatedInviteCodeRoute: typeof AuthenticatedInviteCodeRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
-  AuthenticatedRoomsChannelIdRoute: AuthenticatedRoomsChannelIdRoute,
+  AuthenticatedCCommunityIdRoute: AuthenticatedCCommunityIdRouteWithChildren,
+  AuthenticatedInviteCodeRoute: AuthenticatedInviteCodeRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

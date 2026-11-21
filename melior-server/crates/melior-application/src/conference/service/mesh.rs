@@ -50,6 +50,9 @@ impl ConferenceService {
                 self.renegotiate(room, &session).await;
             }
         }
+        for (session_id, _) in &effects.uplinks {
+            self.reconcile_voice(room, session_id);
+        }
         for timeout in effects.timeouts {
             self.arm_timeout(room.id(), timeout);
         }

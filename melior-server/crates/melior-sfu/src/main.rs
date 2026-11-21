@@ -14,13 +14,17 @@
 )]
 
 use melior_application::{
-    AuthService, AuthSettings, ChatService, ConferenceService, RoomAccessService,
+    AuthService, AuthSettings, ChatService, CommunityService, ConferenceService, PresenceQueue,
 };
 use melior_domain::MeshPolicy;
 use melior_infrastructure::config::Config;
 use melior_infrastructure::oidc::{OidcIdentityProvider, OidcSettings};
-use melior_infrastructure::postgres::{Database, PostgresChatRepository, PostgresRoomRepository};
-use melior_infrastructure::redis::{RedisConnection, RedisRoomLeases, RedisSessionStore};
+use melior_infrastructure::postgres::{
+    Database, PostgresChatRepository, PostgresCommunityRepository,
+};
+use melior_infrastructure::redis::{
+    RedisCommunityEvents, RedisConnection, RedisRoomLeases, RedisSessionStore, RedisVoiceRoster,
+};
 use melior_infrastructure::telemetry;
 use melior_infrastructure::turn::TurnRestCredentials;
 use melior_infrastructure::webrtc::WebRtcMediaEngine;
@@ -35,7 +39,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = Config::from_env()?;
     let telemetry = telemetry::init(config.otlp_endpoint.as_deref(), &config.instance_id)?;
 
-    // Shared by everything that lives in Redis: sessions and room leases.
+    // Shared by everything that lives in Redis: sessions, room leases, the
+    // community event bus and the voice roster.
     let redis = Arc::new(RedisConnection::new(&config.redis_url)?);
 
     let media = Arc::new(WebRtcMediaEngine::new()?);
@@ -53,8 +58,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if config.mesh_max_participants > 0 && mesh_limit == 0 {
         info!("mesh is off: no TURN server is configured (MELIOR_TURN_URLS)");
     }
-    let conference =
-        ConferenceService::new(media, ice_servers, leases, MeshPolicy::new(mesh_limit));
+    let mesh = MeshPolicy::new(mesh_limit);
+    let events = Arc::new(RedisCommunityEvents::new(redis.clone()));
+    let roster = Arc::new(RedisVoiceRoster::new(redis.clone()));
+    // A roster entry lives as long as a room lease: three re-checks.
+    let presence = PresenceQueue::start(roster.clone(), events.clone(), config.room_lease_ttl());
+    let conference = ConferenceService::new(media, ice_servers, leases, mesh, presence);
 
     let identity_provider = Arc::new(OidcIdentityProvider::new(OidcSettings {
         issuer: config.idp_issuer.clone(),
@@ -69,18 +78,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // One lazily connected pool for everything stored in Postgres.
     let database = Arc::new(Database::new(&config.database_url)?);
-    let rooms =
-        Arc::new(RoomAccessService::new(Arc::new(PostgresRoomRepository::new(database.clone()))));
+    let communities = Arc::new(CommunityService::new(
+        Arc::new(PostgresCommunityRepository::new(database.clone())),
+        events,
+        roster,
+        mesh,
+    ));
     let chat = Arc::new(ChatService::new(
         conference.clone(),
         Arc::new(PostgresChatRepository::new(database)),
+        communities.clone(),
     ));
 
     let app = router(AppState {
         conference,
         chat,
         auth,
-        rooms,
+        communities,
         session_cookie_name: config.session_cookie_name.as_str().into(),
         session_recheck: config.session_recheck,
     });

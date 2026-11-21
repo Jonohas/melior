@@ -35,9 +35,11 @@ const useTls = existsSync(certPath) && existsSync(keyPath);
 console.log(useTls ? `TLS enabled (${certPath}, ${keyPath})` : 'TLS certs not found, serving plain HTTP');
 
 // Everything the backend (the Rust BFF + SFU) owns. /login, /signin and /signout are full-page
-// navigations of the OIDC flow, /api is fetched, /ws is the signalling WebSocket.
+// navigations of the OIDC flow, /api is fetched, /ws is the room's signalling WebSocket and /ws/communities/<id>
+// the community feed (the '/ws' key is a prefix, so it covers both).
 const backendProxy = {
-    // With several backends Vite's proxy cannot choose per request, so multiBackendWsRouter owns /ws.
+    // With several backends Vite's proxy cannot choose per request, so multiBackendWsRouter owns /ws and
+    // /ws/communities/*: rooms hash by channel id, feeds (which any instance serves) by community id.
     ...(backendTargets.length > 1 ? {} : { '/ws': { ...httpProxy, ws: true } }),
     '/api': httpProxy,
     '/login': httpProxy,

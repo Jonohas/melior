@@ -3,22 +3,24 @@ import net from 'node:net';
 import type { Duplex } from 'node:stream';
 import tls from 'node:tls';
 import type { Plugin } from 'vite';
-import { channelIdFromUrl, pickBackend } from './server-targets';
-import { backendEndpoint, isSignallingUpgrade, serializeUpgradeRequest } from './ws-router';
+import { pickBackend } from './server-targets';
+import { backendEndpoint, serializeUpgradeRequest, upgradeRoutingKey } from './ws-router';
 
 /**
- * Routes WebSocket upgrades on `/ws` to one of several backends by a stable hash of `channel_id`.
+ * Routes backend WebSocket upgrades to one of several backends by a stable hash: the room socket (`/ws`) by its
+ * `channel_id`, the community feed (`/ws/communities/<id>`) by its community id.
  *
  * Vite's own `server.proxy` has no per-request routing, so with several backends this plugin takes over
- * `/ws` (the proxy entry is left out of the config then). It only touches upgrades for `/ws`: Vite's HMR
- * socket and everything else are left to the other `upgrade` listeners. The request is forwarded byte for
+ * `/ws` and `/ws/communities/*` (the proxy entry is left out of the config then). It only touches those upgrades:
+ * Vite's HMR socket and everything else are left to the other `upgrade` listeners. The request is forwarded byte for
  * byte, and the backend's answer (101, or an error such as 401/403/503) is relayed verbatim.
  */
 export const multiBackendWsRouter = (targets: readonly string[]): Plugin => {
     const handleUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-        if (!isSignallingUpgrade(req.url)) return;
+        const key = upgradeRoutingKey(req.url);
+        if (key === null) return;
 
-        const endpoint = backendEndpoint(pickBackend(targets, channelIdFromUrl(req.url)));
+        const endpoint = backendEndpoint(pickBackend(targets, key));
         const upstream = endpoint.secure
             ? tls.connect({ host: endpoint.host, port: endpoint.port, servername: endpoint.host })
             : net.connect({ host: endpoint.host, port: endpoint.port });

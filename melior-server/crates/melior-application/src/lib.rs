@@ -1,9 +1,10 @@
 //! The Melior use cases and the ports they depend on, one module per bounded context.
 //!
-//! - [`chat`]: room chat and its history.
+//! - [`chat`]: channel chat and its history.
+//! - [`communities`]: communities, their channels, roles and invites, admission
+//!   to channels, the voice roster and the community feed.
 //! - [`conference`]: joining rooms and negotiating who receives which tracks.
 //! - [`auth`]: the login round trip and server-side sessions.
-//! - [`rooms`]: the room registry: who owns a room and who may enter it.
 //!
 //! Invariants of this crate:
 //!
@@ -26,8 +27,8 @@
 
 pub mod auth;
 pub mod chat;
+pub mod communities;
 pub mod conference;
-pub mod rooms;
 
 pub use auth::{
     ActiveSession, AuthError, AuthService, AuthSettings, Authentication, AuthorizationRequest,
@@ -37,11 +38,16 @@ pub use auth::{
 pub use chat::{
     ChatFailure, ChatPage, ChatRepository, ChatService, ChatStoreError, InMemoryChatRepository,
 };
-pub use conference::{
-    ConferenceError, ConferenceService, IceServerProvider, LeaseError, MediaEngine, MediaError,
-    MediaEvents, MediaOffer, MediaSession, RoomLeases, Signal, SignalSink, SingleInstance,
-    StaticIceServers, TrackOwner,
+pub use communities::{
+    ChannelGrant, ChannelView, CommunitiesError, CommunityEvent, CommunityEvents,
+    CommunityRepository, CommunityService, CommunityStoreError, CommunityView, EventsError,
+    FeedEnd, FeedFilter, FeedVerdict, InMemoryCommunityEvents, InMemoryCommunityRepository,
+    InMemoryVoiceRoster, InvitePreview, MemberView, PresenceQueue, Redemption, RemovalReason,
+    VoiceGrant, VoiceRoster,
 };
-pub use rooms::{
-    InMemoryRoomRepository, RepositoryError, RoomAccessService, RoomRepository, RoomsError,
+pub use conference::{
+    Admission, ConferenceError, ConferenceService, IceServerProvider, LeaseError, MediaEngine,
+    MediaError, MediaEvents, MediaOffer, MediaSession, NoPresence, PresenceContext, PresenceSink,
+    PresenceUpdate, RoomLeases, Signal, SignalSink, SingleInstance, StaticIceServers, TrackOwner,
+    VoiceEntry,
 };
