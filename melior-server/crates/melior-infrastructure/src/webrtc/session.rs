@@ -1,4 +1,5 @@
 use super::backend;
+use super::codecs::{ReceiverAudio, outlet_codec};
 use super::forwarder::{Forwarder, ForwarderRegistry, OutletTrack};
 use super::offer::sections_not_sending;
 use async_trait::async_trait;
@@ -208,6 +209,17 @@ impl WebRtcSession {
         Sdp::new(description.sdp)
     }
 
+    /// The audio codecs this participant's connection negotiated. Its client
+    /// offers first, so the description is there by the time anything is
+    /// forwarded to it; without one, no RED.
+    async fn receiver_audio(&self) -> ReceiverAudio {
+        self.connection
+            .remote_description()
+            .await
+            .map(|description| ReceiverAudio::from_sdp(&description.sdp))
+            .unwrap_or_default()
+    }
+
     /// Relays the participant's keyframe requests (PLI/FIR) for an outlet to the
     /// publisher of whatever track the outlet carries at that moment. Reading the
     /// sender's RTCP is also what drives its interceptors (NACK, reports).
@@ -234,7 +246,9 @@ impl WebRtcSession {
 
     /// Opens a new media section sending `forwarder`'s track.
     async fn open_outlet(&self, forwarder: &Arc<Forwarder>) -> Result<Outlet, MediaError> {
-        let track = Arc::new(OutletTrack::new(forwarder.codec.clone()));
+        let receiver = self.receiver_audio().await;
+        let (codec, repack) = outlet_codec(&forwarder.codec, &receiver);
+        let track = Arc::new(OutletTrack::new(codec, repack));
         let local: Arc<dyn TrackLocal + Send + Sync> = track.local.clone();
         let sender = self.connection.add_track(local).await.map_err(backend)?;
 

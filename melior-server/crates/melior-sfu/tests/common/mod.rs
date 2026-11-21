@@ -275,16 +275,25 @@ async fn lobby(repository: &InMemoryCommunityRepository) -> CommunityId {
 /// connect at once instead of probing every address of the host, which keeps a
 /// negotiation well inside the server's timeouts and the tests' own.
 pub async fn new_peer_connection() -> RTCPeerConnection {
+    let mut media_engine = MediaEngine::default();
+    media_engine.register_default_codecs().unwrap();
+    new_peer_connection_speaking(media_engine).await
+}
+
+/// [`new_peer_connection`] with the codecs of `media_engine`, for a client that
+/// speaks something other than the defaults.
+pub async fn new_peer_connection_speaking(media_engine: MediaEngine) -> RTCPeerConnection {
     let mut settings = SettingEngine::default();
     settings.set_include_loopback_candidate(true);
     settings.set_network_types(vec![NetworkType::Udp4]);
     settings.set_interface_filter(Box::new(|name| name == "lo"));
-    build_peer_connection(settings).await
+    build_peer_connection(settings, media_engine).await
 }
 
-async fn build_peer_connection(settings: SettingEngine) -> RTCPeerConnection {
-    let mut media_engine = MediaEngine::default();
-    media_engine.register_default_codecs().unwrap();
+async fn build_peer_connection(
+    settings: SettingEngine,
+    mut media_engine: MediaEngine,
+) -> RTCPeerConnection {
     let interceptors = register_default_interceptors(Registry::new(), &mut media_engine).unwrap();
     APIBuilder::new()
         .with_media_engine(media_engine)

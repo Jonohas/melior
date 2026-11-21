@@ -9,6 +9,7 @@ import {
     type TrackDiff,
     type TracksBySession,
 } from '@/features/conference/domain';
+import { addAudioSection, type SectionInit } from './audio-sections';
 import { createIceCandidateQueue } from './ice-candidate-queue';
 import type { StatsSource } from './stats-sampler';
 import { createUplink } from './uplink';
@@ -183,11 +184,23 @@ export const createPeerSession = ({
         uplinkTimer = setTimeout(() => void uplink.reapply(), 0);
     };
 
+    /** A send-only section of our own for one of the screen's tracks. */
+    const addScreenSection = (track: MediaStreamTrack, screen: MediaStream): RTCRtpTransceiver => {
+        const init: SectionInit = { direction: 'sendonly', streams: [screen] };
+        if (track.kind === 'audio') return addAudioSection(connection, track, init);
+        return connection.addTransceiver(track, init);
+    };
+
+    /** The microphone's section is made directly so it gets its priority and RED; the camera's by `addTrack`. */
+    const addInput = (track: MediaStreamTrack, stream: MediaStream): RTCRtpSender => {
+        if (track.kind !== 'audio') return connection.addTrack(track, stream);
+        return addAudioSection(connection, track, { direction: 'sendrecv', streams: [stream] }).sender;
+    };
+
     // The camera's and the microphone's senders, to switch what they send without a new negotiation.
     const inputSenders = new Map<string, RTCRtpSender>();
     if (localStream) {
-        for (const track of localStream.getTracks())
-            inputSenders.set(track.kind, connection.addTrack(track, localStream));
+        for (const track of localStream.getTracks()) inputSenders.set(track.kind, addInput(track, localStream));
     }
 
     return {
@@ -241,9 +254,7 @@ export const createPeerSession = ({
             // on its own sending sections. A section of our own is one the server did not create. The picture
             // goes first, so the server has the sharer's camera and microphone before either screen track.
             const tracks = [video, ...screen.getAudioTracks().slice(0, 1)];
-            screenSenders = tracks.map(
-                (track) => connection.addTransceiver(track, { direction: 'sendonly', streams: [screen] }).sender,
-            );
+            screenSenders = tracks.map((track) => addScreenSection(track, screen).sender);
             // A paused uplink covers the new sender like the others.
             reapplyUplinkSoon();
         },

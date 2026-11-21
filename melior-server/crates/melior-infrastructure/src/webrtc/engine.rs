@@ -1,4 +1,5 @@
 use super::backend;
+use super::codecs;
 use super::forwarder::ForwarderRegistry;
 use super::session::WebRtcSession;
 use async_trait::async_trait;
@@ -20,7 +21,7 @@ pub struct WebRtcMediaEngine {
 impl WebRtcMediaEngine {
     pub fn new() -> Result<Self, MediaError> {
         let mut media_engine = RtcMediaEngine::default();
-        media_engine.register_default_codecs().map_err(backend)?;
+        codecs::register(&mut media_engine).map_err(backend)?;
         // NACK, RTCP reports and TWCC feedback: without these there is no loss recovery.
         let interceptors =
             register_default_interceptors(Registry::new(), &mut media_engine).map_err(backend)?;

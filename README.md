@@ -445,6 +445,14 @@ a section's stream id to change, clients attribute media by the `tracks` list,
 never by stream id. On a switch the server continues the section's RTP sequence
 numbers and timestamps, so receivers see one uninterrupted stream.
 
+Audio is sent as RED (RFC 2198) where the browser has it: every packet repeats
+the frame before it, so one lost packet costs no sound. Audio has no
+retransmission, and the sender's Opus FEC only reacts to loss on its own uplink.
+The client puts RED first on its audio sections and sends audio at high
+priority. The server forwards RED to a participant whose connection negotiated
+it, with the blocks renumbered to that participant's Opus payload type, and only
+the current frame, as plain Opus, to one whose connection did not.
+
 ### Mesh
 
 Small rooms send media directly between browsers; the server decides when, and

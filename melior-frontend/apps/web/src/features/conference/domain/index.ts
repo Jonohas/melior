@@ -1,3 +1,4 @@
+export { redFirst } from './audio-codecs';
 export {
     type CallPreferences,
     DEFAULT_CALL_PREFERENCES,

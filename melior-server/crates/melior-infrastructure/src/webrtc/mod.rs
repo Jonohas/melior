@@ -1,8 +1,10 @@
 //! The media plane, implemented with webrtc-rs.
 
+mod codecs;
 mod engine;
 mod forwarder;
 mod offer;
+mod red;
 mod session;
 
 pub use engine::WebRtcMediaEngine;
