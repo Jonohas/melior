@@ -1,6 +1,6 @@
 use super::{
     ChannelId, ClientOffer, DomainError, Effects, LinkClose, Links, MeshPolicy, Negotiation,
-    RoomPlan, RoomTarget, SessionId, Track, TrackId, TrackSource, VoiceState,
+    RoomPlan, RoomTarget, SessionId, SyncGroup, Track, TrackId, TrackSource, VoiceState,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -204,6 +204,15 @@ impl Room {
             .flat_map(|participant| participant.published.iter())
             .find(|track| &track.id == track_id)
             .map(|track| track.source)
+    }
+
+    /// The tracks a receiver plays in step with this one, if it is still published:
+    /// its publisher's camera and microphone, or its publisher's screen and its sound.
+    #[must_use]
+    pub fn sync_group_of(&self, track_id: &TrackId) -> Option<SyncGroup> {
+        let publisher = self.publisher_of(track_id)?;
+        let source = self.source_of(track_id)?;
+        Some(SyncGroup::new(publisher.clone(), source))
     }
 
     /// Adds a published track. Returns the participants that now have to receive it.
@@ -591,5 +600,29 @@ mod tests {
         let (_carol, existing) = join_ready(&mut room);
         let sources: Vec<TrackSource> = existing.iter().map(|t| t.source).collect();
         assert_eq!(sources, [TrackSource::Camera, TrackSource::Screen]);
+    }
+
+    #[test]
+    fn a_publishers_camera_and_microphone_are_in_step_and_its_screen_apart() {
+        let mut room = room();
+        let (alice, _) = join_ready(&mut room);
+        let (bob, _) = join_ready(&mut room);
+        let microphone = Track::new(TrackId::generate(), MediaKind::Audio);
+        let camera = video();
+        let screen = video();
+        let bobs_camera = video();
+        for track in [&microphone, &camera, &screen] {
+            room.publish(&alice, track.clone()).unwrap();
+        }
+        room.publish(&bob, bobs_camera.clone()).unwrap();
+
+        let group = |track: &Track| room.sync_group_of(&track.id).unwrap();
+        assert_eq!(group(&microphone), SyncGroup::new(alice.clone(), TrackSource::Camera));
+        assert_eq!(group(&camera), group(&microphone));
+        assert_eq!(group(&screen), SyncGroup::new(alice, TrackSource::Screen));
+        assert_eq!(group(&bobs_camera), SyncGroup::new(bob.clone(), TrackSource::Camera));
+
+        room.unpublish(&bob, &bobs_camera.id);
+        assert_eq!(room.sync_group_of(&bobs_camera.id), None);
     }
 }

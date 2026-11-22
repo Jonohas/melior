@@ -377,6 +377,25 @@ impl ConferenceService {
             .clone()
     }
 
+    /// Starts sending a track to a subscriber, in step with the rest of its sync group.
+    /// Returns whether it will be sent; when it cannot be, the room forgets the
+    /// subscription.
+    async fn subscribe(room: &mut Room, subscriber: &Session, track_id: &TrackId) -> bool {
+        let subscriber_id = &subscriber.id;
+        let Some(group) = room.sync_group_of(track_id) else {
+            room.subscription_failed(subscriber_id, track_id);
+            return false;
+        };
+        match subscriber.media.subscribe(track_id, &group).await {
+            Ok(()) => true,
+            Err(error) => {
+                warn!(session = %subscriber_id, track = %track_id, %error, "subscribe failed");
+                room.subscription_failed(subscriber_id, track_id);
+                false
+            }
+        }
+    }
+
     fn is_current_room(&self, channel_id: &ChannelId, cell: &RoomCell) -> bool {
         lock(&self.rooms).get(channel_id).is_some_and(|current| Arc::ptr_eq(current, cell))
     }
@@ -406,13 +425,7 @@ impl MediaEvents for ConferenceService {
         };
         let mut subscribed = false;
         for track in existing {
-            match session.media.subscribe(&track.id).await {
-                Ok(()) => subscribed = true,
-                Err(error) => {
-                    warn!(session = %session_id, track = %track.id, %error, "subscribe failed");
-                    room.subscription_failed(session_id, &track.id);
-                }
-            }
+            subscribed |= Self::subscribe(&mut room, &session, &track.id).await;
         }
         if subscribed {
             self.renegotiate(&mut room, &session).await;
@@ -440,12 +453,8 @@ impl MediaEvents for ConferenceService {
             let Some(subscriber) = self.session(&subscriber_id) else {
                 continue;
             };
-            match subscriber.media.subscribe(&track.id).await {
-                Ok(()) => self.renegotiate(&mut room, &subscriber).await,
-                Err(error) => {
-                    warn!(session = %subscriber_id, track = %track.id, %error, "subscribe failed");
-                    room.subscription_failed(&subscriber_id, &track.id);
-                }
+            if Self::subscribe(&mut room, &subscriber, &track.id).await {
+                self.renegotiate(&mut room, &subscriber).await;
             }
         }
     }

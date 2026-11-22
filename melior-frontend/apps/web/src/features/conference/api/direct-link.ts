@@ -15,6 +15,7 @@ import {
     type ScreenTracks,
     type SectionSenders,
     sectionOf,
+    syncStreams,
 } from './direct-sections';
 import { createDirectSignals, makeAnswer, makeOffer } from './direct-signals';
 import type { Protect } from './e2ee-transforms';
@@ -86,6 +87,8 @@ export const createDirectLink = ({
     const candidates = createIceCandidateQueue(connection, 'direct');
     // Filled in as the sections are attached, so a change during the attach finds the senders already there.
     const senders: SectionSenders = { ...NO_SENDERS };
+    // What this side's sections announce, so the peer plays each group's sound and picture in step.
+    const streams = syncStreams(localStream);
     // The camera is left to congestion control on a link; only the screen gets settings of its own.
     const parameters = createUplink(connection, (sender) =>
         sender === senders.screen ? senderPolicy('screen', 'direct') : null,
@@ -120,7 +123,7 @@ export const createDirectLink = ({
         start: async () => {
             if (!offerer || started) return;
             started = true;
-            Object.assign(senders, addOfferedSections(connection, local(), localStream));
+            Object.assign(senders, addOfferedSections(connection, local(), localStream, streams));
             protect(connection);
             signals.sendDescription('peer_offer', await makeOffer(connection));
         },
@@ -130,7 +133,7 @@ export const createDirectLink = ({
             await connection.setRemoteDescription({ type: 'offer', sdp });
             protect(connection);
             // After the offer, so the tracks ride the offer's transceivers.
-            await attachAnsweredSections(connection, local, senders);
+            await attachAnsweredSections(connection, local, senders, streams);
             await candidates.flush();
             signals.sendDescription('peer_answer', await makeAnswer(connection));
             void parameters.reapply();

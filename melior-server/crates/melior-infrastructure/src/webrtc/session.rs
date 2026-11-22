@@ -1,12 +1,17 @@
 use super::backend;
+use super::clock::PublisherClock;
 use super::codecs::{ReceiverAudio, outlet_codec};
 use super::forwarder::{Forwarder, ForwarderRegistry, OutletTrack};
 use super::offer::sections_not_sending;
 use async_trait::async_trait;
 use melior_application::{MediaError, MediaEvents, MediaOffer, MediaSession};
-use melior_domain::{IceCandidate, MediaKind, Sdp, SessionId, Track, TrackId};
+use melior_domain::{
+    IceCandidate, MediaKind, Sdp, SectionChoice, SectionView, SessionId, StreamLabel, SyncGroup,
+    Track, TrackId, choose_section,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
@@ -16,12 +21,16 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtcp::receiver_report::ReceiverReport;
+use webrtc::rtp::extension::abs_send_time_extension::unix2ntp;
 use webrtc::rtp_transceiver::RTCRtpTransceiver;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
 use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_remote::TrackRemote;
+
+/// How often an outlet tells its receiver which RTP time is which wall-clock time.
+const SENDER_REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// One media section of the connection that sends a track to the participant.
 ///
@@ -31,6 +40,11 @@ use webrtc::track::track_remote::TrackRemote;
 /// however many participants come and go.
 struct Outlet {
     kind: MediaKind,
+    /// The section's stream id, fixed for its life: a receiver plays the sections
+    /// that share it in step.
+    label: StreamLabel,
+    /// The sync group of the track it carries; `None` while idle.
+    group: Option<SyncGroup>,
     /// The codec the section was negotiated for; it only carries tracks of that codec.
     mime_type: String,
     track: Arc<OutletTrack>,
@@ -93,7 +107,9 @@ impl WebRtcSession {
         Self::report_ice_candidates(&id, &connection, events.clone());
         Self::report_connection_state(&id, &connection, events.clone());
         let incoming = IncomingTracks::default();
-        Self::forward_published_tracks(&id, &connection, &forwarders, &incoming, events);
+        // Puts the client's sender reports on the SFU's clock, for all its tracks.
+        let clock = Arc::new(PublisherClock::default());
+        Self::forward_published_tracks(&id, &connection, &forwarders, &incoming, &clock, events);
 
         Self {
             incoming,
@@ -149,14 +165,16 @@ impl WebRtcSession {
         connection: &Arc<RTCPeerConnection>,
         forwarders: &ForwarderRegistry,
         incoming: &IncomingTracks,
+        clock: &Arc<PublisherClock>,
         events: Weak<dyn MediaEvents>,
     ) {
         let id = id.clone();
         let incoming = incoming.clone();
         let publisher = Arc::downgrade(connection);
         let forwarders = forwarders.clone();
+        let clock = clock.clone();
 
-        connection.on_track(Box::new(move |remote: Arc<TrackRemote>, _, transceiver| {
+        connection.on_track(Box::new(move |remote: Arc<TrackRemote>, receiver, transceiver| {
             let kind = match remote.kind() {
                 RTPCodecType::Audio => MediaKind::Audio,
                 RTPCodecType::Video => MediaKind::Video,
@@ -166,11 +184,17 @@ impl WebRtcSession {
             let existing = Self::layer_of(&incoming, &remote, &transceiver);
             let added = existing.is_none();
             let forwarder = existing.unwrap_or_else(|| {
-                let forwarder = Arc::new(Forwarder::new(&remote, kind, publisher.clone()));
+                let forwarder =
+                    Arc::new(Forwarder::new(&remote, kind, publisher.clone(), clock.clone()));
                 forwarders.insert(forwarder.clone());
                 lock(&incoming).push(Incoming { forwarder: forwarder.clone(), transceiver });
                 forwarder
             });
+
+            // The stream's sender reports, which its outlets pass on for lip sync.
+            let reports = forwarder.clone();
+            let rid = remote.rid().to_owned();
+            tokio::spawn(async move { reports.read_reports(receiver, rid).await });
 
             let id = id.clone();
             let incoming = incoming.clone();
@@ -274,11 +298,60 @@ impl WebRtcSession {
         });
     }
 
-    /// Opens a new media section sending `forwarder`'s track.
-    async fn open_outlet(&self, forwarder: &Arc<Forwarder>) -> Result<Outlet, MediaError> {
+    /// Tells the participant, once a second while the outlet carries a track, which
+    /// of its RTP times is which wall-clock time, as the publisher reported it. Ends
+    /// with the outlet or the connection.
+    fn send_sender_reports(
+        connection: Weak<RTCPeerConnection>,
+        sender: Arc<RTCRtpSender>,
+        track: Weak<OutletTrack>,
+        carrying: Weak<Mutex<Option<Arc<Forwarder>>>>,
+    ) {
+        tokio::spawn(async move {
+            let parameters = sender.get_parameters().await;
+            let Some(ssrc) = parameters.encodings.first().map(|encoding| encoding.ssrc) else {
+                return;
+            };
+            drop(sender);
+            let mut ticks = tokio::time::interval(SENDER_REPORT_INTERVAL);
+            loop {
+                ticks.tick().await;
+                let (Some(connection), Some(track), Some(carrying)) =
+                    (connection.upgrade(), track.upgrade(), carrying.upgrade())
+                else {
+                    return;
+                };
+                match connection.connection_state() {
+                    RTCPeerConnectionState::Closed => return,
+                    RTCPeerConnectionState::Connected => {}
+                    _ => continue,
+                }
+                if lock(&carrying).is_none() {
+                    continue;
+                }
+                let Some(report) = track.sender_report(ssrc, unix2ntp(SystemTime::now())) else {
+                    continue;
+                };
+                let packets: [Box<dyn webrtc::rtcp::packet::Packet + Send + Sync>; 1] =
+                    [Box::new(report)];
+                if let Err(error) = connection.write_rtcp(&packets).await {
+                    debug!(%error, "sender report failed");
+                }
+            }
+        });
+    }
+
+    /// Opens a new media section sending `forwarder`'s track, under the stream id
+    /// `label`.
+    async fn open_outlet(
+        &self,
+        forwarder: &Arc<Forwarder>,
+        label: StreamLabel,
+        group: &SyncGroup,
+    ) -> Result<Outlet, MediaError> {
         let receiver = self.receiver_audio().await;
         let (codec, repack) = outlet_codec(&forwarder.codec, &receiver);
-        let track = Arc::new(OutletTrack::new(codec, repack));
+        let track = Arc::new(OutletTrack::new(codec, repack, &label));
         let local: Arc<dyn TrackLocal + Send + Sync> = track.local.clone();
         let sender = self.connection.add_track(local).await.map_err(backend)?;
 
@@ -293,10 +366,18 @@ impl WebRtcSession {
             owner.ok_or_else(|| MediaError::Backend("new sender has no transceiver".to_owned()))?;
 
         let carrying = Arc::new(Mutex::new(Some(forwarder.clone())));
+        Self::send_sender_reports(
+            Arc::downgrade(&self.connection),
+            sender.clone(),
+            Arc::downgrade(&track),
+            Arc::downgrade(&carrying),
+        );
         Self::relay_keyframe_requests(sender, track.clone(), carrying.clone());
         forwarder.attach(track.clone());
         Ok(Outlet {
             kind: forwarder.kind,
+            label,
+            group: Some(group.clone()),
             mime_type: forwarder.codec.mime_type.clone(),
             track,
             transceiver,
@@ -372,7 +453,7 @@ impl MediaSession for WebRtcSession {
         Ok(())
     }
 
-    async fn subscribe(&self, track: &TrackId) -> Result<(), MediaError> {
+    async fn subscribe(&self, track: &TrackId, group: &SyncGroup) -> Result<(), MediaError> {
         let forwarder =
             self.forwarders.get(track).ok_or_else(|| MediaError::TrackNotFound(track.clone()))?;
 
@@ -380,13 +461,36 @@ impl MediaSession for WebRtcSession {
         if outlets.active.contains_key(track) {
             return Ok(());
         }
-        let outlet = match outlets.idle.iter().position(|outlet| outlet.can_carry(&forwarder)) {
-            Some(index) => {
-                let outlet = outlets.idle.swap_remove(index);
-                Self::reuse_outlet(&outlet, &forwarder).await;
-                outlet
+        let choice = {
+            let active = outlets.active.values().map(|outlet| SectionView {
+                label: &outlet.label,
+                carrying: outlet.group.as_ref(),
+                fits: false,
+            });
+            let idle = outlets.idle.iter().map(|outlet| SectionView {
+                label: &outlet.label,
+                carrying: None,
+                fits: outlet.can_carry(&forwarder),
+            });
+            let sections: Vec<SectionView<'_>> = active.chain(idle).collect();
+            choose_section(group, &sections)
+        };
+        let outlet = match choice {
+            SectionChoice::Reuse(index) => {
+                let idle_index = index.checked_sub(outlets.active.len());
+                match idle_index.filter(|&i| i < outlets.idle.len()) {
+                    Some(i) => {
+                        let mut outlet = outlets.idle.swap_remove(i);
+                        outlet.group = Some(group.clone());
+                        Self::reuse_outlet(&outlet, &forwarder).await;
+                        outlet
+                    }
+                    None => {
+                        return Err(MediaError::Backend("chosen section is not idle".to_owned()));
+                    }
+                }
             }
-            None => self.open_outlet(&forwarder).await?,
+            SectionChoice::Open(label) => self.open_outlet(&forwarder, label, group).await?,
         };
         outlets.active.insert(track.clone(), outlet);
         drop(outlets);
@@ -402,7 +506,8 @@ impl MediaSession for WebRtcSession {
             .retain(|forwarder| &forwarder.id != track);
 
         let mut outlets = self.outlets.lock().await;
-        if let Some(outlet) = outlets.active.remove(track) {
+        if let Some(mut outlet) = outlets.active.remove(track) {
+            outlet.group = None;
             outlet.quiet().await;
             outlets.idle.push(outlet);
         }

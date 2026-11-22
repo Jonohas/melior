@@ -15,6 +15,13 @@ export class FakeSender {
     /** Runs while a `replaceTrack` is in flight, before it settles. */
     duringReplace: (() => void) | null = null;
 
+    /** The streams the section announces, from `addTrack`, `addTransceiver` or `setStreams`. */
+    streams: unknown[] = [];
+
+    setStreams(...streams: unknown[]) {
+        this.streams = streams;
+    }
+
     /** The encodings and degradation preference as `setParameters` last left them. */
     encodings: Record<string, unknown>[] = [{ active: true }];
     degradationPreference: string | undefined;
@@ -132,10 +139,11 @@ export class FakePeerConnection {
     }
 
     /** Like Chromium: reuses a section that never sent and matches the kind, else adds one. */
-    addTrack(track: FakeTrack) {
+    addTrack(track: FakeTrack, ...streams: unknown[]) {
         this.tracksAdded += 1;
         const idle = this.transceivers.find((t) => t.receiver.track.kind === track.kind && !t.hasSent);
-        if (!idle) return this.addTransceiver(track, { direction: 'sendrecv' }).sender;
+        if (!idle) return this.addTransceiver(track, { direction: 'sendrecv', streams }).sender;
+        idle.sender.streams = streams;
         idle.sender.track = track;
         idle.hasSent = true;
         idle.direction = 'sendrecv';
@@ -151,12 +159,17 @@ export class FakePeerConnection {
 
     addTransceiver(
         source: FakeTrack | string,
-        init: { direction: string; sendEncodings?: Array<{ rid?: string } & Record<string, unknown>> },
+        init: {
+            direction: string;
+            sendEncodings?: Array<{ rid?: string } & Record<string, unknown>>;
+            streams?: unknown[];
+        },
     ) {
         const track = typeof source === 'string' ? null : source;
         const kind = typeof source === 'string' ? source : source.kind;
         const index = this.transceivers.length;
         const transceiver = new FakeTransceiver(kind, track, init.direction, index, init.sendEncodings);
+        transceiver.sender.streams = init.streams ?? [];
         this.transceivers.push(transceiver);
         return transceiver;
     }

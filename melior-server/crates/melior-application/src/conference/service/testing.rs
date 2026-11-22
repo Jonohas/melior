@@ -4,7 +4,7 @@ use super::*;
 use crate::conference::{
     Admission, MediaOffer, PresenceSink, PresenceUpdate, SingleInstance, StaticIceServers,
 };
-use melior_domain::{ChannelMedia, MediaKind, UserId};
+use melior_domain::{ChannelMedia, MediaKind, SyncGroup, UserId};
 
 /// Records what the application asks of the media plane.
 #[derive(Default)]
@@ -34,6 +34,8 @@ impl MediaEngine for FakeEngine {
 #[derive(Default)]
 pub(super) struct FakeSession {
     pub(super) subscribed: Mutex<Vec<TrackId>>,
+    /// The sync group each subscription was made with, in order.
+    pub(super) groups: Mutex<Vec<(TrackId, SyncGroup)>>,
     pub(super) offers_created: Mutex<usize>,
     pub(super) closed: Mutex<bool>,
     pub(super) reject_answers: Mutex<bool>,
@@ -76,8 +78,9 @@ impl MediaSession for FakeSession {
         Ok(())
     }
 
-    async fn subscribe(&self, track: &TrackId) -> Result<(), MediaError> {
+    async fn subscribe(&self, track: &TrackId, group: &SyncGroup) -> Result<(), MediaError> {
         lock(&self.subscribed).push(track.clone());
+        lock(&self.groups).push((track.clone(), group.clone()));
         Ok(())
     }
 

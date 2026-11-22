@@ -11,7 +11,8 @@ use crate::conference::{
 };
 use async_trait::async_trait;
 use melior_domain::{
-    ChannelKind, CommunityId, IceCandidate, InviteSettings, MeshPolicy, RoomPlan, Sdp, TrackId,
+    ChannelKind, CommunityId, IceCandidate, InviteSettings, MeshPolicy, RoomPlan, Sdp, SyncGroup,
+    TrackId,
 };
 use std::sync::Weak;
 
@@ -43,7 +44,7 @@ impl MediaSession for NoMedia {
     async fn add_ice_candidate(&self, _candidate: IceCandidate) -> Result<(), MediaError> {
         Ok(())
     }
-    async fn subscribe(&self, _track: &TrackId) -> Result<(), MediaError> {
+    async fn subscribe(&self, _track: &TrackId, _group: &SyncGroup) -> Result<(), MediaError> {
         Ok(())
     }
     async fn unsubscribe(&self, _track: &TrackId) -> Result<(), MediaError> {

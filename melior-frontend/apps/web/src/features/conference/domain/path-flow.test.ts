@@ -1,5 +1,20 @@
 import { describe, expect, test } from 'vitest';
-import { countInbound, directKindOf, FLOW_WINDOW_MS, flowingKinds, sfuSourceOf, updateFlow } from './path-flow';
+import {
+    countInbound,
+    DIRECT_SECTIONS,
+    directKindOf,
+    FLOW_WINDOW_MS,
+    flowingKinds,
+    SYNC_GROUP,
+    sfuSourceOf,
+    updateFlow,
+} from './path-flow';
+
+describe('SYNC_GROUP', () => {
+    test('pairs the microphone with the camera and the screen with its sound, one audio section each', () => {
+        expect(DIRECT_SECTIONS.map((section) => SYNC_GROUP[section])).toEqual(['camera', 'camera', 'screen', 'screen']);
+    });
+});
 
 describe('sfuSourceOf', () => {
     const sections = [

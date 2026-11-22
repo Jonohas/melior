@@ -6,10 +6,11 @@ use async_trait::async_trait;
 use melior_application::{MediaEngine, MediaError, MediaEvents, MediaSession};
 use melior_domain::SessionId;
 use std::sync::{Arc, Weak};
-use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::interceptor_registry::{configure_nack, configure_twcc_receiver_only};
 use webrtc::api::media_engine::MediaEngine as RtcMediaEngine;
 use webrtc::api::{API, APIBuilder};
 use webrtc::interceptor::registry::Registry;
+use webrtc::interceptor::report::receiver::ReceiverReport;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpHeaderExtensionCapability, RTPCodecType};
 use webrtc::sdp::extmap::{SDES_MID_URI, SDES_RTP_STREAM_ID_URI};
@@ -32,14 +33,24 @@ fn register_simulcast_extensions(media_engine: &mut RtcMediaEngine) -> Result<()
     Ok(())
 }
 
+/// webrtc-rs's default interceptors minus its sender reports: NACK, receiver
+/// reports and TWCC feedback, without which there is no loss recovery. Its sender
+/// reports would pair each RTP time with the moment the SFU forwarded the packet,
+/// which hides how much later than its sound the publisher sent a frame. Outlets
+/// pass on the publisher's own reports instead (`OutletTrack::sender_report`).
+fn interceptors(media_engine: &mut RtcMediaEngine) -> Result<Registry, MediaError> {
+    let registry = configure_nack(Registry::new(), media_engine);
+    let mut registry = configure_twcc_receiver_only(registry, media_engine).map_err(backend)?;
+    registry.add(Box::new(ReceiverReport::builder()));
+    Ok(registry)
+}
+
 impl WebRtcMediaEngine {
     pub fn new() -> Result<Self, MediaError> {
         let mut media_engine = RtcMediaEngine::default();
         codecs::register(&mut media_engine).map_err(backend)?;
         register_simulcast_extensions(&mut media_engine)?;
-        // NACK, RTCP reports and TWCC feedback: without these there is no loss recovery.
-        let interceptors =
-            register_default_interceptors(Registry::new(), &mut media_engine).map_err(backend)?;
+        let interceptors = interceptors(&mut media_engine)?;
         let api = APIBuilder::new()
             .with_media_engine(media_engine)
             .with_interceptor_registry(interceptors)

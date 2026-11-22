@@ -161,6 +161,8 @@ export {
     type InboundSource,
     type MediaKind,
     type ReceiverSection,
+    SYNC_GROUP,
+    type SyncGroup,
     sfuSourceOf,
     updateFlow,
 } from './path-flow';
