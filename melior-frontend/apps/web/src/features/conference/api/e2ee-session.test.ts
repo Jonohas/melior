@@ -39,7 +39,8 @@ const createRealm = (vouching = true) => {
         ownCertificate: async () => certificate,
         renewIfNeeded: async () => false,
         verify: async (token, device, username) => {
-            if (!vouching || token === null) return 'unverified';
+            if (!vouching) return 'unchecked';
+            if (token === null) return 'unverified';
             const entry = issued.get(token);
             return entry?.device === toBase64Url(device) && entry.username === username ? 'verified' : 'invalid';
         },
@@ -169,12 +170,13 @@ describe('the end-to-end key exchange', () => {
         expect(alice.trust.get('c')).toBe('invalid');
     });
 
-    test('without a realm, keys flow and every device is unverified', async () => {
+    test('without a realm, keys flow and every device is unchecked, this one included', async () => {
         const realm = createRealm(false);
         const alice = await party('a', 'alice', realm);
         const bob = await party('b', 'bob', realm);
         await meet(alice, bob);
-        expect(alice.trust.get('b')).toBe('unverified');
+        expect(alice.trust.get('b')).toBe('unchecked');
+        expect(alice.trust.get('a')).toBe('unchecked');
         expect(await canDecrypt(alice, bob)).toBe(true);
     });
 

@@ -27,6 +27,12 @@ import {
 import type { Voucher } from './e2ee-vouch';
 import type { WorkerCommand } from './e2ee-worker';
 
+/** What the badge says about this browser's own device: whether the others can verify it at all. */
+const ownTrust = (vouching: boolean, certificate: string | null): DeviceTrust => {
+    if (!vouching) return 'unchecked';
+    return certificate ? 'verified' : 'unverified';
+};
+
 /** Key messages that wait for the sender's hello; more than this from one peer are dropped. */
 const MAX_WAITING_KEYS = 4;
 /** Hellos from senders the server has not announced yet; more than this are dropped. */
@@ -95,7 +101,7 @@ export const startE2eeSession = async (options: E2eeSessionOptions): Promise<E2e
     };
     options.post({ type: 'send-key', keyId: own.current.keyId, key: own.current.key });
     // The own entry tells the person whether the others can verify this device at all.
-    options.onTrust(options.selfId, own.certificate ? 'verified' : 'unverified');
+    options.onTrust(options.selfId, ownTrust(options.voucher.vouching, own.certificate));
     return createExchange(options, own);
 };
 

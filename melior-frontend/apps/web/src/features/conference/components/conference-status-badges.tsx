@@ -56,7 +56,12 @@ const MediaPathBadge = ({
     );
 };
 
-const ENCRYPTION_VARIANT = { secure: 'success', waiting: 'secondary', attention: 'warning' } as const;
+const ENCRYPTION_VARIANT = {
+    secure: 'success',
+    unchecked: 'outline',
+    waiting: 'secondary',
+    attention: 'warning',
+} as const;
 
 /** Whether the call's media is encrypted end to end, and whose devices need a second look. */
 const EncryptionBadge = ({

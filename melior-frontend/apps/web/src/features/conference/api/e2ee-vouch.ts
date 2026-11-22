@@ -111,7 +111,7 @@ const NO_REALM: Voucher = {
     vouching: false,
     ownCertificate: async () => null,
     renewIfNeeded: async () => false,
-    verify: async () => 'unverified',
+    verify: async () => 'unchecked',
 };
 
 /** The voucher of this page: the configured realm, or none (every device then counts as unverified). */

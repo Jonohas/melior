@@ -593,8 +593,9 @@ Chrome and Edge 141, Firefox 117 or Safari 15.4) does not join.
   screen. The token grants nothing (the client has no roles), lasts 12 hours,
   and is useless without the device's private key. The browser reads the
   realm's address from `/e2ee.json`, which the frontend serves (`E2EE_ISSUER`
-  below); without it there is no vouching, keys flow to everyone, and every
-  device counts as unverified.
+  below); without it there is no vouching: keys flow to everyone, and the badge
+  says **End-to-end encrypted** in outline, with a hint that this server does
+  not verify devices.
 - **Realm setup.** The `melior-e2ee` client is in
   `docker/keycloak/melior-realm.json`: public, PKCE, `dpop.bound.access.tokens`,
   no full scope, a 12-hour access token, and `<frontend>/e2ee-callback` as its
