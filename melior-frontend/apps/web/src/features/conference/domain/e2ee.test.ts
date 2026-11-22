@@ -112,6 +112,7 @@ describe('device trust', () => {
         expect(mayReceiveKeys('unverified', false)).toBe(true);
         expect(mayReceiveKeys('invalid', false)).toBe(false);
         expect(mayReceiveKeys('pending', false)).toBe(false);
+        expect(mayReceiveKeys('unchecked', false)).toBe(true);
     });
 });
 
@@ -155,6 +156,16 @@ describe('encryption summary', () => {
             unverified: [],
             invalid: ['alice'],
             self: false,
+        });
+    });
+
+    test('without a realm, devices are unchecked: encrypted, not a warning, and never the reload hint', () => {
+        expect(summarizeEncryption(people, { a: 'unchecked', b: 'unchecked' }, 'unchecked')).toEqual({
+            kind: 'unchecked',
+        });
+        expect(summarizeEncryption(people, { a: 'unchecked' }, 'unchecked')).toEqual({
+            kind: 'waiting',
+            peers: ['bob'],
         });
     });
 

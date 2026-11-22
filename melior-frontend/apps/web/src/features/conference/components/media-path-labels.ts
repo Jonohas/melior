@@ -34,6 +34,11 @@ export const encryptionLabel = (summary: Exclude<EncryptionSummary, { kind: 'alo
                 text: 'End-to-end encrypted',
                 hint: 'Only the people in this call can see and hear it. The login server vouches for every device; the call server forwards encrypted media.',
             };
+        case 'unchecked':
+            return {
+                text: 'End-to-end encrypted',
+                hint: 'Only the people in this call can see and hear it. This server does not verify devices, so a compromised server could still swap keys unnoticed.',
+            };
         case 'waiting':
             return { text: 'Exchanging keys', hint: `Waiting for the keys of ${list(summary.peers)}.` };
         case 'attention': {

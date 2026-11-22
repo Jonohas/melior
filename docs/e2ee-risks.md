@@ -52,8 +52,9 @@ What remains:
   can still be vouched for until the token expires. Revoking a user in
   Keycloak does not revoke a token already issued.
 - **Without `E2EE_ISSUER` there is no vouching.** The frontend then sends keys
-  to every device and the badge says every device is unverified: a server
-  that swaps keys is not caught.
+  to every device. The badge still says **End-to-end encrypted**, in outline,
+  and its hint says this server does not verify devices: a server that swaps
+  keys is not caught.
 
 How to strengthen it later: append every token the realm issues to an
 append-only log that an independent witness signs, and let each browser check
@@ -191,7 +192,10 @@ Also verified:
   **End-to-end encrypted**. With one browser unable to reach the silent login,
   the others show **Encrypted · unverified devices**, send it nothing and keep
   playing each other; its own badge says the same and it plays nothing. With no
-  `e2ee.json`, keys flow and every badge says the devices are unverified.
+  `e2ee.json`, keys flow and every badge says **End-to-end encrypted**
+  (outline, "this server does not verify devices"). Before 0.3.1 it said
+  **Encrypted · unverified devices** with the hint to reload, which was wrong
+  there: the others did send their media.
 
 - The vouching round trip with Keycloak on another site than the app
   (`127.0.0.1` against `localhost`) and third-party cookies blocked: Chromium

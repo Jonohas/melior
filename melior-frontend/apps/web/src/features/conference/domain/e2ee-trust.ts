@@ -3,16 +3,18 @@
  * DPoP-bound token the participant sends in its hello (see `e2ee-certificate.ts`):
  *
  * - `verified`: the realm vouches that this device belongs to the person the call shows. Media keys flow.
- * - `unverified`: no valid token. When the app is configured with a realm, this device gets no media key and sees
- *   nothing; without a realm (a development setup), keys flow and the badge says the devices are not verified.
+ * - `unverified`: the realm vouches for devices, and this one has no valid token: it gets no media key and sees
+ *   nothing.
+ * - `unchecked`: no realm vouches for devices on this server (`E2EE_ISSUER` is empty). Keys flow to every device,
+ *   and the call is encrypted, but a server that swaps keys would not be caught.
  * - `invalid`: the hello's signature, or the token, does not hold, or the token names someone else. No media key.
  * - `pending`: no hello yet.
  */
-export type DeviceTrust = 'verified' | 'unverified' | 'invalid' | 'pending';
+export type DeviceTrust = 'verified' | 'unverified' | 'unchecked' | 'invalid' | 'pending';
 
 /** Whether a participant of this trust may receive this browser's media key. */
 export const mayReceiveKeys = (trust: DeviceTrust, vouching: boolean): boolean =>
-    trust === 'verified' || (trust === 'unverified' && !vouching);
+    trust === 'verified' || trust === 'unchecked' || (trust === 'unverified' && !vouching);
 
 /** How many media keys of one sender a receiver keeps: the current one and those before a rotation. */
 export const KEYS_KEPT_PER_SENDER = 3;
@@ -41,6 +43,8 @@ export const keepNewestKeys = (held: readonly number[], added: number): { keep: 
 export type EncryptionSummary =
     | { kind: 'alone' }
     | { kind: 'secure' }
+    /** Encrypted, keys flowing, but this server does not verify devices. */
+    | { kind: 'unchecked' }
     | { kind: 'waiting'; peers: string[] }
     | { kind: 'attention'; unverified: string[]; invalid: string[]; self: boolean };
 
@@ -64,5 +68,7 @@ export const summarizeEncryption = (
         return { kind: 'attention', unverified, invalid, self: selfUnverified };
     }
     const pending = named('pending');
-    return pending.length > 0 ? { kind: 'waiting', peers: pending } : { kind: 'secure' };
+    if (pending.length > 0) return { kind: 'waiting', peers: pending };
+    const unchecked = self === 'unchecked' || named('unchecked').length > 0;
+    return unchecked ? { kind: 'unchecked' } : { kind: 'secure' };
 };
