@@ -15,6 +15,59 @@ export {
 } from './conference-state';
 export type { ConferenceStatus } from './conference-status';
 export {
+    CANDIDATE_TYPES,
+    type CandidateCounts,
+    type CandidateType,
+    candidateTypeOf,
+    countCandidate,
+    NO_CANDIDATES,
+} from './debug-candidates';
+export {
+    formatBitrate,
+    formatBytes,
+    formatCandidate,
+    formatCounts,
+    formatInOut,
+    formatPair,
+    timeOfDay,
+} from './debug-format';
+export { inferLinkRoute, type LinkRoute } from './debug-link-route';
+export { appendLog, DEBUG_LOG_LIMIT, type DebugDirection, type DebugLogEntry, formatSeconds } from './debug-log';
+export {
+    type CallSignals,
+    EMPTY_SIGNALS,
+    type InOut,
+    iceServerUrls,
+    type PeerSignals,
+    recordNote,
+    recordReceived,
+    recordSent,
+} from './debug-signals';
+export {
+    buildDebugSnapshot,
+    type CallDebugSnapshot,
+    type ConnectionDebug,
+    type ConnectionSample,
+    type DebugLogLine,
+    debugReport,
+    type LinkSample,
+    type PeerDebug,
+    type RoomDebug,
+    type SnapshotInput,
+} from './debug-snapshot';
+export {
+    type Bitrate,
+    type ByteSample,
+    bitrateBetween,
+    type CandidateInfo,
+    type ConnectionStates,
+    type SelectedPair,
+    type StatsEntry,
+    stateChanges,
+    summarizeTransport,
+    type TransportStats,
+} from './debug-stats';
+export {
     type DeviceInfo,
     type DeviceKind,
     type DeviceLists,
@@ -93,7 +146,6 @@ export {
     senderPolicy,
     VIDEO_CODEC,
 } from './encoding-policy';
-export { parseForceRelay } from './force-relay';
 export { isObject, isString, type JsonObject } from './parse-primitives';
 export { parseServerMessage } from './parse-server-message';
 export {
@@ -141,6 +193,7 @@ export {
 export { type RoomMediaPath, roomMediaPath } from './room-path';
 export { aspectOf, DEFAULT_SCREEN_ASPECT } from './screen-fit';
 export { parseScreenState, screenStateMessage, sharingPeers } from './screen-state';
+export { parseSearchFlag } from './search-flag';
 export type { SessionId } from './session-id';
 export type {
     ChatPayload,

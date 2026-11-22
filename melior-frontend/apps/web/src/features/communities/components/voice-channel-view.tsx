@@ -22,6 +22,7 @@ import {
     type VoiceSessionValue,
 } from '@/features/communities/hooks';
 import {
+    CallDebugPanel,
     ConferenceStatusBadges,
     LocalPreview,
     RemoteVideoGrid,
@@ -37,6 +38,8 @@ type VoiceChannelViewProps = {
     channel: Channel;
     /** Force all media through the TURN relay (diagnostics). */
     relay: boolean;
+    /** Show the call's debug panel (`?debug=true`). */
+    debug: boolean;
 };
 
 const CallNotices = ({ call }: { call: VoiceCall }) => {
@@ -125,10 +128,10 @@ const useGoElsewhere = (view: CommunityView, channel: Channel): (() => void) => 
     };
 };
 
-type CallViewProps = { channel: Channel; voice: VoiceSessionValue; onLeave: () => void };
+type CallViewProps = { channel: Channel; voice: VoiceSessionValue; debug: boolean; onLeave: () => void };
 
 /** The call you are in: the grid, its chat beside it, and the controls. */
-const CallView = ({ channel, voice, onLeave }: CallViewProps) => {
+const CallView = ({ channel, voice, debug, onLeave }: CallViewProps) => {
     const { roster } = useCommunityFeed();
     const { call } = voice;
     const { conference, chat, chatOpen, setChatOpen } = call;
@@ -205,6 +208,7 @@ const CallView = ({ channel, voice, onLeave }: CallViewProps) => {
                 videoQuality={conference.videoQuality}
                 setVideoQuality={conference.setVideoQuality}
             />
+            {debug && <CallDebugPanel debug={conference.debug} channelMedia={channel} />}
         </div>
     );
 };
@@ -213,7 +217,7 @@ const CallView = ({ channel, voice, onLeave }: CallViewProps) => {
  * A voice channel. Opening it joins its call (the call itself lives above the routes, so it goes on elsewhere);
  * the page shows the call while you are in it, why the server ended it, or a way to join again.
  */
-export const VoiceChannelView = ({ view, channel, relay }: VoiceChannelViewProps) => {
+export const VoiceChannelView = ({ view, channel, relay, debug }: VoiceChannelViewProps) => {
     const voice = useVoiceSession();
     const target = useMemo(
         () => ({
@@ -234,7 +238,7 @@ export const VoiceChannelView = ({ view, channel, relay }: VoiceChannelViewProps
             voice.leave();
             goElsewhere();
         };
-        return <CallView channel={channel} voice={voice} onLeave={leave} />;
+        return <CallView channel={channel} voice={voice} debug={debug} onLeave={leave} />;
     }
     const rejoin = (
         <Button type="button" variant="outline" onClick={() => voice.join(target)}>

@@ -25,6 +25,7 @@ import {
     type MessageContext,
     releaseConnection,
 } from './session-messages';
+import { type CallDebug, useCallRecorder } from './use-call-debug';
 import { type CallMedia, useCallMedia } from './use-call-media';
 import { type ScreenShare, useScreenShare } from './use-screen-share';
 import { useSpeaking } from './use-speaking';
@@ -52,6 +53,8 @@ type UseConferenceReturn = ConferenceState<MediaStream> &
         stopScreenShare: ScreenShare['stop'];
         /** Whether the own microphone picks up speech right now (always false while muted). */
         speaking: boolean;
+        /** For the debug panel (`?debug=true`); nothing is polled unless the panel samples it. */
+        debug: CallDebug;
     };
 
 /** Shown instead of joining in a browser without `RTCRtpScriptTransform`. */
@@ -92,6 +95,7 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
         e2ee: null,
         e2eeWaiting: null,
     });
+    const { recorder, debug } = useCallRecorder(connectionRef, forceRelay);
     const media = useCallMedia(connectionRef);
     const screen = useScreenShare(connectionRef);
     const { open: openMedia, adopt: adoptMedia, release: releaseMedia } = media;
@@ -126,6 +130,7 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
         let generation = 0;
 
         dispatch({ type: 'reset' });
+        recorder.reset();
         if (channelId === null) return;
         const room = channelId;
 
@@ -185,14 +190,18 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
         function connect() {
             if (disposed) return;
             const mine = generation;
-            connection.signalling = createSignallingClient({
+            const client = createSignallingClient({
                 channelId: room,
-                onMessage: (message) => handle(message, mine),
+                onMessage: (message) => {
+                    recorder.received(message);
+                    return handle(message, mine);
+                },
                 onClose: ({ opened }) => {
                     if (disposed || mine !== generation) return;
                     reconnector.onClosed(null, opened);
                 },
             });
+            connection.signalling = recorder.tap(client);
             dispatch({ type: 'socket_connecting' });
         }
 
@@ -230,7 +239,17 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
             releaseMedia();
             releaseScreen();
         };
-    }, [channelId, forceRelay, openMedia, adoptMedia, releaseMedia, resumeScreen, releaseScreen, screenStream]);
+    }, [
+        channelId,
+        forceRelay,
+        recorder,
+        openMedia,
+        adoptMedia,
+        releaseMedia,
+        resumeScreen,
+        releaseScreen,
+        screenStream,
+    ]);
 
     // A screen being shared takes the new frame rate at once, like the camera takes its quality.
     const { setVideoQuality: setMediaQuality } = media;
@@ -256,6 +275,7 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
         ...state,
         sendChat,
         speaking,
+        debug,
         activeDevices: media.activeDevices,
         changeInput: media.changeInput,
         microphoneMuted: media.microphoneMuted,

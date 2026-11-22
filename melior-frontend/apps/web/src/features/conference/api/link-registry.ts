@@ -44,6 +44,8 @@ export type LinkRegistry = {
      */
     replaceInput: (track: MediaStreamTrack) => Promise<void>;
     statsSources: () => StatsSource[];
+    /** The peers with an open link. */
+    peers: () => SessionId[];
 };
 
 export const createLinkRegistry = ({
@@ -125,6 +127,7 @@ export const createLinkRegistry = ({
             for (const peer of [...links.keys()]) close(peer);
         },
         statsSources: () => [...sources.values()],
+        peers: () => [...links.keys()],
         setScreen: async (next) => {
             const tracks = screenTracksOf(next);
             Object.assign(local, tracks);
