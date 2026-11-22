@@ -37,6 +37,14 @@ server {
                text/xml application/xml application/xml+rss text/javascript
                image/svg+xml;
 
+    # The realm that vouches for device keys, from E2EE_ISSUER and E2EE_CLIENT_ID. An empty issuer turns
+    # vouching off: calls stay encrypted, but no device counts as verified.
+    location = /e2ee.json {
+        default_type application/json;
+        add_header Cache-Control "no-store";
+        return 200 '{"issuer":"${E2EE_ISSUER}","clientId":"${E2EE_CLIENT_ID}"}';
+    }
+
     # Long cache for hashed assets emitted by Vite.
     location /assets/ {
         access_log off;

@@ -1,5 +1,5 @@
 use super::chat::ChatSendDto;
-use super::limiter::TokenBucket;
+use super::limiter::RelayLimits;
 use super::messages::{ClientMessage, CloseReason, SdpType, ServerMessage};
 use super::peer::{PeerCommand, Rejection};
 use super::writer::{finish, spawn_writer};
@@ -174,7 +174,7 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                 tokio::time::interval_at(tokio::time::Instant::now() + period, period);
             recheck.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-            let mut relay_limit = TokenBucket::for_relay(Instant::now());
+            let mut limits = RelayLimits::new(Instant::now());
 
             // The session id is bound to this socket: nothing a client sends can
             // make its messages act on another participant.
@@ -187,7 +187,7 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                                 chat: &chat,
                                 permissions: guest.grant.permissions,
                             };
-                            dispatch(&services, &session_id, &outbox, &mut relay_limit, text.as_str())
+                            dispatch(&services, &session_id, &outbox, &mut limits, text.as_str())
                                 .await;
                         }
                         Some(Ok(Message::Close(_)) | Err(_)) | None => break,
@@ -232,7 +232,7 @@ async fn dispatch(
     services: &Services<'_>,
     session_id: &SessionId,
     outbox: &Outbox,
-    relay_limit: &mut TokenBucket,
+    limits: &mut RelayLimits,
     text: &str,
 ) {
     let message = match serde_json::from_str::<ClientMessage>(text) {
@@ -244,7 +244,7 @@ async fn dispatch(
         }
     };
 
-    if message.is_relay() && !relay_limit.try_take(Instant::now()) {
+    if !limits.allows(&message, Instant::now()) {
         debug!(session = %session_id, "relay message over the rate limit dropped");
         return;
     }
@@ -271,6 +271,7 @@ async fn dispatch(
         ClientMessage::PeerOffer(dto) => peer(service, session_id, dto.validate_offer()).await,
         ClientMessage::PeerAnswer(dto) => peer(service, session_id, dto.validate_answer()).await,
         ClientMessage::PeerIce(dto) => peer(service, session_id, dto.validate()).await,
+        ClientMessage::E2ee(dto) => peer(service, session_id, dto.validate()).await,
         ClientMessage::Echo(text) => {
             outbox.push(ServerMessage::Echo(text));
             Ok(())
@@ -315,6 +316,10 @@ async fn peer(
         }
         PeerCommand::Ice { to, candidate } => {
             service.relay_peer_ice(session_id, &to, candidate).await;
+            Ok(())
+        }
+        PeerCommand::Key { to, envelope } => {
+            service.relay_key(session_id, &to, envelope).await;
             Ok(())
         }
     }

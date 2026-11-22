@@ -362,6 +362,8 @@ JSON messages of the form `{channel, payload}`:
   - `peer_offer` (`from`, `sdp`), `peer_answer` (`from`, `sdp`): the relayed
     offer and answer of the direct link with `from`.
   - `peer_ice` (`from`, `candidate`): a relayed ICE candidate for that link.
+  - `e2ee` (`from`, `payload`): an end-to-end key message from `from`,
+    relayed unread (see [End-to-end encryption](#end-to-end-encryption)).
   - `closed` (`reason`): the last message before the server closes the socket.
     `session_ended` (log in again), `removed` (no access to this channel any
     more: kicked, a permission lost, or the channel deleted), `room_moved`
@@ -375,6 +377,12 @@ JSON messages of the form `{channel, payload}`:
   - `peer_offer` (`to`, `sdp`), `peer_answer` (`to`, `sdp`): the offer and
     answer for the direct link with `to`.
   - `peer_ice` (`to`, `candidate`): an ICE candidate for that link.
+  - `e2ee` (`to`, `payload`): an end-to-end key message for another
+    participant of the room. `payload` is 1 to 4096 characters of unpadded
+    base64url; anything else, or a `to` outside the sender's room, is dropped
+    without an `error`. Unlike `peer_*` it needs no direct link, and it has
+    a rate limit of its own (64 at once, then 16 per second), so a burst of
+    ICE candidates cannot starve the key exchange.
   - `link_failed` (`peer`): my direct link to `peer` reached `failed`.
 
 Every `peer` (and `from`, `to`) is a session id. The server drops a relayed SDP
@@ -504,6 +512,106 @@ the browsers switch without a gap.
   join or leave. A `link_failed` for a `Forwarded` link, an unknown peer or a
   peer outside the sender's room is ignored.
 
+### Media encoding
+
+Every connection negotiates VP8 for video and Opus for audio, nothing else:
+the client puts VP8 first with `setCodecPreferences`, and the server registers
+only these two codecs, so a section offered with another codec gets no codec
+in the answer. Nothing caps quality by default: under **Audio and video**,
+each person chooses a camera quality (**Best the camera offers**, or up to
+1080p, 720p, 480p or 360p) and a screen sharing smoothness (**Smoothest
+available**, or up to 60, 30, 15 or 5 frames per second). The choice applies at
+once to the camera and to a screen being shared, and is remembered in the
+browser (`melior.quality`). No bitrate is capped; the browser's congestion
+control fits what is sent to the network. The client tells the encoder what each track shows
+(`contentHint`: `motion`, `detail`, `speech`).
+
+| Sender | Path | Settings |
+|---|---|---|
+| Camera | SFU | simulcast: `q` (1/4 size), `h` (1/2), `f` (full); no bitrate or frame-rate cap |
+| Camera | direct link | none: the browser's congestion control adapts the one stream to the one receiver |
+| Screen | both | `degradationPreference: maintain-resolution`: short of bandwidth, it drops frames before sharpness |
+| Microphone | both | the browser's defaults |
+
+The SFU forwards one layer of a simulcast camera to each receiver. Every
+receiver gets the full layer, however big the room grows: room size never
+lowers quality. Only a receiver's own network does (`ReceiverLayer`): after 2
+receiver reports in a row with more than 10% loss it gets the next layer down,
+and after 10 reports in a row with at most 2% loss the next layer up. If a
+layer stops arriving (the browser's
+congestion control drops top layers on a short uplink), it forwards the best
+layer below it, else the lowest above it. A receiver moves to another layer
+only at that layer's next keyframe, which the SFU asks for; the VP8 header that
+marks a keyframe stays in the clear under end-to-end encryption. Screens,
+microphones and direct links send a single stream.
+
+One writer per connection applies these settings together with the paused
+uplink (`uplink`), after every negotiation, because a second `setParameters`
+on a sender fails while one runs. The design these settings come from, and
+what is still to be built, is in [`docs/media-pipeline.md`](docs/media-pipeline.md).
+
+### End-to-end encryption
+
+Every call is encrypted end to end: the SFU, TURN and the network carry media
+they cannot decode. A browser without `RTCRtpScriptTransform` (older than
+Chrome and Edge 141, Firefox 117 or Safari 15.4) does not join.
+
+- **Frames.** Each browser encrypts every encoded frame it sends with its own
+  AES-GCM media key, in a worker (`RTCRtpScriptTransform`), before the frame is
+  packetized. The codec header stays in the clear (VP8: 10 bytes of a
+  keyframe, 3 of a delta frame; Opus: 1 byte), so receivers depacketize as
+  usual and the SFU can tell keyframes. A trailer names the key (a random
+  32-bit id) and the frame counter, which with the key id form the nonce. A
+  receiver drops any frame it cannot decrypt. Direct links are encrypted the
+  same way, so a switch between paths changes nothing for the receiver.
+- **Keys.** Each browser has a device key (ECDSA P-256), created once and kept
+  non-extractable in IndexedDB, and a fresh ECDH P-256 key per call. On joining,
+  it sends every participant a `hello` with both public keys and a device-key
+  signature over the call key and both session ids. When a hello verifies,
+  both sides derive a pair key (ECDH, then HKDF-SHA-256) and send each other
+  their media key wrapped with it. The server relays these messages and holds
+  no key that opens them.
+- **Rotation.** On every join and leave, each browser makes a new media key,
+  sends it to everyone present, and encrypts with it one second later.
+  Someone who left gets no new key; someone who joined never had the old one.
+- **Vouching.** Keycloak vouches for each device key, so a server that swaps
+  keys is caught without anyone comparing a code. Before a call starts, a
+  browser without a token (or with one in its last hour) goes to the realm's
+  `melior-e2ee` client in a full-page redirect with `prompt=none`: with a live
+  Keycloak session nothing is shown, and the browser comes back to
+  `/e2ee-callback`, then to the call. There it trades the code for an access
+  token bound to its device key with DPoP (`cnf.jkt` is the key's thumbprint),
+  and keeps it in `localStorage` (`melior.e2ee.certificate`). A round trip that
+  brings no token is not repeated for 10 minutes. The browser sends the token
+  in its hello.
+  Each peer checks it against the realm's published keys, fetched from the
+  realm, never through the Melior server: signed by the realm, issued to
+  `melior-e2ee`, not expired, bound to the hello's device key, and naming the
+  participant's username. Only then does it send its media key. A participant
+  the realm does not vouch for gets no key and sees nothing; the badge then
+  says **Encrypted · unverified devices**, also on that participant's own
+  screen. The token grants nothing (the client has no roles), lasts 12 hours,
+  and is useless without the device's private key. The browser reads the
+  realm's address from `/e2ee.json`, which the frontend serves (`E2EE_ISSUER`
+  below); without it there is no vouching, keys flow to everyone, and every
+  device counts as unverified.
+- **Realm setup.** The `melior-e2ee` client is in
+  `docker/keycloak/melior-realm.json`: public, PKCE, `dpop.bound.access.tokens`,
+  no full scope, a 12-hour access token, and `<frontend>/e2ee-callback` as its
+  only redirect URI. Keycloak imports the realm file only when the realm
+  does not exist yet, so an existing realm needs the client created once (copy
+  the client entry from the realm file into **Clients → Import client** in the
+  admin console); `docker/keycloak-allow-origin.sh` then adds further origins
+  to both clients. Production runs with vouching off (`E2EE_ISSUER` empty in
+  `deploy/compose.yaml`) until the client exists in the realm on
+  `auth.faber.zip`: Keycloak shows an error page for an unknown client instead
+  of redirecting back. The round trip is a top-level navigation, so Keycloak's own
+  cookie is first-party: it works with third-party cookies blocked and with
+  Keycloak on another site than the frontend.
+
+What this does not protect against, and the plan to close it, is in
+[`docs/e2ee-risks.md`](docs/e2ee-risks.md).
+
 ## Configuration
 
 ### Server (`melior-sfu`)
@@ -542,6 +650,8 @@ need them fail until they are. It stops on Ctrl-C or SIGTERM, flushing traces.
 | `ALLOWED_HOSTS` | unset | Extra host names the dev server answers to, comma separated (needed behind a reverse proxy) |
 | `TLS_CERT` | `localhost.pem` | PEM certificate path |
 | `TLS_KEY` | `localhost-key.pem` | PEM private key path |
+| `E2EE_ISSUER` | empty | Frontend image only: the realm that vouches for device keys, as browsers reach it (`https://auth.example.org/realms/melior`). Served as `/e2ee.json`; empty turns vouching off. The dev server serves `apps/web/public/e2ee.json` (`http://localhost:8300/realms/melior`) instead |
+| `E2EE_CLIENT_ID` | `melior-e2ee` | Frontend image only: the realm's client for DPoP-bound device tokens |
 
 HTTPS is used only if both files exist. To use the app from another device you
 need HTTPS (for example a certificate from `mkcert`), a matching
@@ -790,8 +900,6 @@ MELIOR_TEST_REDIS_URL=redis://127.0.0.1:6379/9 \
   another join; the join itself then refuses with an `error`.
 - Feed events published while an instance's Redis subscription reconnects are
   lost; the next snapshot and `structure_changed` put the client right.
-- A media section is reused only for a track of the same codec, so a room with
-  mixed codecs keeps one set of sections per codec.
 - The server needs host networking in Docker, so the `app` profile works on
   Linux only.
 - In a mesh room the participants see each other's IP addresses, because the
@@ -801,4 +909,9 @@ MELIOR_TEST_REDIS_URL=redis://127.0.0.1:6379/9 \
 - After a switch, video quality ramps up for a few seconds on the new path.
 - Switching is per pair of participants. A failed direct link moves the whole
   room to the SFU until the next join or leave.
-- There is no recording, simulcast or bandwidth adaptation.
+- There is no recording. A receiver on a slow link is moved to a smaller layer
+  only after it has lost packets for a few seconds, so it sees a short glitch
+  first.
+- With a camera quality of 360p, Chrome stops sending the full simulcast layer,
+  so receivers through the SFU get the half layer (320 pixels wide instead of
+  640). Direct links are not affected.

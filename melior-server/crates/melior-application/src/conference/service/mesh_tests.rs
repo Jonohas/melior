@@ -2,7 +2,7 @@
 
 use super::testing::*;
 use super::*;
-use melior_domain::{MediaPath, MeshPolicy};
+use melior_domain::{KeyEnvelope, MediaPath, MeshPolicy};
 use std::time::Duration;
 
 const CHANNEL: &str = "general";
@@ -275,6 +275,27 @@ async fn peer_messages_without_a_direct_link_are_dropped_without_an_error() {
     for client in [&a, &b, &other_room] {
         assert!(client.sink.take_all().is_empty(), "nothing relayed, no error sent");
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn key_messages_are_relayed_in_the_room_without_a_direct_link() {
+    let h = harness(0);
+    let a = h.join_ready(CHANNEL).await;
+    let b = h.join_ready(CHANNEL).await;
+    let other_room = h.join_ready("other").await;
+    for client in [&a, &b, &other_room] {
+        client.sink.take_all();
+    }
+    let envelope = KeyEnvelope::parse("aGVsbG8").unwrap();
+
+    h.service.relay_key(&a.id, &b.id, envelope.clone()).await;
+    h.service.relay_key(&a.id, &other_room.id, envelope.clone()).await;
+    h.service.relay_key(&a.id, &a.id, envelope.clone()).await;
+    h.service.relay_key(&SessionId::generate(), &a.id, envelope.clone()).await;
+
+    assert_eq!(b.sink.take_all(), vec![Signal::Key { from: a.id.clone(), envelope }]);
+    assert!(a.sink.take_all().is_empty(), "not to oneself, and no error for a dropped one");
+    assert!(other_room.sink.take_all().is_empty(), "never into another room");
 }
 
 #[tokio::test(start_paused = true)]

@@ -15,6 +15,7 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+use webrtc::rtcp::receiver_report::ReceiverReport;
 use webrtc::rtp_transceiver::RTCRtpTransceiver;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
@@ -161,9 +162,15 @@ impl WebRtcSession {
                 RTPCodecType::Video => MediaKind::Video,
                 RTPCodecType::Unspecified => return Box::pin(async {}),
             };
-            let forwarder = Arc::new(Forwarder::new(&remote, kind, publisher.clone()));
-            forwarders.insert(forwarder.clone());
-            lock(&incoming).push(Incoming { forwarder: forwarder.clone(), transceiver });
+            // Another simulcast layer of a track already announced: same forwarder.
+            let existing = Self::layer_of(&incoming, &remote, &transceiver);
+            let added = existing.is_none();
+            let forwarder = existing.unwrap_or_else(|| {
+                let forwarder = Arc::new(Forwarder::new(&remote, kind, publisher.clone()));
+                forwarders.insert(forwarder.clone());
+                lock(&incoming).push(Incoming { forwarder: forwarder.clone(), transceiver });
+                forwarder
+            });
 
             let id = id.clone();
             let incoming = incoming.clone();
@@ -172,11 +179,13 @@ impl WebRtcSession {
             tokio::spawn(async move {
                 // Announce, forward until the track ends, then retract: in this
                 // order, so the application never sees "ended" before "published".
-                if let Some(events) = events.upgrade() {
+                if added && let Some(events) = events.upgrade() {
                     let track = Track::new(forwarder.id.clone(), forwarder.kind);
                     events.track_published(&id, track).await;
                 }
-                forwarder.run(remote).await;
+                if !forwarder.run(remote).await {
+                    return;
+                }
                 lock(&incoming).retain(|track| !Arc::ptr_eq(&track.forwarder, &forwarder));
                 forwarders.remove(&forwarder.id);
                 if let Some(events) = events.upgrade() {
@@ -185,6 +194,22 @@ impl WebRtcSession {
             });
             Box::pin(async {})
         }));
+    }
+
+    /// The forwarder of a simulcast track whose other layer already arrived on the
+    /// same section, with this layer added to it. `None` for a new track.
+    fn layer_of(
+        incoming: &IncomingTracks,
+        remote: &TrackRemote,
+        transceiver: &Arc<RTCRtpTransceiver>,
+    ) -> Option<Arc<Forwarder>> {
+        if remote.rid().is_empty() {
+            return None;
+        }
+        let incoming = lock(incoming);
+        let same = incoming.iter().find(|track| Arc::ptr_eq(&track.transceiver, transceiver))?;
+        same.forwarder.add_layer(remote);
+        Some(same.forwarder.clone())
     }
 
     /// Ends the tracks that arrive on the given sections: the client no longer sends
@@ -221,14 +246,19 @@ impl WebRtcSession {
     }
 
     /// Relays the participant's keyframe requests (PLI/FIR) for an outlet to the
-    /// publisher of whatever track the outlet carries at that moment. Reading the
-    /// sender's RTCP is also what drives its interceptors (NACK, reports).
+    /// publisher of whatever track the outlet carries at that moment, and hands the
+    /// packet loss it reports to the outlet, which picks its simulcast layer from it.
+    /// Reading the sender's RTCP is also what drives its interceptors (NACK, reports).
     fn relay_keyframe_requests(
         sender: Arc<RTCRtpSender>,
+        track: Arc<OutletTrack>,
         carrying: Arc<Mutex<Option<Arc<Forwarder>>>>,
     ) {
         tokio::spawn(async move {
             while let Ok((packets, _)) = sender.read_rtcp().await {
+                if let Some(fraction_lost) = worst_loss(&packets) {
+                    track.receiver_report(fraction_lost);
+                }
                 let wants_keyframe = packets.iter().any(|packet| {
                     let packet = packet.as_any();
                     packet.is::<PictureLossIndication>() || packet.is::<FullIntraRequest>()
@@ -263,7 +293,7 @@ impl WebRtcSession {
             owner.ok_or_else(|| MediaError::Backend("new sender has no transceiver".to_owned()))?;
 
         let carrying = Arc::new(Mutex::new(Some(forwarder.clone())));
-        Self::relay_keyframe_requests(sender, carrying.clone());
+        Self::relay_keyframe_requests(sender, track.clone(), carrying.clone());
         forwarder.attach(track.clone());
         Ok(Outlet {
             kind: forwarder.kind,
@@ -281,6 +311,17 @@ impl WebRtcSession {
         forwarder.attach(outlet.track.clone());
         outlet.transceiver.set_direction(RTCRtpTransceiverDirection::Sendonly).await;
     }
+}
+
+/// The highest share of lost packets (of 256) among the receiver reports in a
+/// compound RTCP packet, or `None` when it holds no report. An outlet sends one
+/// stream, so every report block is about it.
+fn worst_loss(packets: &[Box<dyn webrtc::rtcp::packet::Packet + Send + Sync>]) -> Option<u8> {
+    packets
+        .iter()
+        .filter_map(|packet| packet.as_any().downcast_ref::<ReceiverReport>())
+        .flat_map(|report| report.reports.iter().map(|block| block.fraction_lost))
+        .max()
 }
 
 #[async_trait]
@@ -404,5 +445,35 @@ fn from_rtc_candidate(candidate: RTCIceCandidateInit) -> IceCandidate {
         sdp_mid: candidate.sdp_mid,
         sdp_mline_index: candidate.sdp_mline_index,
         username_fragment: candidate.username_fragment,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worst_loss;
+    use webrtc::rtcp::packet::Packet;
+    use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+    use webrtc::rtcp::receiver_report::ReceiverReport;
+    use webrtc::rtcp::reception_report::ReceptionReport;
+
+    fn report(losses: &[u8]) -> Box<dyn Packet + Send + Sync> {
+        let reports = losses
+            .iter()
+            .map(|&fraction_lost| ReceptionReport { fraction_lost, ..ReceptionReport::default() })
+            .collect();
+        Box::new(ReceiverReport { reports, ..ReceiverReport::default() })
+    }
+
+    #[test]
+    fn takes_the_worst_loss_of_every_receiver_report() {
+        let pli: Box<dyn Packet + Send + Sync> = Box::new(PictureLossIndication::default());
+        assert_eq!(worst_loss(&[report(&[3, 40]), pli, report(&[12])]), Some(40));
+    }
+
+    #[test]
+    fn no_receiver_report_means_no_loss_to_report() {
+        let pli: Box<dyn Packet + Send + Sync> = Box::new(PictureLossIndication::default());
+        assert_eq!(worst_loss(&[pli]), None);
+        assert_eq!(worst_loss(&[report(&[])]), None);
     }
 }

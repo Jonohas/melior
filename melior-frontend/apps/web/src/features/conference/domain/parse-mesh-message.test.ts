@@ -46,6 +46,15 @@ describe('mesh messages', () => {
         expect(ice?.channel === 'peer_ice' && ice.payload.candidate.candidate).toBe('c');
     });
 
+    test('parses a relayed key message', () => {
+        expect(parseServerMessage(msg('e2ee', { from: 'p', payload: 'aGk' }))).toEqual({
+            channel: 'e2ee',
+            payload: { from: 'p', payload: 'aGk' },
+        });
+        expect(parseServerMessage(msg('e2ee', { from: '', payload: 'aGk' }))).toBeNull();
+        expect(parseServerMessage(msg('e2ee', { from: 'p', payload: 5 }))).toBeNull();
+    });
+
     test('rejects malformed relays', () => {
         expect(parseServerMessage(msg('peer_offer', { from: 'p' }))).toBeNull();
         expect(parseServerMessage(msg('peer_answer', { sdp: 'x' }))).toBeNull();

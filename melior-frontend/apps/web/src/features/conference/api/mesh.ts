@@ -11,6 +11,7 @@ import {
     type SessionId,
     selectSource,
 } from '@/features/conference/domain';
+import type { Protect } from './e2ee-transforms';
 import { createLinkRegistry } from './link-registry';
 import { createStatsSampler, type Observations, type StatsSource } from './stats-sampler';
 
@@ -25,6 +26,8 @@ type MeshOptions = {
     iceServers: IceServer[];
     forceRelay: boolean;
     localStream: MediaStream | null;
+    /** Encrypts every direct link's media end to end. */
+    protect?: Protect;
     /** The screen being shared when the mesh starts, or none. */
     screen: MediaStream | null;
     /** The SFU connection, for sampling the forwarded path. */

@@ -1,14 +1,17 @@
 import { type RefObject, useCallback, useRef, useState } from 'react';
 import {
+    applyVideoConstraints,
     captureInput,
     captureLocalMedia,
     loadCallPreferences,
     loadDevicePreferences,
+    loadVideoQuality,
     saveCallPreferences,
     saveDevicePreference,
+    saveVideoQuality,
     stopMedia,
 } from '@/features/conference/api';
-import { type CallPreferences, trackEnabled } from '@/features/conference/domain';
+import { type CallPreferences, cameraConstraints, trackEnabled, type VideoQuality } from '@/features/conference/domain';
 import { createSerialByKey } from './serial-by-key';
 import type { ConferenceConnection } from './session-messages';
 
@@ -25,6 +28,13 @@ export type CallMedia = {
     cameraOff: boolean;
     setMicrophoneMuted: (muted: boolean) => void;
     setCameraOff: (off: boolean) => void;
+    /** How sharp and smooth the person wants their video. Remembered for the next call. */
+    videoQuality: VideoQuality;
+    /**
+     * Changes the video quality. A camera in use takes the new camera quality at once; a screen takes its frame
+     * rate when it is next shared, or at once through the caller. Rejects when the camera cannot provide it.
+     */
+    setVideoQuality: (quality: VideoQuality) => Promise<void>;
     /** Switches to another microphone or camera during the call. Rejects when the device cannot be opened. */
     changeInput: (kind: InputKind, deviceId: string) => Promise<void>;
     /** Opens the camera and microphone the person chose last, with their mute switches applied. */
@@ -118,12 +128,22 @@ export const useCallMedia = (connection: RefObject<ConferenceConnection>): CallM
     const setMicrophoneMuted = useCallback((muted: boolean) => update({ microphoneMuted: muted }), [update]);
     const setCameraOff = useCallback((off: boolean) => update({ cameraOff: off }), [update]);
 
+    const [videoQuality, setVideoQualityState] = useState(loadVideoQuality);
+    const setVideoQuality = useCallback(async (quality: VideoQuality) => {
+        setVideoQualityState(quality);
+        saveVideoQuality(quality);
+        const camera = localRef.current?.getVideoTracks()[0];
+        if (camera) await applyVideoConstraints(camera, cameraConstraints(quality.camera));
+    }, []);
+
     return {
         activeDevices,
         microphoneMuted: preferences.microphoneMuted,
         cameraOff: preferences.cameraOff,
         setMicrophoneMuted,
         setCameraOff,
+        videoQuality,
+        setVideoQuality,
         changeInput,
         open,
         adopt,

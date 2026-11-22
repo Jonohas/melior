@@ -168,4 +168,30 @@ describe('createUplink', () => {
         expect(second.active).toEqual([true]);
         expect(warn).not.toHaveBeenCalled();
     });
+
+    test('with a policy, reapply writes the settings before any uplink state and leaves active alone', async () => {
+        const written: unknown[] = [];
+        const sender = {
+            track: {},
+            getParameters: () => ({ encodings: [{ active: false }] }),
+            setParameters: async (parameters: unknown) => {
+                written.push(parameters);
+            },
+        };
+        const uplink = createUplink(connectionWith(sender as unknown as ReturnType<typeof makeSender>), () => ({
+            degradationPreference: 'maintain-resolution',
+            encodings: [{ maxBitrate: 1000 }],
+        }));
+        await uplink.reapply();
+        expect(written).toEqual([
+            { encodings: [{ active: false, maxBitrate: 1000 }], degradationPreference: 'maintain-resolution' },
+        ]);
+    });
+
+    test('the uplink state and the policy go out in one setParameters', async () => {
+        const one = makeSender();
+        const uplink = createUplink(connectionWith(one), () => ({ encodings: [{ maxBitrate: 1000 }] }));
+        await uplink.set(false);
+        expect(one.calls).toEqual([false]);
+    });
 });

@@ -154,6 +154,7 @@ const CallView = ({ channel, voice, onLeave }: CallViewProps) => {
                     reconnectAttempt={conference.reconnectAttempt}
                     participants={conference.participants}
                     shownPaths={conference.shownPaths}
+                    trust={conference.trust}
                 />
                 {summary && <Badge variant="outline">{summary}</Badge>}
                 <MemberListButton />
@@ -201,6 +202,8 @@ const CallView = ({ channel, voice, onLeave }: CallViewProps) => {
                 changeInput={conference.changeInput}
                 speakerId={voice.speakerId}
                 onSpeakerChange={voice.setSpeakerId}
+                videoQuality={conference.videoQuality}
+                setVideoQuality={conference.setVideoQuality}
             />
         </div>
     );

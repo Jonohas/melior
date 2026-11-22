@@ -7,6 +7,7 @@ import {
 } from '@/features/conference/domain';
 import { createDirectLink, type DirectLink } from './direct-link';
 import { type LocalTracks, screenTracksOf, sectionOf } from './direct-sections';
+import type { Protect } from './e2ee-transforms';
 import type { StatsSource } from './stats-sampler';
 
 type LinkRegistryOptions = {
@@ -14,6 +15,8 @@ type LinkRegistryOptions = {
     iceServers: IceServer[];
     forceRelay: boolean;
     localStream: MediaStream | null;
+    /** Encrypts every link's media end to end. */
+    protect?: Protect;
     /** The screen being shared when the mesh starts (a share survives a reconnect), or none. */
     screen: MediaStream | null;
     send: (message: ClientMessage) => void;
@@ -49,6 +52,7 @@ export const createLinkRegistry = ({
     forceRelay,
     localStream,
     screen,
+    protect,
     send,
     onMedia,
     onScreen,
@@ -90,6 +94,7 @@ export const createLinkRegistry = ({
             iceServers,
             forceRelay,
             localStream,
+            protect,
             local: () => local,
             send,
             onMedia: (stream) => onMedia(peer, stream),

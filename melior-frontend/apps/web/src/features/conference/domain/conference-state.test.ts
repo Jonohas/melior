@@ -23,6 +23,7 @@ describe('conferenceReducer', () => {
             directScreens: {},
             shownPaths: {},
             screenStreams: {},
+            trust: {},
             status: 'starting',
             reconnectAttempt: 0,
             stopReason: null,
@@ -132,6 +133,17 @@ describe('conferenceReducer', () => {
         expect(state.voices).toEqual({ s1: { ...SILENT_VOICE, speaking: true }, s2: muted, s3: voice });
         expect(conferenceReducer(state, { type: 'peer_left', sessionId: 's2' }).voices.s2).toBeUndefined();
         expect(conferenceReducer(state, { type: 'reconnecting', attempt: 1 }).voices).toEqual({});
+    });
+
+    test('records device trust per participant and forgets it on leave and on reconnect', () => {
+        const joined = run(
+            { type: 'trust_changed', sessionId: 's2', trust: 'pending' },
+            { type: 'trust_changed', sessionId: 's2', trust: 'verified' },
+            { type: 'trust_changed', sessionId: 's3', trust: 'unverified' },
+        );
+        expect(joined.trust).toEqual({ s2: 'verified', s3: 'unverified' });
+        expect(conferenceReducer(joined, { type: 'peer_left', sessionId: 's2' }).trust).toEqual({ s3: 'unverified' });
+        expect(conferenceReducer(joined, { type: 'reconnecting', attempt: 1 }).trust).toEqual({});
     });
 
     test('failed sets error status and message', () => {

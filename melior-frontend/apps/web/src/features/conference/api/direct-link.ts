@@ -5,6 +5,7 @@ import {
     type IceCandidate,
     type IceServer,
     type SessionId,
+    senderPolicy,
 } from '@/features/conference/domain';
 import {
     addOfferedSections,
@@ -16,9 +17,11 @@ import {
     sectionOf,
 } from './direct-sections';
 import { createDirectSignals, makeAnswer, makeOffer } from './direct-signals';
+import type { Protect } from './e2ee-transforms';
 import { createIceCandidateQueue } from './ice-candidate-queue';
 import { createPeerScreen } from './peer-screen';
 import { createScreenChannel } from './screen-channel';
+import { createUplink } from './uplink';
 
 type DirectLinkOptions = {
     peerId: SessionId;
@@ -28,6 +31,8 @@ type DirectLinkOptions = {
     forceRelay: boolean;
     /** The stream the local microphone and camera belong to. */
     localStream: MediaStream | null;
+    /** Encrypts what the link sends and decrypts what it receives, end to end. */
+    protect?: Protect;
     /** The tracks this side sends now; read when the link is negotiated, so a link opened later is current. */
     local: () => LocalTracks;
     send: (message: ClientMessage) => void;
@@ -67,6 +72,7 @@ export const createDirectLink = ({
     iceServers,
     forceRelay,
     localStream,
+    protect = () => undefined,
     local,
     send,
     onMedia,
@@ -80,6 +86,10 @@ export const createDirectLink = ({
     const candidates = createIceCandidateQueue(connection, 'direct');
     // Filled in as the sections are attached, so a change during the attach finds the senders already there.
     const senders: SectionSenders = { ...NO_SENDERS };
+    // The camera is left to congestion control on a link; only the screen gets settings of its own.
+    const parameters = createUplink(connection, (sender) =>
+        sender === senders.screen ? senderPolicy('screen', 'direct') : null,
+    );
     // The link is negotiated once: a repeated start or offer is ignored.
     let started = false;
 
@@ -111,20 +121,24 @@ export const createDirectLink = ({
             if (!offerer || started) return;
             started = true;
             Object.assign(senders, addOfferedSections(connection, local(), localStream));
+            protect(connection);
             signals.sendDescription('peer_offer', await makeOffer(connection));
         },
         handleOffer: async (sdp) => {
             if (started) return;
             started = true;
             await connection.setRemoteDescription({ type: 'offer', sdp });
+            protect(connection);
             // After the offer, so the tracks ride the offer's transceivers.
             await attachAnsweredSections(connection, local, senders);
             await candidates.flush();
             signals.sendDescription('peer_answer', await makeAnswer(connection));
+            void parameters.reapply();
         },
         handleAnswer: async (sdp) => {
             await connection.setRemoteDescription({ type: 'answer', sdp });
             await candidates.flush();
+            void parameters.reapply();
         },
         addIceCandidate: (candidate: IceCandidate) => candidates.add(candidate),
         sectionTrackIds: () => connection.getTransceivers().map((t) => t.receiver.track.id),
@@ -134,6 +148,7 @@ export const createDirectLink = ({
                     senders.screen?.replaceTrack(tracks.screen),
                     senders.screenAudio?.replaceTrack(tracks.screenAudio),
                 ]);
+                void parameters.reapply();
             } finally {
                 // The peer learns the new state even when this link's sender could not take the track.
                 channel.announce();
@@ -146,6 +161,7 @@ export const createDirectLink = ({
             connection.onicecandidate = null;
             connection.ontrack = null;
             connection.onconnectionstatechange = null;
+            parameters.stop();
             channel.close();
             connection.close();
         },

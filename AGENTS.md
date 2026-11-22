@@ -98,7 +98,12 @@ caller can act on, never a panic.
 6. **Tokens stay on the server.** The browser gets an opaque session cookie
    only. Session ids, tokens, cookies and credentials never appear in logs or
    error messages (`AuthSessionId`'s `Debug` is redacted for this reason).
-   TURN credentials are per user and expire.
+   TURN credentials are per user and expire. One exception, decided for
+   end-to-end encryption: the browser gets a DPoP-bound access token of the
+   `melior-e2ee` client, which grants nothing (no roles) and cannot be used
+   without the device's private key, and shows it to the other participants of
+   a call as proof that the realm vouches for its device key. No other token
+   reaches the browser.
 7. **Redirects stay inside the application.** Every post-login redirect goes
    through `ReturnPath`; every absolute URL is built from `FRONTEND_URL`, never
    from request headers.

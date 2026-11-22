@@ -54,3 +54,40 @@ describe('createDirectLink local candidates', () => {
         expect(sent.map((message) => message.channel)).toEqual(['peer_answer', 'peer_ice']);
     });
 });
+
+describe('createDirectLink sender settings', () => {
+    const SCREEN = { id: 'screen', kind: 'video' };
+    const CAMERA = { id: 'camera', kind: 'video' };
+
+    beforeEach(() => {
+        stubRtc();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('after the answer, the screen keeps its resolution and the camera is left to congestion control', async () => {
+        const offerer = createDirectLink({
+            peerId: 'peer',
+            offerer: true,
+            iceServers: [],
+            forceRelay: false,
+            localStream: null,
+            local: () => ({ audio: null, video: CAMERA, screen: SCREEN }) as unknown as LocalTracks,
+            send: () => undefined,
+            onMedia: () => undefined,
+            onScreen: () => undefined,
+            onFailed: () => undefined,
+        });
+        const connection = FakePeerConnection.instances[0];
+        if (!connection) throw new Error('no connection');
+        await offerer.start();
+        await offerer.handleAnswer('answer');
+        await vi.waitFor(() =>
+            expect(connection.transceivers[2]?.sender.degradationPreference).toBe('maintain-resolution'),
+        );
+        expect(connection.transceivers[1]?.sender.getParameters()).toEqual({ encodings: [{ active: true }] });
+        offerer.close();
+    });
+});

@@ -3,13 +3,18 @@ import {
     type IceCandidate,
     type IceServer,
     reconcileTracks,
+    type SenderPolicy,
+    SIMULCAST_LAYERS,
     type StreamKey,
+    senderPolicy,
     sfuSourceOf,
     type TrackAssignment,
     type TrackDiff,
     type TracksBySession,
 } from '@/features/conference/domain';
 import { addAudioSection, type SectionInit } from './audio-sections';
+import { preferVideoCodec } from './codec-preferences';
+import type { Protect } from './e2ee-transforms';
 import { createIceCandidateQueue } from './ice-candidate-queue';
 import type { StatsSource } from './stats-sampler';
 import { createUplink } from './uplink';
@@ -19,6 +24,8 @@ type PeerSessionOptions = {
     /** Only use TURN relay candidates. For verifying the TURN path; needs a TURN server among `iceServers`. */
     forceRelay?: boolean;
     localStream: MediaStream | null;
+    /** Encrypts what this connection sends and decrypts what it receives, end to end. */
+    protect?: Protect;
     onIceCandidate: (candidate: IceCandidate) => void;
     /**
      * An offer for a change this side made after the connection was up (a screen added or removed). The
@@ -96,6 +103,7 @@ export const createPeerSession = ({
     iceServers,
     forceRelay = false,
     localStream,
+    protect = () => undefined,
     onIceCandidate,
     onOffer,
     onRemoteMedia,
@@ -104,7 +112,14 @@ export const createPeerSession = ({
 }: PeerSessionOptions): PeerSession => {
     const connection = new RTCPeerConnection({ iceServers, iceTransportPolicy: forceRelay ? 'relay' : 'all' });
     const candidates = createIceCandidateQueue(connection, 'sfu');
-    const uplink = createUplink(connection);
+    // The screen's picture and, when it was captured with sound, its audio.
+    let screenSenders: RTCRtpSender[] = [];
+    // The camera goes in simulcast layers and a screen keeps its resolution; audio keeps the defaults.
+    const policyOf = (sender: RTCRtpSender): SenderPolicy | null => {
+        if (sender.track?.kind !== 'video') return null;
+        return senderPolicy(screenSenders.includes(sender) ? 'screen' : 'video', 'sfu');
+    };
+    const uplink = createUplink(connection, policyOf);
     let uplinkTimer: ReturnType<typeof setTimeout> | null = null;
 
     let assignments: TrackAssignment[] = [];
@@ -114,8 +129,6 @@ export const createPeerSession = ({
     let firstAnswerApplied = false;
     let offerInFlight = false;
     let changeWaiting = false;
-    // The screen's picture and, when it was captured with sound, its audio.
-    let screenSenders: RTCRtpSender[] = [];
     let current: TracksBySession<MediaStreamTrack> = {};
     const remoteStreams = createRemoteStreams(onRemoteMedia);
 
@@ -160,6 +173,8 @@ export const createPeerSession = ({
         changeWaiting = false;
         offerInFlight = true;
         try {
+            preferVideoCodec(connection);
+            protect(connection);
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
             onOffer(connection.localDescription?.sdp ?? offer.sdp ?? '');
@@ -191,10 +206,15 @@ export const createPeerSession = ({
         return connection.addTransceiver(track, init);
     };
 
-    /** The microphone's section is made directly so it gets its priority and RED; the camera's by `addTrack`. */
+    /**
+     * The microphone's section gets its priority and RED; the camera's goes in simulcast layers, which only
+     * `addTransceiver` can ask for. The server has no sections yet, so nothing can be reused by mistake.
+     */
     const addInput = (track: MediaStreamTrack, stream: MediaStream): RTCRtpSender => {
-        if (track.kind !== 'audio') return connection.addTrack(track, stream);
-        return addAudioSection(connection, track, { direction: 'sendrecv', streams: [stream] }).sender;
+        const init: SectionInit = { direction: 'sendrecv', streams: [stream] };
+        if (track.kind === 'audio') return addAudioSection(connection, track, init).sender;
+        const sendEncodings = SIMULCAST_LAYERS.map((layer) => ({ ...layer }));
+        return connection.addTransceiver(track, { ...init, sendEncodings }).sender;
     };
 
     // The camera's and the microphone's senders, to switch what they send without a new negotiation.
@@ -202,6 +222,7 @@ export const createPeerSession = ({
     if (localStream) {
         for (const track of localStream.getTracks()) inputSenders.set(track.kind, addInput(track, localStream));
     }
+    protect(connection);
 
     return {
         statsSource: createSfuStatsSource(connection, () => assignments),
@@ -209,6 +230,8 @@ export const createPeerSession = ({
         createOffer: async () => {
             // Tracks added before the first offer are part of it, not a change to offer later.
             changeWaiting = false;
+            preferVideoCodec(connection);
+            protect(connection);
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
             return connection.localDescription?.sdp ?? offer.sdp ?? '';
@@ -230,10 +253,12 @@ export const createPeerSession = ({
                 changeWaiting = true;
             }
             await connection.setRemoteDescription({ type: 'offer', sdp });
-            // The transceivers and their mids exist now.
+            // The transceivers and their mids exist now; the server's new sections get their transforms.
+            protect(connection);
             assignments = tracks;
             reconcile();
             await candidates.flush();
+            preferVideoCodec(connection);
             const answer = await connection.createAnswer();
             await connection.setLocalDescription(answer);
             reapplyUplinkSoon();
@@ -255,6 +280,7 @@ export const createPeerSession = ({
             // goes first, so the server has the sharer's camera and microphone before either screen track.
             const tracks = [video, ...screen.getAudioTracks().slice(0, 1)];
             screenSenders = tracks.map((track) => addScreenSection(track, screen).sender);
+            protect(connection);
             // A paused uplink covers the new sender like the others.
             reapplyUplinkSoon();
         },

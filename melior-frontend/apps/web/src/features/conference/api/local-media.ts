@@ -1,11 +1,17 @@
 import {
     type CallPreferences,
+    CONTENT_HINTS,
+    cameraConstraints,
     DEFAULT_CALL_PREFERENCES,
+    DEFAULT_VIDEO_QUALITY,
     type DeviceInfo,
     type DeviceKind,
     type DevicePreferences,
     parseCallPreferences,
     parseDevicePreferences,
+    parseVideoQuality,
+    screenConstraints,
+    type VideoQuality,
 } from '@/features/conference/domain';
 
 /**
@@ -23,11 +29,27 @@ const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
 const audioConstraints = (deviceId?: string): MediaTrackConstraints =>
     deviceId ? { ...AUDIO_CONSTRAINTS, deviceId: { exact: deviceId } } : AUDIO_CONSTRAINTS;
 
-const open = (preferences: DevicePreferences): Promise<MediaStream> =>
-    navigator.mediaDevices.getUserMedia({
-        video: preferences.videoinput ? { deviceId: { exact: preferences.videoinput } } : true,
-        audio: ENABLE_AUDIO ? audioConstraints(preferences.audioinput) : false,
-    });
+const videoConstraints = (deviceId?: string): MediaTrackConstraints => {
+    const quality = cameraConstraints(loadVideoQuality().camera);
+    return deviceId ? { ...quality, deviceId: { exact: deviceId } } : quality;
+};
+
+/** Tells the encoder what each track shows: motion for the camera, speech for the microphone. */
+const hintTracks = (stream: MediaStream, video: 'video' | 'screen'): MediaStream => {
+    for (const track of stream.getVideoTracks()) track.contentHint = CONTENT_HINTS[video];
+    // A screen's sound is music or a video as often as a voice: only the microphone is hinted as speech.
+    if (video === 'video') for (const track of stream.getAudioTracks()) track.contentHint = CONTENT_HINTS.audio;
+    return stream;
+};
+
+const open = async (preferences: DevicePreferences): Promise<MediaStream> =>
+    hintTracks(
+        await navigator.mediaDevices.getUserMedia({
+            video: videoConstraints(preferences.videoinput),
+            audio: ENABLE_AUDIO ? audioConstraints(preferences.audioinput) : false,
+        }),
+        'video',
+    );
 
 /**
  * Opens the camera and microphone the person used last. A device that was unplugged since then makes
@@ -48,8 +70,11 @@ export const captureLocalMedia = async (preferences: DevicePreferences = {}): Pr
  * device, so any other would be the wrong answer. Rejects when it cannot be opened.
  */
 export const captureInput = async (kind: 'audioinput' | 'videoinput', deviceId: string): Promise<MediaStreamTrack> => {
-    const stream = await navigator.mediaDevices.getUserMedia(
-        kind === 'audioinput' ? { audio: audioConstraints(deviceId) } : { video: { deviceId: { exact: deviceId } } },
+    const stream = hintTracks(
+        await navigator.mediaDevices.getUserMedia(
+            kind === 'audioinput' ? { audio: audioConstraints(deviceId) } : { video: videoConstraints(deviceId) },
+        ),
+        'video',
     );
     const [track] = kind === 'audioinput' ? stream.getAudioTracks() : stream.getVideoTracks();
     if (!track) throw new Error('The device gave no media.');
@@ -113,19 +138,45 @@ export const canShareScreen = (): boolean =>
 /**
  * The sound of a shared screen is played back as it is: no processing meant for a voice, which would cut music
  * and game sound. `systemAudio` lets the picker offer the whole system's sound (Chromium on Windows and ChromeOS);
- * elsewhere only a tab's sound can be shared. Browsers that do not know an option ignore it.
+ * elsewhere only a tab's sound can be shared. Browsers that do not know an option ignore it. The picture is
+ * captured at the frame rate the person chose.
  */
-const SCREEN_CAPTURE_OPTIONS = {
-    video: true,
-    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    systemAudio: 'include',
-} as DisplayMediaStreamOptions;
+const screenCaptureOptions = (): DisplayMediaStreamOptions =>
+    ({
+        video: screenConstraints(loadVideoQuality().screenFrameRate),
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        systemAudio: 'include',
+    }) as DisplayMediaStreamOptions;
 
 /**
  * Asks the person to pick a screen, window or tab and captures it, with its sound when they tick the picker's
  * "share audio" box. Rejects with a `NotAllowedError` when they cancel the picker.
  */
-export const captureScreen = (): Promise<MediaStream> => navigator.mediaDevices.getDisplayMedia(SCREEN_CAPTURE_OPTIONS);
+export const captureScreen = async (): Promise<MediaStream> =>
+    hintTracks(await navigator.mediaDevices.getDisplayMedia(screenCaptureOptions()), 'screen');
+
+const VIDEO_QUALITY_KEY = 'melior.quality';
+
+export const loadVideoQuality = (): VideoQuality => {
+    try {
+        return parseVideoQuality(window.localStorage.getItem(VIDEO_QUALITY_KEY));
+    } catch {
+        return DEFAULT_VIDEO_QUALITY;
+    }
+};
+
+/** Remembers how sharp and smooth the person wants their video, for this call and the next. */
+export const saveVideoQuality = (quality: VideoQuality): void => {
+    try {
+        window.localStorage.setItem(VIDEO_QUALITY_KEY, JSON.stringify(quality));
+    } catch {
+        // Private browsing or a full quota: the choice still applies to this call.
+    }
+};
+
+/** Changes a running camera or screen track to the chosen quality, without capturing it again. */
+export const applyVideoConstraints = (track: MediaStreamTrack, constraints: MediaTrackConstraints): Promise<void> =>
+    track.applyConstraints(constraints);
 
 /** True when the person closed the screen picker or refused to share, which is not an error to report. */
 export const isScreenShareCancelled = (error: unknown): boolean =>

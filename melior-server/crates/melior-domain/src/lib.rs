@@ -38,8 +38,9 @@ pub use community::{
 };
 pub use conference::{
     ChannelId, ChannelMedia, ClientOffer, Departure, DomainError, Effects, IceCandidate, IceServer,
-    Joined, LinkClose, LinkTimeout, MediaKind, MediaMode, MediaPath, MediaWarning, MeshPolicy,
-    Negotiation, NegotiationPhase, Pair, ParticipantInfo, Room, RoomPlan, RoomTarget, Route,
-    RouteNotice, Sdp, SessionId, Track, TrackId, TrackSource, VoiceLimit, VoiceState,
+    Joined, KeyEnvelope, LinkClose, LinkTimeout, MAX_KEY_ENVELOPE_BYTES, MediaKind, MediaMode,
+    MediaPath, MediaWarning, MeshPolicy, Negotiation, NegotiationPhase, Pair, ParticipantInfo,
+    ReceiverLayer, Room, RoomPlan, RoomTarget, Route, RouteNotice, Sdp, SessionId, SimulcastLayer,
+    Track, TrackId, TrackSource, VoiceLimit, VoiceState,
 };
 pub use identity::{AuthSessionId, ReturnPath, User, UserId, Username};

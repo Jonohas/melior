@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use melior_domain::{
-    ChannelId, ChatMessage, IceCandidate, IceServer, MediaPath, ParticipantInfo, Sdp, SessionId,
-    Track, TrackId, TrackSource, User, VoiceState,
+    ChannelId, ChatMessage, IceCandidate, IceServer, KeyEnvelope, MediaPath, ParticipantInfo, Sdp,
+    SessionId, Track, TrackId, TrackSource, User, VoiceState,
 };
 use std::sync::{Arc, Weak};
 
@@ -138,6 +138,11 @@ pub enum Signal {
     PeerIce {
         from: SessionId,
         candidate: IceCandidate,
+    },
+    /// An end-to-end key message from `from`, relayed unread.
+    Key {
+        from: SessionId,
+        envelope: KeyEnvelope,
     },
     /// A participant's voice state changed; everyone in the room hears it, the
     /// participant included.

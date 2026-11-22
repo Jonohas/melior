@@ -1,4 +1,5 @@
 import type { ClientMessage, IceCandidate, SessionId } from '@/features/conference/domain';
+import { preferVideoCodec } from './codec-preferences';
 
 type DirectSignals = {
     /** Sends the link's offer or answer, then the local candidates that waited for it. */
@@ -30,15 +31,17 @@ export const createDirectSignals = (peerId: SessionId, send: (message: ClientMes
     };
 };
 
-/** Creates and sets this side's offer; returns the SDP to send. */
+/** Creates and sets this side's offer, VP8 only; returns the SDP to send. */
 export const makeOffer = async (connection: RTCPeerConnection): Promise<string> => {
+    preferVideoCodec(connection);
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
     return connection.localDescription?.sdp ?? offer.sdp ?? '';
 };
 
-/** Creates and sets this side's answer; returns the SDP to send. */
+/** Creates and sets this side's answer, VP8 only; returns the SDP to send. */
 export const makeAnswer = async (connection: RTCPeerConnection): Promise<string> => {
+    preferVideoCodec(connection);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
     return connection.localDescription?.sdp ?? answer.sdp ?? '';

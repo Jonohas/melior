@@ -119,6 +119,14 @@ impl Room {
         self.participants.contains_key(id)
     }
 
+    /// Whether an end-to-end key message may go from `from` to `to`: two different
+    /// participants of this room. Unlike [`Room::may_relay`] it needs no direct
+    /// link: keys are exchanged on every path, the SFU's included.
+    #[must_use]
+    pub fn may_relay_keys(&self, from: &SessionId, to: &SessionId) -> bool {
+        from != to && self.contains(from) && self.contains(to)
+    }
+
     /// Adds a participant, links it to everyone already there and re-evaluates the
     /// room's target.
     pub fn join(

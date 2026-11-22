@@ -1,4 +1,5 @@
 import type { ConferenceStatus } from './conference-status';
+import type { DeviceTrust } from './e2ee-trust';
 import type { StopReason } from './reconnect';
 import { partitionStreams, type StreamKey } from './remote-tracks';
 import type { SessionId } from './session-id';
@@ -27,6 +28,8 @@ export type ConferenceState<TStream extends StreamRef> = {
     shownPaths: Record<SessionId, Path>;
     /** Screens that participants share, by the session id of the one sharing. */
     screenStreams: Record<SessionId, TStream>;
+    /** How far each remote participant's device is trusted for end-to-end encryption. */
+    trust: Record<SessionId, DeviceTrust>;
     status: ConferenceStatus;
     /** Consecutive reconnect attempts so far; 0 while a connection is healthy. */
     reconnectAttempt: number;
@@ -50,6 +53,7 @@ export type ConferenceAction<TStream extends StreamRef> =
     | { type: 'direct_media_updated'; sessionId: SessionId; stream: TStream | null }
     | { type: 'direct_screen_updated'; sessionId: SessionId; stream: TStream | null }
     | { type: 'shown_path_changed'; sessionId: SessionId; path: Path }
+    | { type: 'trust_changed'; sessionId: SessionId; trust: DeviceTrust }
     | { type: 'peer_left'; sessionId: SessionId };
 
 export const createInitialConferenceState = <TStream extends StreamRef>(): ConferenceState<TStream> => ({
@@ -63,6 +67,7 @@ export const createInitialConferenceState = <TStream extends StreamRef>(): Confe
     directScreens: {},
     shownPaths: {},
     screenStreams: {},
+    trust: {},
     status: 'starting',
     reconnectAttempt: 0,
     stopReason: null,
@@ -119,6 +124,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 directScreens: {},
                 shownPaths: {},
                 screenStreams: {},
+                trust: {},
                 status: 'reconnecting',
                 reconnectAttempt: action.attempt,
                 error: null,
@@ -134,6 +140,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 directScreens: {},
                 shownPaths: {},
                 screenStreams: {},
+                trust: {},
                 status: 'stopped',
                 stopReason: action.reason,
             };
@@ -155,6 +162,8 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 directScreens: action.stream ? { ...others, [action.sessionId]: action.stream } : others,
             };
         }
+        case 'trust_changed':
+            return { ...state, trust: { ...state.trust, [action.sessionId]: action.trust } };
         case 'shown_path_changed':
             return { ...state, shownPaths: { ...state.shownPaths, [action.sessionId]: action.path } };
         case 'peer_left': {
@@ -165,6 +174,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
             const { [action.sessionId]: _direct, ...directStreams } = state.directStreams;
             const { [action.sessionId]: _directScreen, ...directScreens } = state.directScreens;
             const { [action.sessionId]: _shown, ...shownPaths } = state.shownPaths;
+            const { [action.sessionId]: _trust, ...trust } = state.trust;
             return {
                 ...state,
                 participants,
@@ -174,6 +184,7 @@ export const conferenceReducer = <TStream extends StreamRef>(
                 directStreams,
                 directScreens,
                 shownPaths,
+                trust,
             };
         }
     }

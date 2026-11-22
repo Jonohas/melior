@@ -3,7 +3,7 @@
 //! application only ever sees valid values.
 
 use super::messages::IceCandidateDto;
-use melior_domain::{IceCandidate, Sdp, SessionId};
+use melior_domain::{IceCandidate, KeyEnvelope, Sdp, SessionId};
 use serde::Deserialize;
 
 /// The largest session description a client may relay.
@@ -43,6 +43,14 @@ pub struct PeerIceDto {
     pub candidate: IceCandidateDto,
 }
 
+/// `{ "to": <session id>, "payload": <base64url> }`: an end-to-end key message for
+/// another participant of the room, relayed unread.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyDto {
+    pub to: String,
+    pub payload: String,
+}
+
 /// A mesh message that passed the edge checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PeerCommand {
@@ -51,6 +59,7 @@ pub enum PeerCommand {
     Offer { to: SessionId, sdp: Sdp },
     Answer { to: SessionId, sdp: Sdp },
     Ice { to: SessionId, candidate: IceCandidate },
+    Key { to: SessionId, envelope: KeyEnvelope },
 }
 
 /// Why a mesh message is dropped. It is logged and never answered: a client tears
@@ -61,6 +70,8 @@ pub enum Rejection {
     SdpTooLarge,
     CandidateTooLarge,
     CandidateFieldTooLarge,
+    /// A key message that is empty, too large or not base64url.
+    BadKeyEnvelope,
 }
 
 fn session(raw: &str) -> Result<SessionId, Rejection> {
@@ -87,6 +98,15 @@ impl LinkFailedDto {
     /// [`Rejection::BadSessionId`] when `peer` is not a session id.
     pub fn validate(self) -> Result<PeerCommand, Rejection> {
         Ok(PeerCommand::LinkFailed { peer: session(&self.peer)? })
+    }
+}
+
+impl KeyDto {
+    /// # Errors
+    /// A bad target id, or a payload that is no valid [`KeyEnvelope`].
+    pub fn validate(self) -> Result<PeerCommand, Rejection> {
+        let envelope = KeyEnvelope::parse(&self.payload).ok_or(Rejection::BadKeyEnvelope)?;
+        Ok(PeerCommand::Key { to: session(&self.to)?, envelope })
     }
 }
 
@@ -166,6 +186,30 @@ mod tests {
             parse(json!({ "channel": "link_failed", "payload": { "peer": peer.as_str() } }));
         let ClientMessage::LinkFailed(dto) = message else { panic!("wrong variant") };
         assert_eq!(dto.validate(), Ok(PeerCommand::LinkFailed { peer }));
+    }
+
+    #[test]
+    fn e2ee_carries_target_and_an_opaque_payload() {
+        let to = id();
+        let message =
+            parse(json!({ "channel": "e2ee", "payload": { "to": to.as_str(), "payload": "aGk" } }));
+        assert!(message.is_key() && !message.is_relay(), "key messages have a limit of their own");
+        let ClientMessage::E2ee(dto) = message else { panic!("wrong variant") };
+        assert_eq!(
+            dto.validate(),
+            Ok(PeerCommand::Key { to, envelope: KeyEnvelope::parse("aGk").unwrap() })
+        );
+    }
+
+    #[test]
+    fn e2ee_rejects_a_bad_payload_or_target() {
+        let to = id();
+        for payload in ["", "not base64!", &"a".repeat(melior_domain::MAX_KEY_ENVELOPE_BYTES + 1)] {
+            let dto = KeyDto { to: to.as_str().to_owned(), payload: payload.to_owned() };
+            assert_eq!(dto.validate(), Err(Rejection::BadKeyEnvelope));
+        }
+        let dto = KeyDto { to: "nope".into(), payload: "aGk".into() };
+        assert_eq!(dto.validate(), Err(Rejection::BadSessionId));
     }
 
     #[test]

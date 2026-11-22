@@ -3,7 +3,9 @@
 
 use super::{ConferenceService, Session};
 use crate::conference::ports::Signal;
-use melior_domain::{ChannelId, Effects, IceCandidate, LinkTimeout, Pair, Room, Sdp, SessionId};
+use melior_domain::{
+    ChannelId, Effects, IceCandidate, KeyEnvelope, LinkTimeout, Pair, Room, Sdp, SessionId,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -146,27 +148,35 @@ impl ConferenceService {
 
     /// Relays an offer for the direct connection between `from` and `to`.
     pub async fn relay_peer_offer(&self, from: &SessionId, to: &SessionId, sdp: Sdp) {
-        self.relay(from, to, |from| Signal::PeerOffer { from, sdp }).await;
+        self.relay(from, to, Room::may_relay, |from| Signal::PeerOffer { from, sdp }).await;
     }
 
     /// Relays an answer for the direct connection between `from` and `to`.
     pub async fn relay_peer_answer(&self, from: &SessionId, to: &SessionId, sdp: Sdp) {
-        self.relay(from, to, |from| Signal::PeerAnswer { from, sdp }).await;
+        self.relay(from, to, Room::may_relay, |from| Signal::PeerAnswer { from, sdp }).await;
     }
 
     /// Relays an ICE candidate for the direct connection between `from` and `to`.
     pub async fn relay_peer_ice(&self, from: &SessionId, to: &SessionId, candidate: IceCandidate) {
-        self.relay(from, to, |from| Signal::PeerIce { from, candidate }).await;
+        self.relay(from, to, Room::may_relay, |from| Signal::PeerIce { from, candidate }).await;
     }
 
-    /// Forwards a peer message only if `to` is in the sender's room and their link has a
-    /// direct connection. Anything else is dropped and logged at debug level, never
-    /// answered with an error: the client tears down everything on `error`, and a late
-    /// candidate after `link_close` is a normal race.
+    /// Relays an end-to-end key message to another participant of the sender's room,
+    /// on any path. The server cannot read it; see [`KeyEnvelope`].
+    pub async fn relay_key(&self, from: &SessionId, to: &SessionId, envelope: KeyEnvelope) {
+        self.relay(from, to, Room::may_relay_keys, |from| Signal::Key { from, envelope }).await;
+    }
+
+    /// Forwards a peer message only if the room's `allowed` rule lets it go from `from`
+    /// to `to` (for direct-link signalling: `to` is in the sender's room and their link
+    /// has a direct connection). Anything else is dropped and logged at debug level,
+    /// never answered with an error: the client tears down everything on `error`, and a
+    /// late candidate after `link_close` is a normal race.
     async fn relay(
         &self,
         from: &SessionId,
         to: &SessionId,
+        allowed: fn(&Room, &SessionId, &SessionId) -> bool,
         message: impl FnOnce(SessionId) -> Signal,
     ) {
         let Some(sender) = self.session(from) else {
@@ -174,8 +184,8 @@ impl ConferenceService {
             return;
         };
         let room = sender.room.lock().await;
-        if !room.may_relay(from, to) {
-            debug!(session = %from, peer = %to, "relay without a direct link dropped");
+        if !allowed(&room, from, to) {
+            debug!(session = %from, peer = %to, "relay the room does not allow dropped");
             return;
         }
         let Some(target): Option<Arc<Session>> = self.session(to) else {

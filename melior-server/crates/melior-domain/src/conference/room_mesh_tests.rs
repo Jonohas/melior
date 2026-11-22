@@ -372,6 +372,25 @@ fn relaying_is_allowed_only_while_a_direct_link_exists() {
 }
 
 #[test]
+fn keys_are_relayed_between_any_two_participants_on_every_path() {
+    let mut room = mesh_room(0);
+    let (a, _) = join_ready(&mut room);
+    let (b, _) = join_ready(&mut room);
+    let (c, _) = join_ready(&mut room);
+    let stranger = SessionId::generate();
+    // A room without mesh has no direct link, and keys still go.
+    assert!(!room.may_relay(&a, &b));
+    assert!(room.may_relay_keys(&a, &b));
+    assert!(room.may_relay_keys(&c, &a));
+    assert!(!room.may_relay_keys(&a, &a), "not to oneself");
+    assert!(!room.may_relay_keys(&a, &stranger));
+    assert!(!room.may_relay_keys(&stranger, &a));
+
+    room.leave(&b).unwrap();
+    assert!(!room.may_relay_keys(&a, &b), "not to someone who left");
+}
+
+#[test]
 fn reports_from_outside_or_for_a_stale_epoch_do_nothing() {
     let mut room = mesh_room(4);
     let (a, _) = join_ready(&mut room);

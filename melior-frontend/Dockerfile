@@ -24,7 +24,10 @@ COPY --chmod=755 docker/entrypoint.d/10-melior-server-url.envsh /docker-entrypoi
 # Backend (the Rust server), ws:// or http://. Override at container start. MELIOR_SERVER_URLS, a comma-
 # separated list of backends, takes precedence when set; rooms are then pinned to one by a consistent hash.
 ENV MELIOR_SERVER_URL=http://melior-server:5000
+# The Keycloak realm that vouches for device keys (its issuer URL, as browsers reach it) and the DPoP client.
+ENV E2EE_ISSUER=""
+ENV E2EE_CLIENT_ID=melior-e2ee
 # Limit envsubst to our own placeholder so nginx's own $vars are preserved.
-ENV NGINX_ENVSUBST_FILTER='^(MELIOR_UPSTREAM_SCHEME|MELIOR_UPSTREAM_SERVERS)$'
+ENV NGINX_ENVSUBST_FILTER='^(MELIOR_UPSTREAM_SCHEME|MELIOR_UPSTREAM_SERVERS|E2EE_ISSUER|E2EE_CLIENT_ID)$'
 
 EXPOSE 3000

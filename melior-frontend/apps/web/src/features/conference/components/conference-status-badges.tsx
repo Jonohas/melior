@@ -1,6 +1,13 @@
 import { Badge, Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui';
-import { type ConferenceStatus, type Path, roomMediaPath, type SessionId } from '@/features/conference/domain';
-import { roomPathLabel } from './media-path-labels';
+import {
+    type ConferenceStatus,
+    type DeviceTrust,
+    type Path,
+    roomMediaPath,
+    type SessionId,
+    summarizeEncryption,
+} from '@/features/conference/domain';
+import { encryptionLabel, roomPathLabel } from './media-path-labels';
 
 type ConferenceStatusBadgesProps = {
     sessionId: SessionId | null;
@@ -10,6 +17,8 @@ type ConferenceStatusBadgesProps = {
     participants: Record<SessionId, string>;
     /** The path each remote participant is shown over; absent means forwarded. */
     shownPaths: Record<SessionId, Path>;
+    /** How far each participant's device is trusted for end-to-end encryption. */
+    trust: Record<SessionId, DeviceTrust>;
 };
 
 const STATUS_LABEL: Record<Exclude<ConferenceStatus, 'connected' | 'reconnecting'>, string> = {
@@ -47,6 +56,27 @@ const MediaPathBadge = ({
     );
 };
 
+const ENCRYPTION_VARIANT = { secure: 'success', waiting: 'secondary', attention: 'warning' } as const;
+
+/** Whether the call's media is encrypted end to end, and whose devices need a second look. */
+const EncryptionBadge = ({
+    sessionId,
+    participants,
+    trust,
+}: Pick<ConferenceStatusBadgesProps, 'sessionId' | 'participants' | 'trust'>) => {
+    const summary = summarizeEncryption(participants, trust, sessionId ? trust[sessionId] : undefined);
+    if (summary.kind === 'alone') return null;
+    const { text, hint } = encryptionLabel(summary);
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <Badge variant={ENCRYPTION_VARIANT[summary.kind]}>{text}</Badge>
+            </TooltipTrigger>
+            <TooltipContent>{hint}</TooltipContent>
+        </Tooltip>
+    );
+};
+
 /** Where the room connection stands, how its media travels, and which session it is. */
 export const ConferenceStatusBadges = ({
     sessionId,
@@ -54,10 +84,12 @@ export const ConferenceStatusBadges = ({
     reconnectAttempt,
     participants,
     shownPaths,
+    trust,
 }: ConferenceStatusBadgesProps) => (
     <>
         <StatusBadge status={status} reconnectAttempt={reconnectAttempt} />
         <MediaPathBadge participants={participants} shownPaths={shownPaths} />
+        <EncryptionBadge sessionId={sessionId} participants={participants} trust={trust} />
         {sessionId && (
             <span className="font-mono text-xs text-muted-foreground" title="Session id">
                 session {sessionId.slice(0, 8)}…
