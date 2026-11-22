@@ -113,6 +113,14 @@ These broke the implementation once. Each now has a fix and a test.
   those devices got no token and saw nothing. The round trip is now a
   full-page redirect before the call starts.
 
+- **RED audio arrives whole.** With `audio/red` negotiated, Chromium hands
+  the encoded transform the whole RED payload, not the Opus frame. Encrypting
+  it as one block hid the RED headers from the SFU, which unwraps RED for
+  participants without it: audio through the SFU was 98 to 100% concealed.
+  The worker now encrypts each RED block on its own and keeps the headers
+  readable (`encryptRedFrame`, `decryptRedFrame`). It recognises RED by the
+  frame's `mimeType` metadata.
+
 ## Operational notes
 
 - **Browser support.** `RTCRtpScriptTransform` exists in Chrome and Edge 141,

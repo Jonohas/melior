@@ -1,8 +1,11 @@
 import {
+    buildRed,
     clearPrefixLength,
     type FrameMedia,
     type FrameType,
     frameNonce,
+    parseRed,
+    type RedBlock,
     readTrailer,
     TRAILER_BYTES,
     writeTrailer,
@@ -83,4 +86,42 @@ export const decryptFrame = async (
         }
     }
     return null;
+};
+
+/**
+ * Encrypts a RED audio frame block by block, keeping the RED headers readable so the SFU can still unwrap it for a
+ * participant without RED. Each block is an Opus frame encrypted like any other, so a block the SFU sends on its
+ * own decrypts by itself. A payload that is not valid RED is encrypted as a whole.
+ */
+export const encryptRedFrame = async (data: ArrayBuffer, sending: SendingKey): Promise<ArrayBuffer> => {
+    const red = parseRed(new Uint8Array(data));
+    if (!red) return encryptFrame(data, 'audio', undefined, sending);
+    const seal = async (block: RedBlock): Promise<RedBlock> => ({
+        ...block,
+        data: new Uint8Array(await encryptFrame(block.data.slice().buffer, 'audio', undefined, sending)),
+    });
+    const redundant = [];
+    for (const block of red.redundant) redundant.push(await seal(block));
+    return buildRed({ redundant, primary: await seal(red.primary) }).buffer;
+};
+
+/**
+ * Decrypts a RED audio frame block by block. A redundant block that does not open is left out; a primary block
+ * that does not open drops the frame.
+ */
+export const decryptRedFrame = async (data: ArrayBuffer, lookup: KeyLookup): Promise<ArrayBuffer | null> => {
+    const red = parseRed(new Uint8Array(data));
+    if (!red) return decryptFrame(data, 'audio', undefined, lookup);
+    const open = async (block: RedBlock): Promise<RedBlock | null> => {
+        const opened = await decryptFrame(block.data.slice().buffer, 'audio', undefined, lookup);
+        return opened ? { ...block, data: new Uint8Array(opened) } : null;
+    };
+    const primary = await open(red.primary);
+    if (!primary) return null;
+    const redundant: RedBlock[] = [];
+    for (const block of red.redundant) {
+        const opened = await open(block);
+        if (opened) redundant.push(opened);
+    }
+    return buildRed({ redundant, primary }).buffer;
 };

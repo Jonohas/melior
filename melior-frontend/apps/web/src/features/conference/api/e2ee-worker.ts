@@ -1,5 +1,5 @@
 import type { FrameMedia, FrameType } from '@/features/conference/domain';
-import { decryptFrame, encryptFrame, type SendingKey } from './frame-cipher';
+import { decryptFrame, decryptRedFrame, encryptFrame, encryptRedFrame, type SendingKey } from './frame-cipher';
 
 /**
  * The worker every `RTCRtpScriptTransform` of a call runs in. It encrypts each outgoing encoded frame with this
@@ -15,7 +15,10 @@ export type WorkerCommand =
     | { type: 'receive-key'; sender: string; keyId: number; key: CryptoKey }
     | { type: 'forget'; sender: string; keyIds: number[] | null };
 
-type EncodedFrame = { data: ArrayBuffer; type?: FrameType };
+type EncodedFrame = { data: ArrayBuffer; type?: FrameType; getMetadata?: () => { mimeType?: string } };
+
+/** Whether an audio frame is a RED payload (Chromium hands the whole of it to the transform). */
+const isRed = (frame: EncodedFrame): boolean => frame.getMetadata?.().mimeType?.toLowerCase() === 'audio/red';
 
 type ScriptTransformer = {
     readable: ReadableStream<EncodedFrame>;
@@ -67,13 +70,18 @@ const transformFor = ({ operation, media }: TransformOptions) =>
     new TransformStream<EncodedFrame, EncodedFrame>({
         transform: async (frame, controller) => {
             const type = media === 'video' ? frame.type : undefined;
+            const red = media === 'audio' && isRed(frame);
             if (operation === 'encrypt') {
                 if (!sending) return;
-                frame.data = await encryptFrame(frame.data, media, type, sending);
+                frame.data = red
+                    ? await encryptRedFrame(frame.data, sending)
+                    : await encryptFrame(frame.data, media, type, sending);
                 controller.enqueue(frame);
                 return;
             }
-            const opened = await decryptFrame(frame.data, media, type, lookup);
+            const opened = red
+                ? await decryptRedFrame(frame.data, lookup)
+                : await decryptFrame(frame.data, media, type, lookup);
             if (!opened) return;
             frame.data = opened;
             controller.enqueue(frame);

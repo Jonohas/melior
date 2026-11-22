@@ -125,6 +125,7 @@ export {
     type SessionProbe,
     type StopReason,
 } from './reconnect';
+export { buildRed, parseRed, type RedBlock, type RedPayload } from './red-payload';
 export {
     diffTracks,
     parseStreamKey,
