@@ -31,7 +31,6 @@ export const createSignallingClient = ({
 
     socket.onopen = () => {
         opened = true;
-        console.log('WebSocket open');
     };
     socket.onerror = (event) => console.error('WebSocket error', event);
     socket.onclose = () => onClose({ opened });

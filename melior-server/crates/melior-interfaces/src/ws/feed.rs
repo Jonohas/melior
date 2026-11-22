@@ -4,7 +4,7 @@
 
 use super::feed_messages::{FeedMessage, RemovedReason, VoiceEntryDto};
 use super::messages::CloseReason;
-use super::writer::{finish, spawn_writer};
+use super::writer::{Outbound, finish, spawn_writer};
 use crate::AppState;
 use crate::http::{Authenticated, authenticate, community_response, from_foreign_origin};
 use axum::Router;
@@ -18,7 +18,6 @@ use futures_util::StreamExt;
 use melior_application::{CommunitiesError, CommunityEvent, FeedFilter, FeedVerdict, SessionState};
 use melior_domain::{AuthSessionId, CommunityId, User};
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::MissedTickBehavior;
 use tracing::debug;
 
@@ -74,18 +73,17 @@ enum Step {
     End,
 }
 
-type Outbox = UnboundedSender<FeedMessage>;
+type Outbox = Outbound;
 
 fn push(outbox: &Outbox, message: FeedMessage) {
-    // Fails only once the socket is gone, when there is nobody left to tell.
-    let _ = outbox.send(message);
+    outbox.push(message);
 }
 
 /// Runs one feed: subscribe first so nothing is missed, then the snapshot, then
 /// events, re-checks and the client's close.
 async fn connection(socket: WebSocket, mut member: Member) {
     let (sink, mut stream) = socket.split();
-    let (outbox, writer) = spawn_writer::<FeedMessage>(sink);
+    let (outbox, writer) = spawn_writer(sink);
     let mut events = member.state.communities.events().subscribe(&member.community_id);
     member.snapshot(&outbox).await;
 
@@ -98,6 +96,10 @@ async fn connection(socket: WebSocket, mut member: Member) {
                 Some(Ok(Message::Close(_)) | Err(_)) | None => Step::End,
                 Some(Ok(_)) => Step::Continue,
             },
+            () = outbox.overflowed() => {
+                debug!("feed client is not reading; closing the feed");
+                Step::End
+            }
             event = events.recv() => member.on_event(event, &outbox).await,
             _ = recheck.tick() => member.recheck(&outbox).await,
         };

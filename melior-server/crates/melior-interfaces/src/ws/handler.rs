@@ -2,7 +2,7 @@ use super::chat::ChatSendDto;
 use super::limiter::RelayLimits;
 use super::messages::{ClientMessage, CloseReason, SdpType, ServerMessage};
 use super::peer::{PeerCommand, Rejection};
-use super::writer::{finish, spawn_writer};
+use super::writer::{Outbound, finish, spawn_writer};
 use crate::AppState;
 use crate::http::{Authenticated, authenticate, community_response, from_foreign_origin};
 use axum::Router;
@@ -21,7 +21,6 @@ use melior_domain::{AuthSessionId, ChannelId, DomainError, Permissions, SessionI
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 
@@ -142,14 +141,13 @@ impl Guest {
     }
 }
 
-/// Queues outbound messages for one socket. The queue is unbounded so that use cases
-/// never wait on a slow client; signalling traffic per participant is small.
-struct Outbox(mpsc::UnboundedSender<ServerMessage>);
+/// Queues outbound messages for one socket. Use cases never wait on a slow client;
+/// one that stops reading overflows the queue's budget and is disconnected.
+struct Outbox(Outbound);
 
 impl Outbox {
     fn push(&self, message: ServerMessage) {
-        // Fails only once the socket is gone, when there is nobody left to tell.
-        let _ = self.0.send(message);
+        self.0.push(message);
     }
 }
 
@@ -162,7 +160,7 @@ impl SignalSink for Outbox {
 /// Runs one participant's connection from join to leave.
 async fn connection(socket: WebSocket, mut guest: Guest) {
     let (sink, mut stream) = socket.split();
-    let (tx, writer) = spawn_writer::<ServerMessage>(sink);
+    let (tx, writer) = spawn_writer(sink);
 
     let outbox = Arc::new(Outbox(tx));
     let service = guest.state.conference.clone();
@@ -193,6 +191,10 @@ async fn connection(socket: WebSocket, mut guest: Guest) {
                         Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                         Some(Ok(_)) => {}
                     },
+                    () = outbox.0.overflowed() => {
+                        warn!(session = %session_id, "client is not reading; closing connection");
+                        break;
+                    }
                     _ = recheck.tick() => {
                         if let Some(reason) = guest.overstayed().await {
                             info!(session = %session_id, user = %guest.user.username, ?reason, "closing connection");

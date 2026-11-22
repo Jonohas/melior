@@ -470,3 +470,44 @@ async fn an_oversized_message_ends_that_connection_and_nothing_else() {
     other.send(Message::Text(r#"{"channel":"echo","payload":"ping"}"#.into())).await.unwrap();
     assert_eq!(next_json(&mut other).await, json!({ "channel": "echo", "payload": "ping" }));
 }
+
+#[tokio::test]
+async fn a_client_that_stops_reading_is_disconnected_and_nothing_else() {
+    let server = TestServer::start().await;
+    server.voice_channel("slow").await;
+    let cookie = server.login("alice", &["member"]).await;
+    let (socket, _) =
+        tokio_tungstenite::connect_async(server.ws_request(Some("slow"), Some(&cookie)))
+            .await
+            .unwrap();
+    let bob = server.login("bob", &["member"]).await;
+    let (mut other, _) =
+        tokio_tungstenite::connect_async(server.ws_request(Some("slow"), Some(&bob)))
+            .await
+            .unwrap();
+    next_json(&mut other).await;
+
+    // Alice asks for echoes and never reads them: what the server owes her piles up
+    // in its queue until the socket buffers are full.
+    let (mut sink, _unread) = socket.split();
+    let frame = format!(r#"{{"channel":"echo","payload":"{}"}}"#, "a".repeat(100 * 1024));
+    let flood = tokio::spawn(async move {
+        for _ in 0..2000 {
+            if sink.send(Message::Text(frame.clone().into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // The server gives up on her instead of queueing without end, and bob carries on.
+    let left = timeout(Duration::from_secs(30), other.next())
+        .await
+        .expect("a client that stops reading must be disconnected")
+        .unwrap()
+        .unwrap();
+    let left: Value = serde_json::from_str(left.to_text().unwrap()).unwrap();
+    assert_eq!(left["channel"], "peer_left");
+    other.send(Message::Text(r#"{"channel":"echo","payload":"ping"}"#.into())).await.unwrap();
+    assert_eq!(next_json(&mut other).await, json!({ "channel": "echo", "payload": "ping" }));
+    flood.abort();
+}
