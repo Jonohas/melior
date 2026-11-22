@@ -28,7 +28,11 @@ not these scripts. From `apps/web`, `bun run test` runs vitest directly, and `bu
 
 Open `http://localhost:3000/`, create a server (or join one with an invite link) and pick a channel. A voice channel
 is a call: open it in two tabs to see each other. `?relay=1` on a voice channel URL forces all media through the TURN
-relay (diagnostics). Audio is on, so use headphones.
+relay (diagnostics). `?debug=1` (or `true`) shows the call's debug panel in the top right corner: room path, ICE server
+URLs, the SFU connection and each direct link (states, selected candidate pair, gathered candidates by type, bytes and
+bitrate, route and timing), and the last 50 mesh signals and state changes, with a button that copies it all as JSON.
+It reads `getStats()` once a second only while it is open; the signals are recorded for every call (cheaply, in
+memory), so a panel opened later still shows the history. Audio is on, so use headphones.
 
 | Route | Page |
 | --- | --- |
@@ -251,7 +255,8 @@ apps/web/
     features/conference/
       domain/              pure TypeScript, no React/DOM: channel id, signalling message types and parser,
                            conference status and state reducer, reconnect policy, voice state and speaking
-                           detection, relay flag (vitest, co-located *.test.ts)
+                           detection, relay and debug flags, debug panel state (signal log, stats summary,
+                           inferred link route, redacted report) (vitest, co-located *.test.ts)
       api/                 adapters owning browser objects: signalling WebSocket client, RTCPeerConnection
                            wrapper, camera and microphone capture, microphone level meter
       hooks/               application layer: use-conference orchestrates domain + api and exposes view state

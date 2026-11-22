@@ -38,6 +38,9 @@ type MeshOptions = {
     onShownPath: (peer: SessionId, path: Path) => void;
 };
 
+/** A peer the mesh knows, for the debug panel: its route view, and its direct link when one is open. */
+export type MeshDebugLink = { peer: SessionId; view: PeerRouteView; connection: RTCPeerConnection | null };
+
 export type Mesh = {
     handle: (message: MeshMessage) => Promise<void>;
     /** Closes the direct link to a peer and forgets its route. */
@@ -46,6 +49,8 @@ export type Mesh = {
     setScreen: (screen: MediaStream | null) => Promise<void>;
     /** Sends another microphone or camera track on every direct link, without renegotiation. */
     replaceInput: (track: MediaStreamTrack) => Promise<void>;
+    /** Every peer with a route or a link; read only by the debug panel. */
+    debugLinks: () => MeshDebugLink[];
     close: () => void;
 };
 
@@ -134,6 +139,12 @@ export const createMesh = (options: MeshOptions): Mesh => {
         },
         setScreen: registry.setScreen,
         replaceInput: registry.replaceInput,
+        debugLinks: () =>
+            [...new Set([...views.keys(), ...registry.peers()])].map((peer) => ({
+                peer,
+                view: views.get(peer) ?? initialRouteView(),
+                connection: registry.get(peer)?.connection ?? null,
+            })),
         close: () => {
             sampler.stop();
             registry.closeAll();

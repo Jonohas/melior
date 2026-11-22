@@ -1,3 +1,4 @@
+export { type CallRecorder, createCallRecorder, type DebugSources } from './call-recorder';
 export { type DeviceStore, sharedDeviceStore } from './device-store';
 export { type E2eeSession, startE2eeSession } from './e2ee-session';
 export { canEncryptMedia, createFrameTransforms, type FrameTransforms, type Protect } from './e2ee-transforms';
@@ -30,6 +31,6 @@ export {
     watchDevices,
 } from './local-media';
 export { playStream, watchVideoSize } from './media-element';
-export { createMesh, type Mesh, type MeshMessage } from './mesh';
+export { createMesh, type Mesh, type MeshDebugLink, type MeshMessage } from './mesh';
 export { createPeerSession, type PeerSession } from './peer-session';
 export { createSignallingClient, type SignallingClient } from './signalling-client';

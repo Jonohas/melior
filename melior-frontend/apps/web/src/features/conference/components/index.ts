@@ -1,3 +1,4 @@
+export { CallDebugPanel, type ChannelMediaFacts } from './call-debug-panel';
 export { ConferenceStatusBadges } from './conference-status-badges';
 export { DeviceSettingsDialog } from './device-settings-dialog';
 export { FullscreenButton } from './fullscreen-button';

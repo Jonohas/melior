@@ -43,6 +43,22 @@ describe('createMesh', () => {
         vi.unstubAllGlobals();
     });
 
+    test('the debug view lists the routed peer with its link, and without one after link_close', async () => {
+        await route('direct', 1);
+        expect(mesh.debugLinks()).toEqual([
+            {
+                peer: PEER,
+                view: expect.objectContaining({ preferred: 'direct', epoch: 1 }),
+                connection: FakePeerConnection.instances[0],
+            },
+        ]);
+        await route('forwarded', 2);
+        await mesh.handle({ channel: 'link_close', payload: { peer: PEER } });
+        expect(mesh.debugLinks()).toEqual([
+            { peer: PEER, view: expect.objectContaining({ epoch: 2 }), connection: null },
+        ]);
+    });
+
     test('route direct opens one link and sends one offer', async () => {
         await route('direct', 1);
         expect(FakePeerConnection.instances).toHaveLength(1);

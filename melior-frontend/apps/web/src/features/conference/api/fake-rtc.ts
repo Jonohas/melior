@@ -109,6 +109,8 @@ export class FakePeerConnection {
     static instances: FakePeerConnection[] = [];
 
     connectionState = 'new';
+    iceConnectionState = 'new';
+    iceGatheringState = 'new';
     remoteDescription: { type: string; sdp: string } | null = null;
     localDescription: { type: string; sdp: string } | null = null;
     closed = false;

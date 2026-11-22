@@ -696,6 +696,12 @@ compose wires both from `.env`. There is no static TURN user.
   `error 508` when the range is exhausted.
 - To check the relay path, add `?relay=true` to a room URL: that browser then
   uses relay candidates only.
+- To see why a call does not go direct, add `?debug=true` to a room URL: a panel
+  shows the ICE server URLs (never the TURN username or credential), the SFU
+  connection and every direct link (states, the candidate pair in use, the
+  candidates gathered by type, bytes and bitrate), each link's route as the
+  client can infer it, and a log of the mesh signals and state changes. Its
+  Copy button puts all of it on the clipboard as JSON, without session ids.
 - TLS for coturn is off by default; see `docker/turnserver.conf`.
 
 ## Access over Tailscale
