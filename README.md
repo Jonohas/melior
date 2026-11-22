@@ -453,6 +453,32 @@ a section's stream id to change, clients attribute media by the `tracks` list,
 never by stream id. On a switch the server continues the section's RTP sequence
 numbers and timestamps, so receivers see one uninterrupted stream.
 
+### Lip sync
+
+A browser plays the audio and video sections that announce one stream id in
+step, and holds the earlier back to match the later. Each participant's
+microphone and camera share one stream id, and so do its screen's picture and
+sound. Nobody else's sections share it, so nobody's video waits for someone
+else's audio. This holds on both paths:
+
+- **Forwarded.** A section's stream id cannot change, so the server gives a
+  track to a section that already has its group's stream id, or to one whose
+  stream id no section in use carries, or opens a section
+  (`melior_domain::choose_section`). The server passes each publisher's own RTCP
+  sender reports on to the receivers, with the timestamps rewritten as the
+  section's. It makes no reports of its own: those would pair each RTP time
+  with the moment the packet passed through the SFU, which hides how much later
+  than its sound a busy publisher sent a frame. A simulcast layer switch keeps
+  the section on the same clock.
+- **Direct.** Each side's sections announce the same layout from the first
+  offer: the local stream for the microphone and camera, and a second stream for
+  the screen and its sound. The answerer sets them with `setStreams` before it
+  answers. A browser without `setStreams` sends its answered sections without a
+  stream, and its peer then plays that sound and picture without lining them up.
+
+After a section moves to another participant, the receiver learns the new
+clock from the next sender reports, about a second later.
+
 Audio is sent as RED (RFC 2198) where the browser has it: every packet repeats
 the frame before it, so one lost packet costs no sound. Audio has no
 retransmission, and the sender's Opus FEC only reacts to loss on its own uplink.

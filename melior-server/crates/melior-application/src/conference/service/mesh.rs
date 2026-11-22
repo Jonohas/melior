@@ -25,12 +25,8 @@ impl ConferenceService {
                 continue;
             };
             for track in tracks {
-                match subscriber.media.subscribe(&track.id).await {
-                    Ok(()) => changed.push(subscriber_id.clone()),
-                    Err(error) => {
-                        warn!(session = %subscriber_id, track = %track.id, %error, "subscribe failed");
-                        room.subscription_failed(subscriber_id, &track.id);
-                    }
+                if Self::subscribe(room, &subscriber, &track.id).await {
+                    changed.push(subscriber_id.clone());
                 }
             }
         }

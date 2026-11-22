@@ -31,11 +31,14 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::client::Request;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use webrtc::api::APIBuilder;
-use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::interceptor_registry::{
+    configure_nack, configure_twcc_receiver_only, register_default_interceptors,
+};
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::setting_engine::SettingEngine;
 use webrtc::ice::network_type::NetworkType;
 use webrtc::interceptor::registry::Registry;
+use webrtc::interceptor::report::receiver::ReceiverReport;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 
@@ -290,11 +293,34 @@ pub async fn new_peer_connection_speaking(media_engine: MediaEngine) -> RTCPeerC
     build_peer_connection(settings, media_engine).await
 }
 
+/// [`new_peer_connection`] that makes no sender reports of its own: the test writes
+/// them, as a browser does, from when each frame was captured.
+pub async fn new_peer_connection_reporting_itself() -> RTCPeerConnection {
+    let mut media_engine = MediaEngine::default();
+    media_engine.register_default_codecs().unwrap();
+    let mut settings = SettingEngine::default();
+    settings.set_include_loopback_candidate(true);
+    settings.set_network_types(vec![NetworkType::Udp4]);
+    settings.set_interface_filter(Box::new(|name| name == "lo"));
+    let registry = configure_nack(Registry::new(), &mut media_engine);
+    let mut registry = configure_twcc_receiver_only(registry, &mut media_engine).unwrap();
+    registry.add(Box::new(ReceiverReport::builder()));
+    with_interceptors(settings, media_engine, registry).await
+}
+
 async fn build_peer_connection(
     settings: SettingEngine,
     mut media_engine: MediaEngine,
 ) -> RTCPeerConnection {
     let interceptors = register_default_interceptors(Registry::new(), &mut media_engine).unwrap();
+    with_interceptors(settings, media_engine, interceptors).await
+}
+
+async fn with_interceptors(
+    settings: SettingEngine,
+    media_engine: MediaEngine,
+    interceptors: Registry,
+) -> RTCPeerConnection {
     APIBuilder::new()
         .with_media_engine(media_engine)
         .with_interceptor_registry(interceptors)

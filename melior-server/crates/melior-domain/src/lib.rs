@@ -40,7 +40,8 @@ pub use conference::{
     ChannelId, ChannelMedia, ClientOffer, Departure, DomainError, Effects, IceCandidate, IceServer,
     Joined, KeyEnvelope, LinkClose, LinkTimeout, MAX_KEY_ENVELOPE_BYTES, MediaKind, MediaMode,
     MediaPath, MediaWarning, MeshPolicy, Negotiation, NegotiationPhase, Pair, ParticipantInfo,
-    ReceiverLayer, Room, RoomPlan, RoomTarget, Route, RouteNotice, Sdp, SessionId, SimulcastLayer,
-    Track, TrackId, TrackSource, VoiceLimit, VoiceState,
+    ReceiverLayer, Room, RoomPlan, RoomTarget, Route, RouteNotice, Sdp, SectionChoice, SectionView,
+    SessionId, SimulcastLayer, StreamLabel, SyncGroup, Track, TrackId, TrackSource, VoiceLimit,
+    VoiceState, choose_section,
 };
 pub use identity::{AuthSessionId, ReturnPath, User, UserId, Username};

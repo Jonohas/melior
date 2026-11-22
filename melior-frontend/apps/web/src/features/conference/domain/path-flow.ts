@@ -13,6 +13,21 @@ export type DirectSection = MediaKind | 'screenAudio';
  */
 export const DIRECT_SECTIONS: readonly DirectSection[] = ['audio', 'video', 'screen', 'screenAudio'];
 
+/** Sections a receiver plays in step with each other: a peer's microphone and camera, or its screen's sound and picture. */
+export type SyncGroup = 'camera' | 'screen';
+
+/**
+ * The sync group of each section. A browser lines up the sections that announce one stream and holds the
+ * earlier back to match the later; it lines video up against one audio per stream, so the screen's sound
+ * gets a stream of its own instead of joining the microphone's.
+ */
+export const SYNC_GROUP: Readonly<Record<DirectSection, SyncGroup>> = {
+    audio: 'camera',
+    video: 'camera',
+    screen: 'screen',
+    screenAudio: 'screen',
+};
+
 /** Whose media a stats entry shows, and which of the peer's kinds it is. */
 export type InboundSource = { peer: SessionId; kind: MediaKind };
 

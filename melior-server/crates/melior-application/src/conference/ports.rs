@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use melior_domain::{
     ChannelId, ChatMessage, IceCandidate, IceServer, KeyEnvelope, MediaPath, ParticipantInfo, Sdp,
-    SessionId, Track, TrackId, TrackSource, User, VoiceState,
+    SessionId, SyncGroup, Track, TrackId, TrackSource, User, VoiceState,
 };
 use std::sync::{Arc, Weak};
 
@@ -44,7 +44,9 @@ pub trait MediaSession: Send + Sync {
     async fn add_ice_candidate(&self, candidate: IceCandidate) -> Result<(), MediaError>;
 
     /// Starts sending a published track to this participant (after the next negotiation).
-    async fn subscribe(&self, track: &TrackId) -> Result<(), MediaError>;
+    /// The participant's browser plays it in step with the other tracks of `group`, and
+    /// with no others.
+    async fn subscribe(&self, track: &TrackId, group: &SyncGroup) -> Result<(), MediaError>;
 
     /// Stops sending a track to this participant.
     async fn unsubscribe(&self, track: &TrackId) -> Result<(), MediaError>;

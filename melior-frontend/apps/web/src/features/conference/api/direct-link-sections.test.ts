@@ -90,6 +90,34 @@ describe('the sections of a direct link', () => {
         }
     });
 
+    /** Which sections announce one stream, as `[audio, camera, screen, screen audio]` stream indices. */
+    const streamLayout = (): number[] => {
+        const seen: unknown[] = [];
+        return sections().map((t) => {
+            expect(t.sender.streams).toHaveLength(1);
+            const stream = t.sender.streams[0];
+            if (!seen.includes(stream)) seen.push(stream);
+            return seen.indexOf(stream);
+        });
+    };
+
+    test('the offerer announces one stream for microphone and camera, and another for the screen and its sound', async () => {
+        await link(true).start();
+        expect(streamLayout()).toEqual([0, 0, 1, 1]);
+        expect(sections()[0]?.sender.streams[0]).toBeInstanceOf(FakeMediaStream);
+    });
+
+    test('an offerer without a camera announces the same layout, so a camera turned on later is in step', async () => {
+        local = { audio: MIC, video: null, ...NOT_SHARED };
+        await link(true).start();
+        expect(streamLayout()).toEqual([0, 0, 1, 1]);
+    });
+
+    test('the answerer announces the same layout on the sections the offer created', async () => {
+        await link(false).handleOffer('offer');
+        expect(streamLayout()).toEqual([0, 0, 1, 1]);
+    });
+
     test('an offerer without a camera still has all four sections', async () => {
         local = { audio: MIC, video: null, ...NOT_SHARED };
         await link(true).start();

@@ -1,5 +1,6 @@
 //! The media plane, implemented with webrtc-rs.
 
+mod clock;
 mod codecs;
 mod engine;
 mod forwarder;

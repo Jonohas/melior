@@ -1,6 +1,6 @@
 use super::testing::*;
 use super::*;
-use melior_domain::{MediaKind, TrackSource, UserId, VoiceState};
+use melior_domain::{MediaKind, SyncGroup, TrackSource, UserId, VoiceState};
 
 #[tokio::test]
 async fn join_announces_the_session_and_first_offer_is_answered() {
@@ -73,6 +73,23 @@ async fn a_screen_is_offered_with_its_source_and_a_stopped_one_is_retracted() {
     };
     assert_eq!(tracks.len(), 1, "only the camera is left");
     assert_eq!(tracks[0].source, TrackSource::Camera);
+}
+
+#[tokio::test]
+async fn each_track_is_subscribed_in_its_publishers_sync_group() {
+    let h = Harness::new();
+    let alice = h.join_ready("general").await;
+    let bob = h.join_ready("general").await;
+    let camera = h.publish(&alice).await;
+    let screen = h.publish(&alice).await;
+
+    let camera_group = SyncGroup::new(alice.id.clone(), TrackSource::Camera);
+    let screen_group = SyncGroup::new(alice.id.clone(), TrackSource::Screen);
+    let expected = vec![(camera.id, camera_group), (screen.id, screen_group)];
+    assert_eq!(*lock(&bob.media.groups), expected, "as published");
+
+    let carol = h.join_ready("general").await;
+    assert_eq!(*lock(&carol.media.groups), expected, "when joining later");
 }
 
 #[tokio::test]
