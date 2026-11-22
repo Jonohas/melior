@@ -602,7 +602,10 @@ Chrome and Edge 141, Firefox 117 or Safari 15.4) does not join.
   does not exist yet, so an existing realm needs the client created once (copy
   the client entry from the realm file into **Clients → Import client** in the
   admin console); `docker/keycloak-allow-origin.sh` then adds further origins
-  to both clients. The round trip is a top-level navigation, so Keycloak's own
+  to both clients. Production runs with vouching off (`E2EE_ISSUER` empty in
+  `deploy/compose.yaml`) until the client exists in the realm on
+  `auth.faber.zip`: Keycloak shows an error page for an unknown client instead
+  of redirecting back. The round trip is a top-level navigation, so Keycloak's own
   cookie is first-party: it works with third-party cookies blocked and with
   Keycloak on another site than the frontend.
 

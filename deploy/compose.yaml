@@ -67,8 +67,10 @@ services:
     image: ghcr.io/jonohas/melior-frontend:${MELIOR_VERSION:?missing from version.env}
     environment:
       MELIOR_SERVER_URLS: http://host.docker.internal:5000
-      # The realm vouches for device keys; its melior-e2ee client must exist (README, End-to-end encryption).
-      E2EE_ISSUER: ${IDP_ISSUER:?missing from .env}
+      # The realm that vouches for device keys. Empty until the melior-e2ee client exists in the production
+      # realm: Keycloak shows an error page for an unknown client, and every call would start on it. Set it to
+      # the issuer (https://auth.faber.zip/realms/melior) once the client is there (README, End-to-end encryption).
+      E2EE_ISSUER: ""
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
