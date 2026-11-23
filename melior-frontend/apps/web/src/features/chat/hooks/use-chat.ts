@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { fetchHistory } from '@/features/chat/api';
+import { fetchHistory, type OutgoingMessage } from '@/features/chat/api';
 import {
     type ChatMessage,
     type ChatState,
@@ -7,12 +7,13 @@ import {
     checkDraft,
     createInitialChatState,
     type DraftCheck,
+    type OutgoingAttachment,
     parseChatMessage,
 } from '@/features/chat/domain';
 import type { ChatEvent } from '@/features/conference/hooks';
 
 /** Sends one message to the room. Returns false when there is no open connection. */
-export type ChatTransport = (text: string, clientId: string) => boolean;
+export type ChatTransport = (message: OutgoingMessage, clientId: string) => boolean;
 
 type UseChatOptions = {
     /** Whether the live connection is up. History loads on every (re)connect, to catch what was missed. */
@@ -31,8 +32,11 @@ export type UseChatReturn = {
     receiveSaved: (message: ChatMessage, clientId: string | null) => void;
     /** The server refused a message; with a `clientId` that message is marked failed. */
     refuse: (clientId: string | null, message: string) => void;
-    /** Checks and sends a draft. The result says whether it was accepted, and why not if it was not. */
-    submit: (draft: string, transport: ChatTransport) => DraftCheck;
+    /**
+     * Checks and sends a draft with what it carries (an uploaded image or a GIF; the text may then be empty).
+     * The result says whether it was accepted, and why not if it was not.
+     */
+    submit: (draft: string, attachment: OutgoingAttachment | null, transport: ChatTransport) => DraftCheck;
     retry: (clientId: string, transport: ChatTransport) => void;
     loadEarlier: () => void;
     reloadHistory: () => void;
@@ -114,17 +118,18 @@ export const useChat = (channelId: string, { connected, username, open }: UseCha
         [receiveSaved, refuse],
     );
 
-    const deliver = useCallback((text: string, clientId: string, transport: ChatTransport) => {
-        if (!transport(text, clientId)) dispatch({ type: 'send_failed', clientId, error: NOT_CONNECTED });
+    const deliver = useCallback((message: OutgoingMessage, clientId: string, transport: ChatTransport) => {
+        if (!transport(message, clientId)) dispatch({ type: 'send_failed', clientId, error: NOT_CONNECTED });
     }, []);
 
     const submit = useCallback(
-        (draft: string, transport: ChatTransport): DraftCheck => {
-            const checked = checkDraft(draft);
+        (draft: string, attachment: OutgoingAttachment | null, transport: ChatTransport): DraftCheck => {
+            const checked = checkDraft(draft, attachment !== null);
             if (!checked.ok) return checked;
             const clientId = newClientId();
-            dispatch({ type: 'send_started', clientId, username: username ?? '', text: checked.text });
-            deliver(checked.text, clientId, transport);
+            const text = checked.text;
+            dispatch({ type: 'send_started', clientId, username: username ?? '', text, attachment });
+            deliver({ text, attachment }, clientId, transport);
             return checked;
         },
         [username, deliver],
@@ -135,7 +140,7 @@ export const useChat = (channelId: string, { connected, username, open }: UseCha
             const entry = stateRef.current.pending.find((pending) => pending.clientId === clientId);
             if (!entry) return;
             dispatch({ type: 'send_retried', clientId });
-            deliver(entry.text, clientId, transport);
+            deliver({ text: entry.text, attachment: entry.attachment }, clientId, transport);
         },
         [deliver],
     );

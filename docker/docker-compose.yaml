@@ -1,15 +1,15 @@
 # Melior development stack.
 #
 # `docker compose up` starts only the infrastructure (postgres, redis, keycloak,
-# coturn, jaeger). The application itself is behind the "app" profile:
+# coturn, jaeger, rustfs). The application itself is behind the "app" profile:
 #
 #   ./init-env.sh                              # once: writes .env with random secrets
 #   docker compose --profile app up --build
 #   docker compose --profile app --profile scale up --build   # two SFU instances
 #
-# Configuration comes from docker/.env (see .env.example). The four secrets
-# (POSTGRES_PASSWORD, KEYCLOAK_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, TURN_SECRET)
-# have no default: compose refuses to run until init-env.sh has created .env.
+# Configuration comes from docker/.env (see .env.example). The five secrets
+# (POSTGRES_PASSWORD, KEYCLOAK_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, TURN_SECRET,
+# RUSTFS_SECRET_KEY) have no default: compose refuses to run until init-env.sh has created .env.
 # Everything else has a development default.
 
 # Shared by both SFU instances so that they cannot drift apart.
@@ -35,6 +35,13 @@ x-melior-server: &melior-server
     # Room registry in the application database; traces go to Jaeger (OTLP gRPC).
     DATABASE_URL: postgres://${POSTGRES_USER:-melior}:${POSTGRES_PASSWORD:?run docker/init-env.sh first}@127.0.0.1:5432/${POSTGRES_DB:-melior}
     OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://127.0.0.1:4317}
+    # Chat images go to RustFS; the bucket is created on the first upload.
+    S3_ENDPOINT: ${S3_ENDPOINT:-http://127.0.0.1:9000}
+    S3_BUCKET: ${S3_BUCKET:-melior-images}
+    S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-melior}
+    S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:?run docker/init-env.sh first}
+    # GIF search in the browser; empty turns GIFs off (https://partner.klipy.com).
+    KLIPY_APP_KEY: ${KLIPY_APP_KEY:-}
     RUST_LOG: ${RUST_LOG:-}
   depends_on:
     postgres:
@@ -46,6 +53,8 @@ x-melior-server: &melior-server
     keycloak:
       condition: service_started
     jaeger:
+      condition: service_started
+    rustfs:
       condition: service_started
   restart: unless-stopped
 
@@ -132,6 +141,27 @@ services:
       - "127.0.0.1:6379:6379"
     restart: unless-stopped
 
+  # S3-compatible object storage for the images sent in chat. The SFU reaches
+  # the S3 API on 9000; the web console is on 9001. Both on loopback only.
+  rustfs:
+    image: rustfs/rustfs:1.0.6
+    container_name: rustfs
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-melior}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?run docker/init-env.sh first}
+      # No request to the RustFS update server at startup.
+      RUSTFS_CHECK_UPDATE: "false"
+    volumes:
+      - rustfs_data:/data
+    ports:
+      - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
+      - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    restart: unless-stopped
+
   # TURN/STUN relay with time-limited credentials (use-auth-secret in
   # turnserver.conf). Settings that differ per machine are passed as arguments
   # and override turnserver.conf. TLS is off by default (see turnserver.conf).
@@ -200,3 +230,4 @@ services:
 
 volumes:
   postgres_data:
+  rustfs_data:

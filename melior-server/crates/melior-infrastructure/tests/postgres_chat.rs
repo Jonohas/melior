@@ -7,13 +7,14 @@
 
 use melior_application::{ChatRepository, CommunityRepository};
 use melior_domain::{
-    ChannelId, ChannelKind, ChatText, CommunityId, CommunityState, MessageId, Name, User, UserId,
+    Attachment, AttachmentId, ChannelId, ChannelKind, ChatContent, ChatText, CommunityId,
+    CommunityState, GifLink, ImageFormat, MessageId, Name, StoredImage, User, UserId,
 };
 use melior_infrastructure::postgres::{
     Database, PostgresChatRepository, PostgresCommunityRepository,
 };
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn database() -> Arc<Database> {
     let url = std::env::var("MELIOR_TEST_DATABASE_URL").expect("MELIOR_TEST_DATABASE_URL");
@@ -26,8 +27,8 @@ fn fresh_channel() -> ChannelId {
     ChannelId::parse(&format!("t{nanos}")).unwrap()
 }
 
-fn text(raw: &str) -> ChatText {
-    ChatText::parse(raw).unwrap()
+fn text(raw: &str) -> ChatContent {
+    ChatText::parse(raw).unwrap().into()
 }
 
 /// Stores a community whose voice channel has the id `channel`.
@@ -54,7 +55,7 @@ async fn messages_are_saved_with_an_increasing_id_and_a_time() {
     let second = chat.append(&channel, "bob", &text("two\nlines")).await.unwrap();
 
     assert!(second.id > first.id);
-    assert_eq!((second.author.as_str(), second.text.as_str()), ("bob", "two\nlines"));
+    assert_eq!((second.author.as_str(), second.content.text_str()), ("bob", "two\nlines"));
     assert!(first.sent_at_ms > 1_600_000_000_000, "time comes from the database clock");
     assert!(second.sent_at_ms >= first.sent_at_ms);
 }
@@ -72,7 +73,7 @@ async fn a_page_is_newest_first_and_before_pages_back() {
 
     let newest = chat.page(&channel, None, 2).await.unwrap();
     let texts = |page: &[melior_domain::ChatMessage]| {
-        page.iter().map(|m| m.text.to_string()).collect::<Vec<_>>()
+        page.iter().map(|m| m.content.text_str().to_owned()).collect::<Vec<_>>()
     };
     assert_eq!(texts(&newest), ["m5", "m4"]);
 
@@ -106,4 +107,75 @@ async fn a_message_for_an_unknown_channel_is_refused() {
     let result = chat.append(&fresh_channel(), "alice", &text("hello")).await;
 
     assert!(result.is_err());
+}
+
+#[tokio::test]
+#[ignore = "needs MELIOR_TEST_DATABASE_URL"]
+async fn images_and_gifs_are_saved_with_their_messages() {
+    let database = database();
+    let channel = fresh_channel();
+    register(&database, &channel).await;
+    let chat = PostgresChatRepository::new(database);
+    let image = StoredImage {
+        id: AttachmentId::generate(),
+        channel_id: channel.clone(),
+        uploader: "alice".into(),
+        format: ImageFormat::Webp,
+        size: 42,
+    };
+    chat.save_image(&image).await.unwrap();
+    assert_eq!(chat.image(&image.id).await.unwrap(), Some(image.clone()));
+    assert_eq!(chat.image(&AttachmentId::generate()).await.unwrap(), None);
+
+    let with_image = ChatContent::new(
+        None,
+        Some(Attachment::Image { id: image.id.clone(), format: ImageFormat::Webp }),
+    )
+    .unwrap();
+    let gif = GifLink::parse("https://static.klipy.com/a.gif", 20, 10).unwrap();
+    let with_gif =
+        ChatContent::new(ChatText::parse("ha").ok(), Some(Attachment::Gif(gif))).unwrap();
+    let saved_image = chat.append(&channel, "alice", &with_image).await.unwrap();
+    let saved_gif = chat.append(&channel, "alice", &with_gif).await.unwrap();
+
+    assert_eq!(saved_image.content, with_image);
+    assert_eq!(saved_gif.content, with_gif);
+    let page = chat.page(&channel, None, 10).await.unwrap();
+    assert_eq!(page.iter().map(|m| m.content.clone()).collect::<Vec<_>>(), [with_gif, with_image]);
+}
+
+#[tokio::test]
+#[ignore = "needs MELIOR_TEST_DATABASE_URL"]
+async fn only_images_no_message_carries_are_deleted_once_old_enough() {
+    let database = database();
+    let channel = fresh_channel();
+    register(&database, &channel).await;
+    let chat = PostgresChatRepository::new(database);
+    let image = |format| StoredImage {
+        id: AttachmentId::generate(),
+        channel_id: channel.clone(),
+        uploader: "alice".into(),
+        format,
+        size: 1,
+    };
+    let (sent, unsent) = (image(ImageFormat::Png), image(ImageFormat::Gif));
+    chat.save_image(&sent).await.unwrap();
+    chat.save_image(&unsent).await.unwrap();
+    let attachment = Attachment::Image { id: sent.id.clone(), format: ImageFormat::Png };
+    chat.append(&channel, "alice", &ChatContent::new(None, Some(attachment)).unwrap())
+        .await
+        .unwrap();
+
+    let young = chat.delete_unattached_images(Duration::from_secs(3600), 1000).await.unwrap();
+    assert!(!young.contains(&unsent.id), "younger than the limit");
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let swept = chat.delete_unattached_images(Duration::ZERO, 1000).await.unwrap();
+
+    assert!(swept.contains(&unsent.id));
+    assert!(!swept.contains(&sent.id));
+    assert_eq!(chat.image(&unsent.id).await.unwrap(), None);
+    assert_eq!(chat.image(&sent.id).await.unwrap(), Some(sent.clone()));
+    let gone = Attachment::Image { id: unsent.id.clone(), format: ImageFormat::Gif };
+    let late = chat.append(&channel, "alice", &ChatContent::new(None, Some(gone)).unwrap()).await;
+    assert!(late.is_err(), "a swept image cannot be attached");
 }

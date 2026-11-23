@@ -3,7 +3,6 @@
 use rand::Rng;
 use rand::distributions::Alphanumeric;
 use std::fmt;
-use uuid::Uuid;
 
 /// An id that is a lowercase hyphenated UUID. [`parse`](CommunityId::parse) accepts
 /// exactly what `generate` produces, so a client cannot name one in another spelling.
@@ -16,12 +15,12 @@ macro_rules! uuid_id {
         impl $name {
             #[must_use]
             pub fn generate() -> Self {
-                Self(Uuid::new_v4().to_string())
+                Self(::uuid::Uuid::new_v4().to_string())
             }
 
             #[must_use]
             pub fn parse(raw: &str) -> Option<Self> {
-                let canonical = Uuid::parse_str(raw).ok()?.to_string();
+                let canonical = ::uuid::Uuid::parse_str(raw).ok()?.to_string();
                 (canonical == raw).then_some(Self(canonical))
             }
 
@@ -38,6 +37,7 @@ macro_rules! uuid_id {
         }
     };
 }
+pub(crate) use uuid_id;
 
 uuid_id!(
     /// Identifies a community.

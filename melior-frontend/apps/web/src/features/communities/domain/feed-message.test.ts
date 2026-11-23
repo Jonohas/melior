@@ -44,8 +44,12 @@ describe('parseFeedMessage', () => {
         expect(parseFeedMessage(msg('message', { channel_id: 't1', message }))).toEqual({
             channel: 'message',
             channelId: 't1',
-            message: { id: 3, username: 'bob', text: 'hi', sentAtMs: 10 },
+            message: { id: 3, username: 'bob', text: 'hi', sentAtMs: 10, attachment: null },
         });
+        const attachment = { kind: 'image', id: 'a1', content_type: 'image/jpeg' };
+        expect(
+            parseFeedMessage(msg('message', { channel_id: 't1', message: { ...message, text: '', attachment } })),
+        ).toMatchObject({ message: { text: '', attachment: { kind: 'image', id: 'a1', contentType: 'image/jpeg' } } });
         expect(parseFeedMessage(msg('structure_changed', {}))).toEqual({ channel: 'structure_changed' });
         expect(parseFeedMessage(msg('members_changed', {}))).toEqual({ channel: 'members_changed' });
         for (const reason of ['kicked', 'left', 'deleted']) {
@@ -65,6 +69,15 @@ describe('parseFeedMessage', () => {
         expect(parseFeedMessage(msg('voice_joined', { ...wireEntry, username: undefined }))).toBeNull();
         expect(parseFeedMessage(msg('voice_left', { channel_id: 'v1' }))).toBeNull();
         expect(parseFeedMessage(msg('message', { channel_id: 't1', message: { id: 'x' } }))).toBeNull();
+        const gifFromElsewhere = { kind: 'gif', url: 'https://example.com/a.gif', width: 1, height: 1 };
+        expect(
+            parseFeedMessage(
+                msg('message', {
+                    channel_id: 't1',
+                    message: { id: 3, username: 'bob', text: '', sent_at_ms: 10, attachment: gifFromElsewhere },
+                }),
+            ),
+        ).toBeNull();
         expect(parseFeedMessage(msg('removed', { reason: 'bored' }))).toBeNull();
         expect(parseFeedMessage(msg('hello', {}))).toBeNull();
     });

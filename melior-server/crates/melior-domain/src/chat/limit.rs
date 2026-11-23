@@ -17,6 +17,12 @@ impl SendLimit {
         Self::new(5, 10_000)
     }
 
+    /// Ten image uploads per minute.
+    #[must_use]
+    pub fn uploads() -> Self {
+        Self::new(10, 60_000)
+    }
+
     #[must_use]
     pub fn new(max: usize, window_ms: u64) -> Self {
         Self { max, window_ms, sent: VecDeque::new() }

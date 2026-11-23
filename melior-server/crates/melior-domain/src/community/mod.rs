@@ -18,6 +18,7 @@ mod text;
 
 pub use channels::{CategoryChanges, ChannelChanges, ChannelDraft};
 pub use error::{CommunityError, Refusal, Rejected};
+pub(crate) use ids::uuid_id;
 pub use ids::{CategoryId, CommunityId, InviteCode, RoleId};
 pub use invite::{Invite, InviteSettings};
 pub use model::{

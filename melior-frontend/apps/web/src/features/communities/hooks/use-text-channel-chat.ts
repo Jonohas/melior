@@ -1,11 +1,11 @@
 import { useCallback, useEffect } from 'react';
 import { postChatMessage } from '@/features/chat/api';
-import type { DraftCheck } from '@/features/chat/domain';
+import type { DraftCheck, OutgoingAttachment } from '@/features/chat/domain';
 import { type ChatTransport, type UseChatReturn, useChat } from '@/features/chat/hooks';
 import { useCommunityFeed } from './community-feed-context';
 
 export type TextChannelChat = Omit<UseChatReturn, 'submit' | 'retry'> & {
-    submit: (draft: string) => DraftCheck;
+    submit: (draft: string, attachment: OutgoingAttachment | null) => DraftCheck;
     retry: (clientId: string) => void;
 };
 
@@ -28,8 +28,8 @@ export const useTextChannelChat = (channelId: string, username: string): TextCha
     );
 
     const transport: ChatTransport = useCallback(
-        (text, clientId) => {
-            postChatMessage(channelId, text, clientId)
+        (message, clientId) => {
+            postChatMessage(channelId, message, clientId)
                 .then((saved) => receiveSaved(saved, clientId))
                 .catch((error) => refuse(clientId, error instanceof Error ? error.message : String(error)));
             return true;
@@ -39,7 +39,7 @@ export const useTextChannelChat = (channelId: string, username: string): TextCha
 
     return {
         ...chat,
-        submit: (draft) => chat.submit(draft, transport),
+        submit: (draft, attachment) => chat.submit(draft, attachment, transport),
         retry: (clientId) => chat.retry(clientId, transport),
     };
 };

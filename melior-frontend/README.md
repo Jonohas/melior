@@ -127,6 +127,16 @@ first, and a 403 or 404 there ends it as `kicked` or `deleted`.
 A text channel loads its history with `GET /api/channels/{id}/messages`, posts with `POST` (the answer settles the
 pending message; a refusal marks it failed with the server's reason) and receives new messages from the feed.
 
+**Images and GIFs** work the same in text channels and in a call's chat (`features/chat`). The composer's image button
+(or pasting an image) checks the file (PNG, JPEG, GIF or WebP, at most 10 MiB; `checkImageFile`) and uploads it at once
+with `POST /api/channels/{id}/attachments`; the chip shows the upload, its refusal with a retry, and a remove button,
+and the message (with or without text) can be sent once the upload is done. The GIF button appears only when
+`GET /api/gifs/config` returns a KLIPY app key. Its picker searches KLIPY from the browser, as KLIPY requires
+(trending while the box is empty, 300 ms debounce, 24 per page with "Load more"); picking a GIF sends it at once as a
+message of its own and leaves the draft alone. KLIPY's response is parsed in `parseGifPage`, and only GIFs whose URL
+the server accepts (https on `static.klipy.com`, `static1.klipy.com` or `static2.klipy.com`) are offered. Saved images
+load from `GET /api/attachments/{id}` and open in full in a new tab; GIFs load from KLIPY's URL unchanged.
+
 Every response and feed message is parsed in `features/communities/domain` (`parseCommunityView`, `parseFeedMessage`,
 ...) and rejected when it does not fit; permission names the client does not know are dropped. The rules the UI needs
 (who may edit which role, kick whom, the channel tree order, override editing, media settings checks) are pure
@@ -140,6 +150,8 @@ functions there with tests.
 | `POST /api/communities/{id}/categories`, `PATCH/DELETE .../categories/{id}` | categories and their overrides |
 | `POST /api/communities/{id}/channels`, `PATCH/DELETE /api/channels/{id}` | channels, media settings, overrides, sync |
 | `GET/POST /api/channels/{id}/messages` | text and call chat history; text channel posts |
+| `POST /api/channels/{id}/attachments`, `GET /api/attachments/{id}` | image upload for a message; the saved image |
+| `GET /api/gifs/config` | the KLIPY app key, or null when GIFs are off |
 | `GET /api/channels/{id}/admission` | the call's reconnect probe: 204, 403, 404, 409 |
 | `POST/GET /api/communities/{id}/invites`, `DELETE /api/invites/{code}` | invites |
 | `GET/POST /api/invites/{code}` | invite preview and join |

@@ -1,4 +1,10 @@
-import { type ChatMessage, type HistoryPage, parseChatMessage, parseHistoryPage } from '@/features/chat/domain';
+import {
+    type ChatMessage,
+    type HistoryPage,
+    type OutgoingAttachment,
+    parseChatMessage,
+    parseHistoryPage,
+} from '@/features/chat/domain';
 import { ForbiddenError, UnauthorizedError } from '@/lib/auth';
 
 /** How many messages one request asks for. */
@@ -33,16 +39,30 @@ export const fetchHistory = async (channelId: string, before: number | null = nu
     return page;
 };
 
+/** A message to send: its text (empty only with an attachment) and what it carries. */
+export type OutgoingMessage = { text: string; attachment: OutgoingAttachment | null };
+
+/** The `chat_send` payload and the POST body: the same fields, `attachment` only when there is one. */
+export const chatSendBody = (
+    { text, attachment }: OutgoingMessage,
+    clientId: string,
+): { text: string; client_id: string; attachment?: OutgoingAttachment } =>
+    attachment === null ? { text, client_id: clientId } : { text, client_id: clientId, attachment };
+
 /** Posts a message to a text channel and returns it as saved. Rejects with the server's reason when refused. */
-export const postChatMessage = async (channelId: string, text: string, clientId: string): Promise<ChatMessage> => {
+export const postChatMessage = async (
+    channelId: string,
+    message: OutgoingMessage,
+    clientId: string,
+): Promise<ChatMessage> => {
     const response = await fetch(messagesUrl(channelId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, client_id: clientId }),
+        body: JSON.stringify(chatSendBody(message, clientId)),
     });
     if (response.status === 401) throw new UnauthorizedError();
     if (!response.ok) throw new Error((await refusalText(response)) ?? `Not sent (HTTP ${response.status}).`);
-    const message = parseChatMessage(await response.json());
-    if (!message) throw new Error('Unexpected chat message response');
-    return message;
+    const saved = parseChatMessage(await response.json());
+    if (!saved) throw new Error('Unexpected chat message response');
+    return saved;
 };

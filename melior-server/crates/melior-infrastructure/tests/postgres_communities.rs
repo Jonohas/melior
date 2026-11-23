@@ -190,7 +190,7 @@ async fn deleting_a_category_keeps_its_channels_and_deleting_a_channel_its_histo
     assert_eq!(loaded.channel(&text.id).unwrap().category_id, None);
     assert_eq!(loaded.categories.len(), 2);
 
-    chat.append(&text.id, "alice", &ChatText::parse("hi").unwrap()).await.unwrap();
+    chat.append(&text.id, "alice", &ChatText::parse("hi").unwrap().into()).await.unwrap();
     repository.delete_channel(&text.id).await.unwrap();
     assert!(chat.page(&text.id, None, 10).await.unwrap().is_empty());
     assert!(repository.load_by_channel(&text.id).await.unwrap().is_none());

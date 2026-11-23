@@ -3,7 +3,10 @@
 //! into domain types and refused when it does not fit.
 
 use melior_application::{CommunityEvent, RemovalReason, VoiceEntry};
-use melior_domain::{ChannelId, ChatMessage, ChatText, MessageId, SessionId, UserId, VoiceState};
+use melior_domain::{
+    Attachment, AttachmentId, ChannelId, ChatContent, ChatMessage, ChatText, GifLink, ImageFormat,
+    MessageId, SessionId, UserId, VoiceState,
+};
 use serde::{Deserialize, Serialize};
 
 // The four flags of a voice state, as they are stored.
@@ -59,6 +62,70 @@ pub(super) struct MessageRecord {
     author: String,
     text: String,
     sent_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attachment: Option<AttachmentRecord>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(super) enum AttachmentRecord {
+    Image { id: String, content_type: String },
+    Gif { url: String, width: u32, height: u32 },
+}
+
+impl From<&ChatMessage> for MessageRecord {
+    fn from(message: &ChatMessage) -> Self {
+        let attachment = message.content.attachment().map(|attachment| match attachment {
+            Attachment::Image { id, format } => AttachmentRecord::Image {
+                id: id.to_string(),
+                content_type: format.content_type().to_owned(),
+            },
+            Attachment::Gif(gif) => AttachmentRecord::Gif {
+                url: gif.url().to_owned(),
+                width: u32::from(gif.width()),
+                height: u32::from(gif.height()),
+            },
+        });
+        Self {
+            id: message.id.value(),
+            channel_id: message.channel_id.to_string(),
+            author: message.author.clone(),
+            text: message.content.text_str().to_owned(),
+            sent_at_ms: message.sent_at_ms,
+            attachment,
+        }
+    }
+}
+
+impl MessageRecord {
+    fn into_message(self) -> Option<ChatMessage> {
+        let attachment = match self.attachment {
+            None => None,
+            Some(record) => Some(record.into_attachment()?),
+        };
+        let text = ChatText::parse_optional(&self.text).ok()?;
+        Some(ChatMessage {
+            id: MessageId::new(self.id),
+            channel_id: ChannelId::parse(&self.channel_id).ok()?,
+            author: self.author,
+            content: ChatContent::new(text, attachment).ok()?,
+            sent_at_ms: self.sent_at_ms,
+        })
+    }
+}
+
+impl AttachmentRecord {
+    fn into_attachment(self) -> Option<Attachment> {
+        Some(match self {
+            Self::Image { id, content_type } => Attachment::Image {
+                id: AttachmentId::parse(&id)?,
+                format: ImageFormat::from_content_type(&content_type)?,
+            },
+            Self::Gif { url, width, height } => {
+                Attachment::Gif(GifLink::parse(&url, width, height).ok()?)
+            }
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -83,15 +150,7 @@ impl From<&CommunityEvent> for EventRecord {
                 channel_id: channel_id.to_string(),
                 session_id: session_id.to_string(),
             },
-            CommunityEvent::Message { message, .. } => Self::Message {
-                message: MessageRecord {
-                    id: message.id.value(),
-                    channel_id: message.channel_id.to_string(),
-                    author: message.author.clone(),
-                    text: message.text.to_string(),
-                    sent_at_ms: message.sent_at_ms,
-                },
-            },
+            CommunityEvent::Message { message, .. } => Self::Message { message: message.into() },
             CommunityEvent::StructureChanged => Self::StructureChanged,
             CommunityEvent::MemberJoined { user_id } => {
                 Self::MemberJoined { user_id: user_id.to_string() }
@@ -115,17 +174,8 @@ impl EventRecord {
                 session_id: SessionId::parse(&session_id)?,
             },
             Self::Message { message } => {
-                let channel_id = ChannelId::parse(&message.channel_id).ok()?;
-                CommunityEvent::Message {
-                    channel_id: channel_id.clone(),
-                    message: ChatMessage {
-                        id: MessageId::new(message.id),
-                        channel_id,
-                        author: message.author,
-                        text: ChatText::parse(&message.text).ok()?,
-                        sent_at_ms: message.sent_at_ms,
-                    },
-                }
+                let message = message.into_message()?;
+                CommunityEvent::Message { channel_id: message.channel_id.clone(), message }
             }
             Self::StructureChanged => CommunityEvent::StructureChanged,
             Self::MemberJoined { user_id } => {
@@ -170,8 +220,18 @@ mod tests {
             id: MessageId::new(3),
             channel_id: ChannelId::parse("text").unwrap(),
             author: "bob".into(),
-            text: ChatText::parse("hi").unwrap(),
+            content: ChatText::parse("hi").unwrap().into(),
             sent_at_ms: 17,
+        };
+        let gif = GifLink::parse("https://static.klipy.com/a.gif", 20, 10).unwrap();
+        let with_gif = ChatMessage {
+            content: ChatContent::new(None, Some(Attachment::Gif(gif))).unwrap(),
+            ..message.clone()
+        };
+        let image = Attachment::Image { id: AttachmentId::generate(), format: ImageFormat::Webp };
+        let with_image = ChatMessage {
+            content: ChatContent::new(ChatText::parse("look").ok(), Some(image)).unwrap(),
+            ..message.clone()
         };
         for event in [
             CommunityEvent::VoiceJoined(entry()),
@@ -181,6 +241,11 @@ mod tests {
                 session_id: SessionId::generate(),
             },
             CommunityEvent::Message { channel_id: message.channel_id.clone(), message },
+            CommunityEvent::Message { channel_id: with_gif.channel_id.clone(), message: with_gif },
+            CommunityEvent::Message {
+                channel_id: with_image.channel_id.clone(),
+                message: with_image,
+            },
             CommunityEvent::StructureChanged,
             CommunityEvent::MemberJoined { user_id: UserId::new("u") },
             CommunityEvent::MemberRemoved {
@@ -205,6 +270,7 @@ mod tests {
             r#"{"type":"nope"}"#,
             r#"{"type":"voice_left","channel_id":"bad id","session_id":"x"}"#,
             r#"{"type":"message","message":{"id":1,"channel_id":"c","author":"a","text":"  ","sent_at_ms":0}}"#,
+            r#"{"type":"message","message":{"id":1,"channel_id":"c","author":"a","text":"","sent_at_ms":0,"attachment":{"kind":"gif","url":"https://evil.example/a.gif","width":1,"height":1}}}"#,
         ] {
             assert_eq!(decode(bad), None, "{bad:?}");
         }

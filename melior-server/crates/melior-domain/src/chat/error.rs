@@ -17,6 +17,18 @@ pub enum ChatError {
 
     #[error("you may not send messages in this channel")]
     NotAllowed,
+
+    #[error("an image must be a PNG, JPEG, GIF or WebP file")]
+    UnsupportedImage,
+
+    #[error("an image is at most 10 MB")]
+    ImageTooLarge,
+
+    #[error("the image was not found, upload it again")]
+    UnknownImage,
+
+    #[error("a GIF must come from KLIPY")]
+    InvalidGif,
 }
 
 impl ChatError {

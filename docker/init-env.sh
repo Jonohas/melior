@@ -3,8 +3,8 @@
 #
 #   ./init-env.sh [--force] [--output PATH]
 #
-# Replaces POSTGRES_PASSWORD, KEYCLOAK_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD and
-# TURN_SECRET. Refuses to overwrite an existing file unless --force is given.
+# Replaces POSTGRES_PASSWORD, KEYCLOAK_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD,
+# TURN_SECRET and RUSTFS_SECRET_KEY. Refuses to overwrite an existing file unless --force is given.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,7 +44,7 @@ random_secret() {
 
 umask 077
 content="$(cat "$example")"
-for name in POSTGRES_PASSWORD KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_PASSWORD TURN_SECRET; do
+for name in POSTGRES_PASSWORD KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_PASSWORD TURN_SECRET RUSTFS_SECRET_KEY; do
     secret="$(random_secret)"
     if ! grep -q "^${name}=" <<<"$content"; then
         echo "$name is missing from $example" >&2
@@ -58,7 +58,8 @@ chmod 600 "$output"
 
 cat <<EOF
 Wrote $output (mode 600) with new random values for:
-  POSTGRES_PASSWORD, KEYCLOAK_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, TURN_SECRET
+  POSTGRES_PASSWORD, KEYCLOAK_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, TURN_SECRET,
+  RUSTFS_SECRET_KEY
 Everything else is copied from .env.example.
 
 Postgres reads its passwords only when its data volume is first created. If the

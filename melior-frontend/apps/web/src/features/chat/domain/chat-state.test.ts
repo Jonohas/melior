@@ -7,6 +7,7 @@ const message = (id: number, text = `m${id}`, username = 'alice'): ChatMessage =
     username,
     text,
     sentAtMs: 1_700_000_000_000 + id,
+    attachment: null,
 });
 
 const run = (actions: ChatAction[], from: ChatState = createInitialChatState()) => actions.reduce(chatReducer, from);
@@ -75,8 +76,8 @@ describe('chatReducer live messages', () => {
 
     test('the author copy replaces the pending message with the same client id', () => {
         const state = run([
-            { type: 'send_started', clientId: 'c1', username: 'alice', text: 'hi' },
-            { type: 'send_started', clientId: 'c2', username: 'alice', text: 'there' },
+            { type: 'send_started', clientId: 'c1', username: 'alice', text: 'hi', attachment: null },
+            { type: 'send_started', clientId: 'c2', username: 'alice', text: 'there', attachment: null },
             { type: 'received', message: message(9, 'hi'), clientId: 'c1', countUnread: false },
         ]);
         expect(state.saved).toEqual([message(9, 'hi')]);
@@ -95,11 +96,11 @@ describe('chatReducer live messages', () => {
 });
 
 describe('chatReducer sending', () => {
-    const sending = run([{ type: 'send_started', clientId: 'c1', username: 'alice', text: 'hi' }]);
+    const sending = run([{ type: 'send_started', clientId: 'c1', username: 'alice', text: 'hi', attachment: null }]);
 
     test('a started send is pending', () => {
         expect(sending.pending).toEqual([
-            { clientId: 'c1', username: 'alice', text: 'hi', status: 'sending', error: null },
+            { clientId: 'c1', username: 'alice', text: 'hi', attachment: null, status: 'sending', error: null },
         ]);
     });
 
@@ -123,6 +124,23 @@ describe('chatReducer sending', () => {
     test('a send that never left fails with its own reason', () => {
         const state = chatReducer(sending, { type: 'send_failed', clientId: 'c1', error: 'Not connected' });
         expect(state.pending[0]).toMatchObject({ status: 'failed', error: 'Not connected' });
+    });
+
+    test('a message with an attachment and no text is pending with its attachment, and settles like any other', () => {
+        const gif = { kind: 'gif' as const, url: 'https://static.klipy.com/a.gif', width: 200, height: 100 };
+        const started = run([{ type: 'send_started', clientId: 'g1', username: 'alice', text: '', attachment: gif }]);
+        expect(started.pending[0]).toMatchObject({ text: '', attachment: gif, status: 'sending' });
+        const failed = chatReducer(started, { type: 'refused', clientId: 'g1', message: 'too fast' });
+        expect(failed.pending[0]).toMatchObject({ attachment: gif, status: 'failed', error: 'too fast' });
+        const savedGif = { ...message(10, ''), attachment: gif };
+        const settled = chatReducer(failed, {
+            type: 'received',
+            message: savedGif,
+            clientId: 'g1',
+            countUnread: false,
+        });
+        expect(settled.pending).toEqual([]);
+        expect(settled.saved).toEqual([savedGif]);
     });
 
     test('reset forgets everything', () => {

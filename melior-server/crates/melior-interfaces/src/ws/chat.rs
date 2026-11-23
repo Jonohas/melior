@@ -1,16 +1,52 @@
 //! The chat messages of the wire format: what a client says to the room and how a
 //! saved message is shown, live and in the history.
 
-use melior_domain::ChatMessage;
+use melior_application::ChatDraft;
+use melior_domain::{Attachment, AttachmentId, AttachmentRequest, ChatError, ChatMessage, GifLink};
 use serde::{Deserialize, Serialize};
 
 /// What a client says to the room. `client_id` is the client's own name for the
-/// message; the author's copy of it comes back carrying the same one.
+/// message; the author's copy of it comes back carrying the same one. `text`
+/// may be empty when there is an attachment.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ChatSendDto {
     #[serde(default)]
     pub client_id: Option<String>,
     pub text: String,
+    #[serde(default)]
+    pub attachment: Option<AttachmentInputDto>,
+}
+
+impl ChatSendDto {
+    /// The draft for the chat service, with the attachment parsed here at the edge.
+    pub fn into_draft(
+        text: String,
+        attachment: Option<AttachmentInputDto>,
+    ) -> Result<ChatDraft, ChatError> {
+        let attachment = attachment.map(AttachmentInputDto::into_request).transpose()?;
+        Ok(ChatDraft { text, attachment })
+    }
+}
+
+/// What a client attaches: an image it uploaded, or a GIF from KLIPY.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AttachmentInputDto {
+    Image { id: String },
+    Gif { url: String, width: u32, height: u32 },
+}
+
+impl AttachmentInputDto {
+    fn into_request(self) -> Result<AttachmentRequest, ChatError> {
+        match self {
+            Self::Image { id } => AttachmentId::parse(&id)
+                .map(AttachmentRequest::Image)
+                .ok_or(ChatError::UnknownImage),
+            Self::Gif { url, width, height } => {
+                Ok(AttachmentRequest::Gif(GifLink::parse(&url, width, height)?))
+            }
+        }
+    }
 }
 
 /// A saved chat message, as it is sent to the room and in the history.
@@ -18,12 +54,37 @@ pub struct ChatSendDto {
 pub struct ChatMessageDto {
     pub id: i64,
     pub username: String,
+    /// `""` for a message that has only an attachment.
     pub text: String,
     /// Milliseconds since the Unix epoch.
     pub sent_at_ms: i64,
     /// Set only on the author's own copy of a message it just sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<AttachmentDto>,
+}
+
+/// A saved message's attachment. An image is fetched from
+/// `GET /api/attachments/{id}`; a GIF straight from KLIPY.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AttachmentDto {
+    Image { id: String, content_type: &'static str },
+    Gif { url: String, width: u16, height: u16 },
+}
+
+impl From<&Attachment> for AttachmentDto {
+    fn from(attachment: &Attachment) -> Self {
+        match attachment {
+            Attachment::Image { id, format } => {
+                Self::Image { id: id.to_string(), content_type: format.content_type() }
+            }
+            Attachment::Gif(gif) => {
+                Self::Gif { url: gif.url().to_owned(), width: gif.width(), height: gif.height() }
+            }
+        }
+    }
 }
 
 impl ChatMessageDto {
@@ -32,9 +93,10 @@ impl ChatMessageDto {
         Self {
             id: message.id.value(),
             username: message.author,
-            text: message.text.to_string(),
+            text: message.content.text_str().to_owned(),
             sent_at_ms: message.sent_at_ms,
             client_id,
+            attachment: message.content.attachment().map(AttachmentDto::from),
         }
     }
 }
@@ -57,7 +119,8 @@ mod tests {
             with,
             ClientMessage::ChatSend(ChatSendDto {
                 client_id: Some("c1".into()),
-                text: "hi".into()
+                text: "hi".into(),
+                attachment: None,
             })
         );
 
@@ -66,7 +129,11 @@ mod tests {
                 .unwrap();
         assert_eq!(
             without,
-            ClientMessage::ChatSend(ChatSendDto { client_id: None, text: "hi".into() })
+            ClientMessage::ChatSend(ChatSendDto {
+                client_id: None,
+                text: "hi".into(),
+                attachment: None
+            })
         );
     }
 
@@ -87,7 +154,7 @@ mod tests {
             id: melior_domain::MessageId::new(7),
             channel_id: ChannelId::parse("general").unwrap(),
             author: "alice".into(),
-            text: melior_domain::ChatText::parse("hello").unwrap(),
+            content: melior_domain::ChatText::parse("hello").unwrap().into(),
             sent_at_ms: 1_700_000_000_000,
         };
 
@@ -118,6 +185,60 @@ mod tests {
             })
             .unwrap(),
             json!({ "channel": "chat_error", "payload": { "client_id": "c1", "message": "a message cannot be empty" } })
+        );
+    }
+
+    #[test]
+    fn attachments_are_parsed_at_the_edge() {
+        let send = |attachment: serde_json::Value| {
+            let message: ClientMessage = serde_json::from_value(json!({
+                "channel": "chat_send", "payload": { "text": "", "attachment": attachment }
+            }))
+            .unwrap();
+            let ClientMessage::ChatSend(dto) = message else { panic!("not a chat message") };
+            ChatSendDto::into_draft(dto.text, dto.attachment)
+        };
+        let id = AttachmentId::generate();
+        assert_eq!(
+            send(json!({ "kind": "image", "id": id.to_string() })).unwrap().attachment,
+            Some(AttachmentRequest::Image(id))
+        );
+        let gif = send(
+            json!({ "kind": "gif", "url": "https://static.klipy.com/a.gif", "width": 2, "height": 3 }),
+        );
+        assert!(matches!(gif.unwrap().attachment, Some(AttachmentRequest::Gif(_))));
+        assert_eq!(send(json!({ "kind": "image", "id": "../etc" })), Err(ChatError::UnknownImage));
+        assert_eq!(
+            send(
+                json!({ "kind": "gif", "url": "https://evil.example/a.gif", "width": 2, "height": 3 })
+            ),
+            Err(ChatError::InvalidGif)
+        );
+        let unknown = json!({ "channel": "chat_send", "payload": { "text": "", "attachment": { "kind": "file" } } });
+        assert!(serde_json::from_value::<ClientMessage>(unknown).is_err());
+    }
+
+    #[test]
+    fn serializes_attachments() {
+        let id = AttachmentId::generate();
+        let gif = GifLink::parse("https://static.klipy.com/a.gif", 20, 10).unwrap();
+        let message = |attachment| ChatMessage {
+            id: melior_domain::MessageId::new(1),
+            channel_id: ChannelId::parse("general").unwrap(),
+            author: "alice".into(),
+            content: melior_domain::ChatContent::new(None, Some(attachment)).unwrap(),
+            sent_at_ms: 5,
+        };
+        let image = Attachment::Image { id: id.clone(), format: melior_domain::ImageFormat::Jpeg };
+        assert_eq!(
+            serde_json::to_value(ChatMessageDto::new(message(image), None)).unwrap(),
+            json!({ "id": 1, "username": "alice", "text": "", "sent_at_ms": 5,
+                    "attachment": { "kind": "image", "id": id.to_string(), "content_type": "image/jpeg" } })
+        );
+        assert_eq!(
+            serde_json::to_value(ChatMessageDto::new(message(Attachment::Gif(gif)), None)).unwrap(),
+            json!({ "id": 1, "username": "alice", "text": "", "sent_at_ms": 5,
+                    "attachment": { "kind": "gif", "url": "https://static.klipy.com/a.gif", "width": 20, "height": 10 } })
         );
     }
 }

@@ -1,3 +1,4 @@
+import type { OutgoingAttachment } from './chat-attachment';
 import type { ChatMessage } from './chat-message';
 import type { PendingMessage } from './chat-state';
 
@@ -10,7 +11,10 @@ export type TimelineItem =
           kind: 'message';
           key: string;
           username: string;
+          /** Empty when the message is only an attachment. */
           text: string;
+          /** A saved image's content type is not needed to show it, so a pending image looks the same. */
+          attachment: OutgoingAttachment | null;
           /** Null for a message that is not saved yet. */
           sentAtMs: number | null;
           status: 'saved' | 'sending' | 'failed';
@@ -63,6 +67,7 @@ export const buildTimeline = (
             key: `m-${message.id}`,
             username: message.username,
             text: message.text,
+            attachment: message.attachment,
             sentAtMs: message.sentAtMs,
             status: 'saved',
             error: null,
@@ -79,6 +84,7 @@ export const buildTimeline = (
             key: `p-${entry.clientId}`,
             username: entry.username,
             text: entry.text,
+            attachment: entry.attachment,
             sentAtMs: null,
             status: entry.status,
             error: entry.error,

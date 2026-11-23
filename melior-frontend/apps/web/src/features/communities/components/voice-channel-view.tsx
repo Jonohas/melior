@@ -185,11 +185,12 @@ const CallView = ({ channel, voice, debug, onLeave }: CallViewProps) => {
                 </div>
                 {chatOpen && (
                     <ChatPanel
+                        channelId={channel.id}
                         state={chat.state}
                         ownName={conference.username}
                         canSend={connected && mayWrite}
                         pausedReason={mayWrite ? undefined : 'You do not have permission to send messages here.'}
-                        onSend={(draft) => chat.submit(draft, conference.sendChat)}
+                        onSend={(draft, attachment) => chat.submit(draft, attachment, conference.sendChat)}
                         onRetry={(clientId) => chat.retry(clientId, conference.sendChat)}
                         onLoadEarlier={chat.loadEarlier}
                         onReloadHistory={chat.reloadHistory}

@@ -4,7 +4,7 @@ use super::community_dto::ChannelViewDto;
 use super::community_input::EditChannelDto;
 use super::support::{Failure, body, caller, changing_caller, channel_id, done, reply};
 use crate::AppState;
-use crate::ws::chat::ChatMessageDto;
+use crate::ws::chat::{AttachmentInputDto, ChatMessageDto, ChatSendDto};
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -130,16 +130,18 @@ async fn history(
     reply(jar, result.await)
 }
 
-/// `{ "text": ..., "client_id"?: ... }`.
+/// `{ "text": ..., "client_id"?: ..., "attachment"?: ... }`, as a `chat_send` payload.
 #[derive(Deserialize)]
 struct PostDto {
     text: String,
     #[serde(default)]
     client_id: Option<String>,
+    #[serde(default)]
+    attachment: Option<AttachmentInputDto>,
 }
 
 /// `POST /api/channels/{channel_id}/messages`: a message in a text channel (409 for
-/// a voice channel). Needs `view_channel` and `send_messages`. Returns the saved
+/// a voice channel), with text, an attachment or both. Needs `view_channel` and `send_messages`. Returns the saved
 /// message with the caller's `client_id`; everyone else gets it on the feed.
 async fn post(
     State(state): State<AppState>,
@@ -155,7 +157,9 @@ async fn post(
     let result = async {
         let id = channel_id(&id)?;
         let request: PostDto = body(&bytes)?;
-        let message = state.chat.post(&id, &user, &request.text).await?;
+        let draft = ChatSendDto::into_draft(request.text, request.attachment)
+            .map_err(|rule| Failure::Chat(rule.into()))?;
+        let message = state.chat.post(&id, &user, draft).await?;
         Ok::<_, Failure>(ChatMessageDto::new(message, request.client_id))
     };
     reply(jar, result.await)

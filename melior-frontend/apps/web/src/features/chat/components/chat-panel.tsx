@@ -1,11 +1,13 @@
 import { Lock, TriangleAlert, X } from 'lucide-react';
 import { Alert, AlertDescription, Button } from '@/components/ui';
-import type { ChatState, DraftCheck } from '@/features/chat/domain';
+import type { ChatState, DraftCheck, OutgoingAttachment } from '@/features/chat/domain';
 import { cn } from '@/lib/utils';
 import { ChatComposer } from './chat-composer';
 import { ChatMessageList } from './chat-message-list';
 
 type ChatPanelProps = {
+    /** The channel the chat belongs to; images are uploaded into it. */
+    channelId: string;
     state: ChatState;
     ownName: string | null;
     /** Whether a message can be sent now. */
@@ -16,7 +18,7 @@ type ChatPanelProps = {
     placeholder?: string;
     /** Fills the main pane (a text channel) instead of sitting beside a call. */
     fill?: boolean;
-    onSend: (draft: string) => DraftCheck;
+    onSend: (draft: string, attachment: OutgoingAttachment | null) => DraftCheck;
     onRetry: (clientId: string) => void;
     onLoadEarlier: () => void;
     onReloadHistory: () => void;
@@ -27,6 +29,7 @@ type ChatPanelProps = {
 
 /** A channel's chat: its messages, newest at the bottom, and the box to write a new one. */
 export const ChatPanel = ({
+    channelId,
     state,
     ownName,
     canSend,
@@ -83,7 +86,13 @@ export const ChatPanel = ({
                 <Lock className="size-3" aria-hidden="true" />
                 Saved with the channel. Anyone who can read its history can read this.
             </p>
-            <ChatComposer canSend={canSend} pausedReason={pausedReason} placeholder={placeholder} onSend={onSend} />
+            <ChatComposer
+                channelId={channelId}
+                canSend={canSend}
+                pausedReason={pausedReason}
+                placeholder={placeholder}
+                onSend={onSend}
+            />
         </aside>
     );
 };

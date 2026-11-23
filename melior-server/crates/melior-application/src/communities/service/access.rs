@@ -112,6 +112,18 @@ impl CommunityService {
         Ok(grant)
     }
 
+    /// May the user send into this channel, text or voice? Needs `view_channel`
+    /// and `send_messages`. Uploading an image for a message asks this.
+    pub async fn send_grant(
+        &self,
+        channel_id: &ChannelId,
+        user: &User,
+    ) -> Result<ChannelGrant, CommunitiesError> {
+        let grant = self.channel_permissions(channel_id, user).await?;
+        require(grant.permissions, Permissions::SEND_MESSAGES)?;
+        Ok(grant)
+    }
+
     /// May the user read the channel's history? Needs `view_channel` and `read_history`.
     pub async fn history_grant(
         &self,

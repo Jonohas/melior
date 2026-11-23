@@ -1,6 +1,8 @@
 //! The backend-for-frontend endpoints: login round trip, identity, health, and the
-//! community API (communities, channels, messages, invites).
+//! community API (communities, channels, messages, images, invites) and the GIF
+//! search settings.
 
+mod attachments;
 mod auth;
 mod channels;
 mod communities;
@@ -21,5 +23,9 @@ use axum::Router;
 
 /// The login round trip, identity, health and the community API.
 pub fn routes() -> Router<AppState> {
-    auth::routes().merge(communities::routes()).merge(channels::routes()).merge(invites::routes())
+    auth::routes()
+        .merge(attachments::routes())
+        .merge(communities::routes())
+        .merge(channels::routes())
+        .merge(invites::routes())
 }

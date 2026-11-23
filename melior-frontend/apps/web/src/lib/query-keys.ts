@@ -13,4 +13,7 @@ export const queryKeys = {
     invites: {
         preview: (code: string) => ['invites', 'preview', code] as const,
     },
+    gifs: {
+        config: ['gifs', 'config'] as const,
+    },
 } as const;

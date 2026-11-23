@@ -201,6 +201,20 @@ describe('parseServerMessage chat', () => {
         expect(parseServerMessage(msg('chat', 'hello'))).toBeNull();
     });
 
+    test('keeps an image or GIF attachment and rejects a message whose attachment does not fit', () => {
+        const image = { kind: 'image', id: 'a1', content_type: 'image/png' };
+        const gif = { kind: 'gif', url: 'https://static.klipy.com/x.gif', width: 200, height: 150 };
+        for (const attachment of [image, gif]) {
+            expect<unknown>(parseServerMessage(msg('chat', { ...chat, text: '', attachment }))).toEqual({
+                channel: 'chat',
+                payload: { ...chat, text: '', attachment },
+            });
+        }
+        for (const attachment of [null, { kind: 'video', id: 'a1' }, { ...gif, url: 'https://evil.example/x.gif' }]) {
+            expect(parseServerMessage(msg('chat', { ...chat, attachment }))).toBeNull();
+        }
+    });
+
     test('parses a refusal with and without the client id', () => {
         expect<unknown>(parseServerMessage(msg('chat_error', { message: 'too fast', client_id: 'c1' }))).toEqual({
             channel: 'chat_error',

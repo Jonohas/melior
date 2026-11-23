@@ -35,6 +35,7 @@ export const TextChannelView = ({ channel, username }: TextChannelViewProps) => 
             </TopBar>
             <ChatPanel
                 fill
+                channelId={channel.id}
                 state={chat.state}
                 ownName={username}
                 canSend={mayWrite}

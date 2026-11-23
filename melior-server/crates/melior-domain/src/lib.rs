@@ -29,7 +29,10 @@ pub mod community;
 pub mod conference;
 pub mod identity;
 
-pub use chat::{ChatError, ChatMessage, ChatText, MessageId, SendLimit};
+pub use chat::{
+    Attachment, AttachmentId, AttachmentRequest, ChatContent, ChatError, ChatMessage, ChatText,
+    GifLink, ImageFormat, MessageId, SendLimit, StoredImage,
+};
 pub use community::{
     Category, CategoryChanges, CategoryId, Channel, ChannelChanges, ChannelDraft, ChannelKind,
     Community, CommunityError, CommunityId, CommunityState, Invite, InviteCode, InviteSettings,
