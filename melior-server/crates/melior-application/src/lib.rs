@@ -36,7 +36,9 @@ pub use auth::{
     SessionStore, StoreError, StoredSession, Tokens,
 };
 pub use chat::{
-    ChatFailure, ChatPage, ChatRepository, ChatService, ChatStoreError, InMemoryChatRepository,
+    ChatDraft, ChatFailure, ChatPage, ChatRepository, ChatService, ChatStoreError, ImageFile,
+    ImageStore, ImageStoreError, InMemoryChatRepository, InMemoryImageStore,
+    UnconfiguredImageStore, start_image_sweeper,
 };
 pub use communities::{
     ChannelGrant, ChannelView, CommunitiesError, CommunityEvent, CommunityEvents,

@@ -14,7 +14,8 @@
 )]
 
 use melior_application::{
-    AuthService, AuthSettings, ChatService, CommunityService, ConferenceService, PresenceQueue,
+    AuthService, AuthSettings, ChatService, CommunityService, ConferenceService, ImageStore,
+    PresenceQueue, UnconfiguredImageStore, start_image_sweeper,
 };
 use melior_domain::MeshPolicy;
 use melior_infrastructure::config::Config;
@@ -25,6 +26,7 @@ use melior_infrastructure::postgres::{
 use melior_infrastructure::redis::{
     RedisCommunityEvents, RedisConnection, RedisRoomLeases, RedisSessionStore, RedisVoiceRoster,
 };
+use melior_infrastructure::s3::S3ImageStore;
 use melior_infrastructure::telemetry;
 use melior_infrastructure::turn::TurnRestCredentials;
 use melior_infrastructure::webrtc::WebRtcMediaEngine;
@@ -84,11 +86,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         roster,
         mesh,
     ));
+    // Without S3 settings image uploads are refused; everything else works.
+    let images: Arc<dyn ImageStore> = match config.s3.clone() {
+        Some(settings) => Arc::new(S3ImageStore::new(settings)?),
+        None => Arc::new(UnconfiguredImageStore),
+    };
     let chat = Arc::new(ChatService::new(
         conference.clone(),
         Arc::new(PostgresChatRepository::new(database)),
+        images,
         communities.clone(),
     ));
+
+    // Images uploaded for messages that were never sent.
+    start_image_sweeper(chat.clone(), config.unattached_image_ttl, config.image_sweep_interval());
 
     let app = router(AppState {
         conference,
@@ -97,6 +108,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         communities,
         session_cookie_name: config.session_cookie_name.as_str().into(),
         session_recheck: config.session_recheck,
+        klipy_app_key: config.klipy_app_key.as_deref().map(Arc::from),
     });
 
     let listener = TcpListener::bind(config.bind).await?;
@@ -108,6 +120,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         traces = config.otlp_endpoint.as_deref().unwrap_or("off"),
         turn_urls = config.turn_urls.len(),
         mesh_limit,
+        images = config.s3.as_ref().map_or("off", |s3| s3.endpoint.as_str()),
+        gifs = config.klipy_app_key.is_some(),
         "melior-sfu listening"
     );
     // Stopping drops the open connections; clients reconnect by themselves, and

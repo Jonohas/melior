@@ -1,13 +1,12 @@
-use super::ports::{ChatRepository, ChatStoreError};
+use super::limits::KeyedLimits;
+use super::ports::{ChatRepository, ChatStoreError, ImageStore, ImageStoreError};
 use crate::communities::{CommunitiesError, CommunityEvent, CommunityService};
 use crate::conference::{ConferenceError, ConferenceService, Signal};
 use melior_domain::{
-    ChannelId, ChatError, ChatMessage, ChatText, MessageId, Permissions, SendLimit, SessionId,
-    User, UserId,
+    Attachment, AttachmentRequest, ChannelId, ChatContent, ChatError, ChatMessage, ChatText,
+    MessageId, Permissions, SendLimit, SessionId, User, UserId,
 };
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::sync::Arc;
 use tracing::warn;
 
 /// How many messages a history page holds unless the caller asks for fewer.
@@ -26,9 +25,27 @@ pub enum ChatFailure {
     #[error(transparent)]
     Store(#[from] ChatStoreError),
 
-    /// The channel is unknown, of the wrong kind, or closed to the user.
+    /// The image storage is off or cannot be reached.
+    #[error(transparent)]
+    Images(#[from] ImageStoreError),
+
+    /// The channel or image is unknown, of the wrong kind, or closed to the user.
     #[error(transparent)]
     Community(#[from] CommunitiesError),
+}
+
+/// What a client asks to say: raw text, checked by the service, and an
+/// attachment already parsed at the edge.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ChatDraft {
+    pub text: String,
+    pub attachment: Option<AttachmentRequest>,
+}
+
+impl From<&str> for ChatDraft {
+    fn from(text: &str) -> Self {
+        Self { text: text.to_owned(), attachment: None }
+    }
 }
 
 /// One page of a room's history.
@@ -40,31 +57,35 @@ pub struct ChatPage {
     pub has_more: bool,
 }
 
-/// The chat use cases: saving what a participant says and telling the room, and
-/// reading what was said before.
+/// The chat use cases: saving what a participant says and telling the room,
+/// reading what was said before, and the images messages carry.
 pub struct ChatService {
     conference: Arc<ConferenceService>,
-    messages: Arc<dyn ChatRepository>,
-    communities: Arc<CommunityService>,
-    limits: Mutex<HashMap<SessionId, SendLimit>>,
+    pub(super) messages: Arc<dyn ChatRepository>,
+    pub(super) images: Arc<dyn ImageStore>,
+    pub(super) communities: Arc<CommunityService>,
+    limits: KeyedLimits<SessionId>,
     /// The limits of text channel posts, per user, since a user has no session there.
-    post_limits: Mutex<HashMap<UserId, SendLimit>>,
-    started: Instant,
+    post_limits: KeyedLimits<UserId>,
+    /// The limits of image uploads, per user.
+    pub(super) upload_limits: KeyedLimits<UserId>,
 }
 
 impl ChatService {
     pub fn new(
         conference: Arc<ConferenceService>,
         messages: Arc<dyn ChatRepository>,
+        images: Arc<dyn ImageStore>,
         communities: Arc<CommunityService>,
     ) -> Self {
         Self {
             conference,
             messages,
+            images,
             communities,
-            limits: Mutex::new(HashMap::new()),
-            post_limits: Mutex::new(HashMap::new()),
-            started: Instant::now(),
+            limits: KeyedLimits::new(SendLimit::standard),
+            post_limits: KeyedLimits::new(SendLimit::standard),
+            upload_limits: KeyedLimits::new(SendLimit::uploads),
         }
     }
 
@@ -77,14 +98,17 @@ impl ChatService {
         &self,
         session_id: &SessionId,
         client_id: Option<String>,
-        raw_text: &str,
+        draft: ChatDraft,
         permissions: Permissions,
     ) -> Result<(), ChatFailure> {
         let (channel_id, author) = self.conference.whereabouts(session_id).await?;
         ChatError::require_send(permissions)?;
-        let text = ChatText::parse(raw_text)?;
-        self.check_limit(session_id)?;
-        let message = self.messages.append(&channel_id, &author, &text).await?;
+        let content = self.compose(&channel_id, &author, draft).await?;
+        if let Err(error) = self.limits.record(session_id) {
+            warn!(session = %session_id, "chat rate limit hit");
+            return Err(error.into());
+        }
+        let message = self.messages.append(&channel_id, &author, &content).await?;
         let for_others = Signal::Chat { message: message.clone(), client_id: None };
         let for_sender = Signal::Chat { message, client_id };
         self.conference.tell_room(session_id, for_sender, for_others).await?;
@@ -98,18 +122,38 @@ impl ChatService {
         &self,
         channel_id: &ChannelId,
         user: &User,
-        raw_text: &str,
+        draft: ChatDraft,
     ) -> Result<ChatMessage, ChatFailure> {
         let grant = self.communities.text_grant(channel_id, user).await?;
-        let text = ChatText::parse(raw_text)?;
-        self.check_post_limit(&user.id)?;
-        let message = self.messages.append(channel_id, &user.username, &text).await?;
+        let content = self.compose(channel_id, &user.username, draft).await?;
+        self.post_limits.record(&user.id)?;
+        let message = self.messages.append(channel_id, &user.username, &content).await?;
         let event =
             CommunityEvent::Message { channel_id: channel_id.clone(), message: message.clone() };
         if let Err(error) = self.communities.events().publish(&grant.community_id, event).await {
             warn!(%error, channel = %channel_id, "chat message not published");
         }
         Ok(message)
+    }
+
+    /// Checks a draft into what a message by `author` in `channel_id` says. An
+    /// image is looked up: only its uploader may attach it, in its own channel.
+    async fn compose(
+        &self,
+        channel_id: &ChannelId,
+        author: &str,
+        draft: ChatDraft,
+    ) -> Result<ChatContent, ChatFailure> {
+        let text = ChatText::parse_optional(&draft.text)?;
+        let attachment = match draft.attachment {
+            None => None,
+            Some(AttachmentRequest::Gif(gif)) => Some(Attachment::Gif(gif)),
+            Some(AttachmentRequest::Image(id)) => {
+                let image = self.messages.image(&id).await?.ok_or(ChatError::UnknownImage)?;
+                Some(image.attach(channel_id, author)?)
+            }
+        };
+        Ok(ChatContent::new(text, attachment)?)
     }
 
     /// A page of a channel's history for a user who may read it (`view_channel`
@@ -143,30 +187,7 @@ impl ChatService {
 
     /// Drops what is remembered about a participant. Called when it leaves.
     pub fn forget(&self, session_id: &SessionId) {
-        self.limits().remove(session_id);
-    }
-
-    fn check_limit(&self, session_id: &SessionId) -> Result<(), ChatError> {
-        let now_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let result = self
-            .limits()
-            .entry(session_id.clone())
-            .or_insert_with(SendLimit::standard)
-            .record(now_ms);
-        if result.is_err() {
-            warn!(session = %session_id, "chat rate limit hit");
-        }
-        result
-    }
-
-    fn limits(&self) -> MutexGuard<'_, HashMap<SessionId, SendLimit>> {
-        self.limits.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn check_post_limit(&self, user_id: &UserId) -> Result<(), ChatError> {
-        let now_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let mut limits = self.post_limits.lock().unwrap_or_else(PoisonError::into_inner);
-        limits.entry(user_id.clone()).or_insert_with(SendLimit::standard).record(now_ms)
+        self.limits.forget(session_id);
     }
 }
 

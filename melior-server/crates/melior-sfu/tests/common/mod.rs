@@ -10,8 +10,8 @@ use melior_application::{
     AuthService, AuthSettings, Authentication, AuthorizationRequest, ChatService,
     CommunityRepository, CommunityService, ConferenceService, IdentityProvider, IdpError,
     InMemoryChatRepository, InMemoryCommunityEvents, InMemoryCommunityRepository,
-    InMemorySessionStore, InMemoryVoiceRoster, LeaseError, PresenceQueue, RoomLeases,
-    StaticIceServers, Tokens,
+    InMemoryImageStore, InMemorySessionStore, InMemoryVoiceRoster, LeaseError, PresenceQueue,
+    RoomLeases, StaticIceServers, Tokens,
 };
 use melior_domain::{
     Channel, ChannelId, ChannelKind, ChannelMedia, CommunityId, CommunityState, Invite,
@@ -172,6 +172,7 @@ impl TestServer {
         let chat = Arc::new(ChatService::new(
             conference.clone(),
             Arc::new(InMemoryChatRepository::default()),
+            Arc::new(InMemoryImageStore::default()),
             communities.clone(),
         ));
         let sessions = Arc::new(InMemorySessionStore::default());
@@ -188,6 +189,7 @@ impl TestServer {
             communities: communities.clone(),
             session_cookie_name: SESSION_COOKIE.into(),
             session_recheck: RECHECK,
+            klipy_app_key: Some("test-klipy-key".into()),
         });
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

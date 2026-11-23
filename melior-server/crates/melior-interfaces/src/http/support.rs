@@ -9,7 +9,7 @@ use axum::http::header::CACHE_CONTROL;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::cookie::CookieJar;
-use melior_application::{ChatFailure, CommunitiesError};
+use melior_application::{ChatFailure, CommunitiesError, ImageStoreError};
 use melior_domain::{CategoryId, ChannelId, ChatError, CommunityId, InviteCode, RoleId, User};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -84,8 +84,15 @@ fn chat_response(error: &ChatFailure) -> Response {
         ChatFailure::Rejected(ChatError::NotAllowed) => {
             (StatusCode::FORBIDDEN, error.to_string()).into_response()
         }
+        ChatFailure::Rejected(ChatError::ImageTooLarge) => {
+            (StatusCode::PAYLOAD_TOO_LARGE, error.to_string()).into_response()
+        }
         ChatFailure::Rejected(rule) => (StatusCode::BAD_REQUEST, rule.to_string()).into_response(),
-        ChatFailure::Store(_) | ChatFailure::Conference(_) => {
+        ChatFailure::Images(ImageStoreError::Unconfigured) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "image uploads are not available on this server")
+                .into_response()
+        }
+        ChatFailure::Store(_) | ChatFailure::Conference(_) | ChatFailure::Images(_) => {
             warn!(%error, "chat unavailable");
             StatusCode::SERVICE_UNAVAILABLE.into_response()
         }

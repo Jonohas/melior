@@ -1,11 +1,15 @@
+import { type ChatAttachment, parseChatAttachment } from './chat-attachment';
+
 /** A message that was said in a room and saved by the server. */
 export type ChatMessage = {
     /** Orders the room's messages; the server assigns it. */
     id: number;
     username: string;
+    /** Empty when the message is only an attachment. */
     text: string;
     /** Milliseconds since the Unix epoch. */
     sentAtMs: number;
+    attachment: ChatAttachment | null;
 };
 
 /** A page of a room's history, oldest message first. */
@@ -25,7 +29,10 @@ export const parseChatMessage = (raw: unknown): ChatMessage | null => {
     if (typeof id !== 'number' || !Number.isSafeInteger(id)) return null;
     if (typeof sent_at_ms !== 'number' || !Number.isSafeInteger(sent_at_ms)) return null;
     if (typeof username !== 'string' || typeof text !== 'string') return null;
-    return { id, username, text, sentAtMs: sent_at_ms };
+    // An attachment that is there but does not fit makes the message invalid rather than silently text-only.
+    const attachment = raw.attachment === undefined ? null : parseChatAttachment(raw.attachment);
+    if (raw.attachment !== undefined && attachment === null) return null;
+    return { id, username, text, sentAtMs: sent_at_ms, attachment };
 };
 
 /** Validates a `GET /api/channels/{id}/messages` response; null when it is not the documented shape. */

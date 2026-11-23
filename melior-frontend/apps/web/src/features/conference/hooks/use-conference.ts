@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
+import type { OutgoingAttachment } from '@/features/chat/domain';
 import {
     applyVideoConstraints,
     canEncryptMedia,
@@ -44,7 +45,7 @@ type UseConferenceReturn = ConferenceState<MediaStream> &
         | 'setVideoQuality'
     > & {
         /** Says something to the room. Returns false when there is no open connection, so nothing was sent. */
-        sendChat: (text: string, clientId: string) => boolean;
+        sendChat: (message: { text: string; attachment: OutgoingAttachment | null }, clientId: string) => boolean;
         screenShareSupported: ScreenShare['supported'];
         screenSharing: ScreenShare['sharing'];
         screenSharingAudio: ScreenShare['withAudio'];
@@ -263,10 +264,11 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
     );
 
     const sendChat = useCallback(
-        (text: string, clientId: string) =>
+        ({ text, attachment }: { text: string; attachment: OutgoingAttachment | null }, clientId: string) =>
             connectionRef.current.signalling?.send({
                 channel: 'chat_send',
-                payload: { text, client_id: clientId },
+                payload:
+                    attachment === null ? { text, client_id: clientId } : { text, client_id: clientId, attachment },
             }) ?? false,
         [],
     );

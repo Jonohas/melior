@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef } from 'react';
 import { Avatar, AvatarFallback, Button, Skeleton } from '@/components/ui';
 import { buildTimeline, type ChatState, type TimelineItem } from '@/features/chat/domain';
 import { cn, initialsOf } from '@/lib/utils';
+import { MessageAttachment } from './message-attachment';
 
 type ChatMessageListProps = {
     state: ChatState;
@@ -59,15 +60,24 @@ const MessageRow = ({
                         )}
                     </p>
                 )}
-                <p
-                    className={cn(
-                        'text-sm break-words whitespace-pre-wrap',
-                        item.status === 'sending' && 'opacity-60',
-                        item.status === 'failed' && 'text-destructive',
-                    )}
-                >
-                    {item.text}
-                </p>
+                {item.text !== '' && (
+                    <p
+                        className={cn(
+                            'text-sm break-words whitespace-pre-wrap',
+                            item.status === 'sending' && 'opacity-60',
+                            item.status === 'failed' && 'text-destructive',
+                        )}
+                    >
+                        {item.text}
+                    </p>
+                )}
+                {item.attachment && (
+                    <MessageAttachment
+                        attachment={item.attachment}
+                        username={item.username}
+                        pending={item.status !== 'saved'}
+                    />
+                )}
                 {item.status === 'sending' && <p className="text-xs text-muted-foreground">Sending…</p>}
                 {item.status === 'failed' && item.clientId !== null && (
                     <p className="flex items-center gap-2 text-xs text-destructive" role="alert">

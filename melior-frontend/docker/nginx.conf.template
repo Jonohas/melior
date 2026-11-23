@@ -96,6 +96,8 @@ server {
         # Passive failover, for these stateless paths only: a WebSocket must stay on the instance that owns
         # its room, so /ws deliberately has no proxy_next_upstream. Non-idempotent requests are not retried.
         proxy_next_upstream error timeout http_502 http_503;
+        # Chat images are uploaded here, up to 10 MiB; the server refuses anything larger itself.
+        client_max_body_size 11m;
         proxy_set_header Host              $http_host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;

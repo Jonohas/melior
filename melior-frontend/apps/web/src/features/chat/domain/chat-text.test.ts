@@ -11,6 +11,15 @@ describe('checkDraft', () => {
         expect(checkDraft(' \n\t ')).toEqual({ ok: false, reason: 'empty' });
     });
 
+    test('allows empty text only with an attachment, and still checks text that is there', () => {
+        expect(checkDraft('', true)).toEqual({ ok: true, text: '' });
+        expect(checkDraft('  \n ', true)).toEqual({ ok: true, text: '' });
+        expect(checkDraft(' look ', true)).toEqual({ ok: true, text: 'look' });
+        expect(checkDraft('', false)).toEqual({ ok: false, reason: 'empty' });
+        expect(checkDraft('x'.repeat(MAX_CHAT_CHARS + 1), true)).toEqual({ ok: false, reason: 'too_long' });
+        expect(checkDraft('bell\u0007', true)).toEqual({ ok: false, reason: 'invalid_character' });
+    });
+
     test('counts characters, not UTF-16 units', () => {
         expect(checkDraft('😀'.repeat(MAX_CHAT_CHARS)).ok).toBe(true);
         expect(checkDraft('😀'.repeat(MAX_CHAT_CHARS + 1))).toEqual({ ok: false, reason: 'too_long' });

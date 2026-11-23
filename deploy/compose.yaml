@@ -1,10 +1,11 @@
-# Melior on its VM (`melior`, prepared by Jonohas/infra): the server, the frontend, Postgres and
-# Redis, from the release images. deploy.sh runs it as
+# Melior on its VM (`melior`, prepared by Jonohas/infra): the server, the frontend, Postgres,
+# Redis and RustFS, from the release images. deploy.sh runs it as
 #
 #   docker compose --env-file .env --env-file version.env -f compose.yaml ...
 #
 # .env is written by the infrastructure repository: FRONTEND_URL, FRONTEND_BIND, FRONTEND_PORT,
-# IDP_ISSUER, IDP_CLIENT_ID, MELIOR_TURN_URLS, TURN_SECRET and POSTGRES_PASSWORD. version.env
+# IDP_ISSUER, IDP_CLIENT_ID, MELIOR_TURN_URLS, TURN_SECRET, POSTGRES_PASSWORD, RUSTFS_SECRET_KEY and,
+# optionally, KLIPY_APP_KEY (GIF search; empty turns it off). version.env
 # holds MELIOR_VERSION, the release deploy.sh starts. Keycloak and coturn run elsewhere.
 name: melior
 
@@ -38,6 +39,24 @@ services:
       - "127.0.0.1:6379:6379"
     restart: unless-stopped
 
+  # The images sent in chat, on S3-compatible object storage. RustFS reads its key pair at every start;
+  # the server creates the bucket on the first upload. The console is off.
+  rustfs:
+    image: rustfs/rustfs:1.0.6
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_ACCESS_KEY: melior
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?missing from .env}
+      RUSTFS_CHECK_UPDATE: "false"
+    volumes:
+      - rustfs_data:/data
+    # Loopback only: the server reaches it from the host network.
+    ports:
+      - "127.0.0.1:9000:9000"
+    restart: unless-stopped
+
   # WebRTC media needs arbitrary UDP ports, so the SFU runs in the host network namespace and
   # reaches Postgres and Redis on loopback. The frontend reaches it on port 5000.
   melior-server:
@@ -53,11 +72,18 @@ services:
       REDIS_URL: redis://127.0.0.1:6379
       MELIOR_TURN_URLS: ${MELIOR_TURN_URLS:-}
       MELIOR_TURN_SECRET: ${TURN_SECRET:?missing from .env}
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_BUCKET: melior-images
+      S3_ACCESS_KEY: melior
+      S3_SECRET_KEY: ${RUSTFS_SECRET_KEY:?missing from .env}
+      KLIPY_APP_KEY: ${KLIPY_APP_KEY:-}
       RUST_LOG: ${RUST_LOG:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_started
+      rustfs:
         condition: service_started
     restart: unless-stopped
 
@@ -82,3 +108,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  rustfs_data:

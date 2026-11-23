@@ -334,14 +334,24 @@ async fn say(
     outbox: &Outbox,
     message: ChatSendDto,
 ) {
-    let ChatSendDto { client_id, text } = message;
-    let sent = services.chat.send(session_id, client_id.clone(), &text, services.permissions);
+    let ChatSendDto { client_id, text, attachment } = message;
+    let draft = match ChatSendDto::into_draft(text, attachment) {
+        Ok(draft) => draft,
+        Err(rule) => {
+            outbox.push(ServerMessage::ChatError { client_id, message: rule.to_string() });
+            return;
+        }
+    };
+    let sent = services.chat.send(session_id, client_id.clone(), draft, services.permissions);
     let Err(error) = sent.await else {
         return;
     };
     let message = match &error {
         ChatFailure::Rejected(rule) => rule.to_string(),
-        ChatFailure::Conference(_) | ChatFailure::Store(_) | ChatFailure::Community(_) => {
+        ChatFailure::Conference(_)
+        | ChatFailure::Store(_)
+        | ChatFailure::Images(_)
+        | ChatFailure::Community(_) => {
             warn!(session = %session_id, %error, "chat message not delivered");
             "the message could not be sent, try again".to_owned()
         }

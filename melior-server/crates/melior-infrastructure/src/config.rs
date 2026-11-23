@@ -1,5 +1,7 @@
 //! Runtime configuration, read from environment variables and validated at startup.
 
+use crate::s3::S3Settings;
+use crate::s3::sigv4::Credentials;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -12,6 +14,10 @@ pub const DEFAULT_IDP_SCOPE: &str = "openid email profile";
 pub const DEFAULT_SESSION_COOKIE_NAME: &str = "melior_session_id";
 pub const DEFAULT_INSTANCE_ID: &str = "melior-1";
 pub const DEFAULT_MESH_MAX_PARTICIPANTS: usize = 4;
+pub const DEFAULT_S3_BUCKET: &str = "melior-images";
+pub const DEFAULT_S3_REGION: &str = "us-east-1";
+/// The longest a sweep for unattached images waits.
+pub const IMAGE_SWEEP_MAX_INTERVAL: Duration = Duration::from_secs(600);
 /// The largest room that may run as a mesh.
 pub const MESH_LIMIT_MAX: usize = 8;
 /// The smallest limit that makes sense: a mesh of one is no mesh.
@@ -47,6 +53,12 @@ pub enum ConfigError {
 
     #[error("MELIOR_INSTANCE_ID must be 1-64 characters of A-Z, a-z, 0-9, '_' or '-'")]
     InvalidInstanceId,
+
+    #[error("S3_ENDPOINT, S3_ACCESS_KEY and S3_SECRET_KEY go together: set all three or none")]
+    IncompleteS3,
+
+    #[error("S3_BUCKET must be 3-63 characters of a-z, 0-9, '-' or '.', got {0}")]
+    InvalidBucket(String),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -89,6 +101,14 @@ pub struct Config {
     pub mesh_max_participants: usize,
     /// Where traces go (`OTEL_EXPORTER_OTLP_ENDPOINT`, OTLP over gRPC). Unset: no export.
     pub otlp_endpoint: Option<String>,
+    /// The S3-compatible store for chat images (`S3_ENDPOINT`, `S3_BUCKET`,
+    /// `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`). Unset: image uploads are off.
+    pub s3: Option<S3Settings>,
+    /// The KLIPY app key browsers search GIFs with (`KLIPY_APP_KEY`). Unset: GIFs are off.
+    pub klipy_app_key: Option<String>,
+    /// `UNATTACHED_IMAGE_TTL_SECONDS`: how long an uploaded image may wait for a
+    /// message to carry it before it is removed.
+    pub unattached_image_ttl: Duration,
 }
 
 impl Config {
@@ -120,10 +140,7 @@ impl Config {
 
         let frontend_url = get("FRONTEND_URL").unwrap_or_else(|| DEFAULT_FRONTEND_URL.to_owned());
         let frontend_url = frontend_url.trim_end_matches('/').to_owned();
-        let is_origin = (frontend_url.starts_with("http://")
-            || frontend_url.starts_with("https://"))
-            && frontend_url.splitn(4, '/').count() == 3;
-        if !is_origin {
+        if !is_origin(&frontend_url) {
             return Err(ConfigError::InvalidOrigin("FRONTEND_URL", frontend_url));
         }
 
@@ -170,6 +187,9 @@ impl Config {
             turn_ttl: seconds("MELIOR_TURN_TTL_SECONDS", 3600, 60)?,
             mesh_max_participants,
             otlp_endpoint: get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+            s3: parse_s3(&get)?,
+            klipy_app_key: get("KLIPY_APP_KEY"),
+            unattached_image_ttl: seconds("UNATTACHED_IMAGE_TTL_SECONDS", 86_400, 60)?,
         })
     }
 
@@ -180,12 +200,55 @@ impl Config {
         if self.turn_urls.is_empty() { 0 } else { self.mesh_max_participants }
     }
 
+    /// How often unattached images are swept: every ten minutes, or as often as
+    /// their lifetime when that is shorter.
+    #[must_use]
+    pub fn image_sweep_interval(&self) -> Duration {
+        self.unattached_image_ttl.min(IMAGE_SWEEP_MAX_INTERVAL)
+    }
+
     /// How long a room stays tied to an instance that stopped renewing its lease:
     /// three missed re-checks.
     #[must_use]
     pub fn room_lease_ttl(&self) -> Duration {
         self.session_recheck * 3
     }
+}
+
+/// `http(s)://host[:port]`, without a path (a trailing `/` already trimmed).
+fn is_origin(url: &str) -> bool {
+    (url.starts_with("http://") || url.starts_with("https://")) && url.splitn(4, '/').count() == 3
+}
+
+/// The image store settings: none without `S3_ENDPOINT`, `S3_ACCESS_KEY` and
+/// `S3_SECRET_KEY`, an error with only some of them.
+fn parse_s3(get: &impl Fn(&str) -> Option<String>) -> Result<Option<S3Settings>, ConfigError> {
+    let (endpoint, access_key, secret_key) =
+        match (get("S3_ENDPOINT"), get("S3_ACCESS_KEY"), get("S3_SECRET_KEY")) {
+            (None, None, None) => return Ok(None),
+            (Some(endpoint), Some(access_key), Some(secret_key)) => {
+                (endpoint, access_key, secret_key)
+            }
+            _ => return Err(ConfigError::IncompleteS3),
+        };
+    let endpoint = endpoint.trim_end_matches('/').to_owned();
+    if !is_origin(&endpoint) {
+        return Err(ConfigError::InvalidOrigin("S3_ENDPOINT", endpoint));
+    }
+    let bucket = get("S3_BUCKET").unwrap_or_else(|| DEFAULT_S3_BUCKET.to_owned());
+    let valid_bucket = (3..=63).contains(&bucket.len())
+        && bucket
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.');
+    if !valid_bucket {
+        return Err(ConfigError::InvalidBucket(bucket));
+    }
+    let region = get("S3_REGION").unwrap_or_else(|| DEFAULT_S3_REGION.to_owned());
+    Ok(Some(S3Settings {
+        endpoint,
+        bucket,
+        credentials: Credentials { access_key, secret_key, region },
+    }))
 }
 
 fn parse_mesh_limit(value: &str) -> Result<usize, ConfigError> {
@@ -209,6 +272,8 @@ impl std::fmt::Debug for Config {
             .field("turn_secret", &self.turn_secret.as_ref().map(|_| "<set>"))
             .field("mesh_max_participants", &self.mesh_max_participants)
             .field("otlp_endpoint", &self.otlp_endpoint)
+            .field("s3", &self.s3)
+            .field("klipy_app_key", &self.klipy_app_key.as_ref().map(|_| "<set>"))
             .finish_non_exhaustive()
     }
 }
@@ -245,6 +310,55 @@ mod tests {
         assert_eq!(config.turn_secret, None);
         assert_eq!(config.mesh_max_participants, 4);
         assert_eq!(config.otlp_endpoint, None);
+        assert_eq!(config.s3, None);
+        assert_eq!(config.klipy_app_key, None);
+        assert_eq!(config.unattached_image_ttl, Duration::from_hours(24));
+        assert_eq!(config.image_sweep_interval(), Duration::from_secs(600));
+    }
+
+    #[test]
+    fn unattached_images_live_at_least_a_minute_and_are_swept_as_often() {
+        let short = config(&[DATABASE, ("UNATTACHED_IMAGE_TTL_SECONDS", "120")]).unwrap();
+        assert_eq!(short.unattached_image_ttl, Duration::from_secs(120));
+        assert_eq!(short.image_sweep_interval(), Duration::from_secs(120));
+        assert_eq!(
+            config(&[DATABASE, ("UNATTACHED_IMAGE_TTL_SECONDS", "59")]),
+            Err(ConfigError::TooShort("UNATTACHED_IMAGE_TTL_SECONDS", 60))
+        );
+    }
+
+    const S3: [(&str, &str); 3] = [
+        ("S3_ENDPOINT", "http://127.0.0.1:9000/"),
+        ("S3_ACCESS_KEY", "melior"),
+        ("S3_SECRET_KEY", "s3-secret"),
+    ];
+
+    #[test]
+    fn reads_image_storage_and_gif_settings() {
+        let config =
+            config(&[DATABASE, S3[0], S3[1], S3[2], ("KLIPY_APP_KEY", "klipy-key")]).unwrap();
+        let s3 = config.s3.unwrap();
+        assert_eq!(s3.endpoint, "http://127.0.0.1:9000");
+        assert_eq!(s3.bucket, DEFAULT_S3_BUCKET);
+        assert_eq!(s3.credentials.region, DEFAULT_S3_REGION);
+        assert_eq!(s3.credentials.access_key, "melior");
+        assert_eq!(config.klipy_app_key.as_deref(), Some("klipy-key"));
+    }
+
+    #[test]
+    fn image_storage_needs_all_three_settings_and_a_valid_bucket() {
+        assert_eq!(config(&[DATABASE, S3[0], S3[1]]), Err(ConfigError::IncompleteS3));
+        assert_eq!(config(&[DATABASE, S3[2]]), Err(ConfigError::IncompleteS3));
+        assert!(matches!(
+            config(&[DATABASE, ("S3_ENDPOINT", "127.0.0.1:9000"), S3[1], S3[2]]),
+            Err(ConfigError::InvalidOrigin("S3_ENDPOINT", _))
+        ));
+        for bucket in ["ab", "Upper", "under_score", &"a".repeat(64)] {
+            assert_eq!(
+                config(&[DATABASE, S3[0], S3[1], S3[2], ("S3_BUCKET", bucket)]),
+                Err(ConfigError::InvalidBucket(bucket.to_owned()))
+            );
+        }
     }
 
     #[test]
@@ -314,9 +428,15 @@ mod tests {
             DATABASE,
             ("MELIOR_TURN_URLS", "turn:a:3478"),
             ("MELIOR_TURN_SECRET", "north-secret"),
+            S3[0],
+            S3[1],
+            S3[2],
+            ("KLIPY_APP_KEY", "klipy-key"),
         ])
         .unwrap();
         let printed = format!("{config:?}");
+        assert!(!printed.contains("s3-secret"));
+        assert!(!printed.contains("klipy-key"));
         assert!(!printed.contains("north-secret"));
         assert!(!printed.contains(":pw@"));
     }

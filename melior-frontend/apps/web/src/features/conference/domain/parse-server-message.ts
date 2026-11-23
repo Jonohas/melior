@@ -1,3 +1,4 @@
+import { isChatAttachmentWire } from '@/features/chat/domain';
 import { isChannelId } from './channel-id';
 import { parseMeshMessage } from './parse-mesh-message';
 import { isObject, isString, optionalString, parseIceCandidate } from './parse-primitives';
@@ -25,6 +26,10 @@ const parseChatPayload = (value: unknown): ChatPayload | null => {
         sent_at_ms: value.sent_at_ms,
     };
     if (value.client_id !== undefined) payload.client_id = value.client_id;
+    if (value.attachment !== undefined) {
+        if (!isChatAttachmentWire(value.attachment)) return null;
+        payload.attachment = value.attachment;
+    }
     return payload;
 };
 const parseIceServer = (value: unknown): IceServer | null => {

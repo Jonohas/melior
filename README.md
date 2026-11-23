@@ -23,7 +23,7 @@ come and go, without freezing any video.
   `apps/web`: TanStack Start (SPA mode) on Vite, React 19, Tailwind 4. In
   development Vite proxies the backend paths; in production nginx does.
 - `docker/` - `docker-compose.yaml` with Postgres, Redis, Keycloak, coturn
-  (TURN/STUN) and Jaeger, and optionally the application services.
+  (TURN/STUN), Jaeger and RustFS (chat images), and optionally the application services.
 
 [`docs/architecture.md`](docs/architecture.md) shows all of this in diagrams:
 the system, the media paths, the layers, the login and join sequences, room
@@ -101,7 +101,7 @@ application hooks, and presentation. See `melior-frontend/README.md`.
 ## Local development
 
 1. Create the secrets and start the infrastructure (Postgres, Redis, Keycloak,
-   coturn, Jaeger):
+   coturn, Jaeger, RustFS):
 
    ```sh
    cd docker
@@ -122,10 +122,12 @@ application hooks, and presentation. See `melior-frontend/README.md`.
    DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:5432/$POSTGRES_DB" \
    MELIOR_TURN_URLS='turn:127.0.0.1:3478?transport=udp' MELIOR_TURN_SECRET="$TURN_SECRET" \
    OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 \
+   S3_ENDPOINT=http://127.0.0.1:9000 S3_ACCESS_KEY="$RUSTFS_ACCESS_KEY" S3_SECRET_KEY="$RUSTFS_SECRET_KEY" \
    cargo run
    ```
 
-   Only `DATABASE_URL` is required; TURN and trace export are optional.
+   Only `DATABASE_URL` is required; TURN, trace export, image uploads (`S3_*`)
+   and GIF search (`KLIPY_APP_KEY`) are optional.
 
    For anything beyond a quick look, run `cargo run --release`. The media
    path (SRTP, RTP forwarding) is several times slower in a debug build, which
@@ -267,7 +269,10 @@ application's own origin.
 | `DELETE /api/channels/{channel_id}` | With its history. 204. |
 | `GET /api/channels/{channel_id}/admission` | 204 if the caller may join the voice channel now, else the status the WebSocket upgrade would give (403, 404, 409 full by the community's voice roster). For clients, which cannot see a refused upgrade's status. |
 | `GET /api/channels/{channel_id}/messages?before=<id>&limit=<n>` | `{ "messages": [...], "has_more": bool }`, oldest first; `limit` 1 to 100 (default 50). Needs `view_channel` and `read_history`. |
-| `POST /api/channels/{channel_id}/messages` `{ text, client_id? }` | Text channels only (409 for voice). Needs `view_channel` and `send_messages`; 429 over the rate limit. Returns the message with the `client_id`; the others get it on the feed. |
+| `POST /api/channels/{channel_id}/messages` `{ text, client_id?, attachment? }` | Text channels only (409 for voice). Needs `view_channel` and `send_messages`; 429 over the rate limit. `text` may be `""` with an attachment (see [Chat](#chat)). Returns the message with the `client_id`; the others get it on the feed. |
+| `POST /api/channels/{channel_id}/attachments` (body: the image file) | Uploads an image for a message in a text or voice channel: `{ id, content_type, size }`. Needs `view_channel` and `send_messages`. PNG, JPEG, GIF or WebP by content, at most 10 MiB (413 above); 400 otherwise, 429 over 10 uploads a minute, 503 when the server has no image storage. |
+| `GET /api/attachments/{id}` | The image, with its media type, `nosniff` and a private cache lifetime of a year. Needs `view_channel` and `read_history` in the channel it was uploaded to; 404 for an unknown id. |
+| `GET /api/gifs/config` | `{ "klipy_app_key": string \| null }` for signed-in users: the key browsers search KLIPY with; `null` turns GIFs off. |
 | `POST /api/communities/{id}/invites` `{ max_age_seconds?, max_uses? }` | `create_invite`. Lifetime 1800, 3600, 21600, 43200, 86400 or 604800 seconds, or none (never expires); uses 1 to 100 or none. |
 | `GET /api/communities/{id}/invites` | `manage_channels`. |
 | `GET /api/invites/{code}` | `{ code, community: { id, name }, member_count, usable }` for anyone with a Melior role. |
@@ -346,9 +351,10 @@ JSON messages of the form `{channel, payload}`:
     complete list of `{ mid, session_id, source }`: which media section carries
     whose track from now on, and whether it is that participant's `camera` or
     its `screen`.
-  - `chat` (`id`, `username`, `text`, `sent_at_ms`, and `client_id` on the
-    author's own copy only): someone said something in the room, the author
-    included. `id` orders the room's messages.
+  - `chat` (`id`, `username`, `text`, `sent_at_ms`, `attachment` if the
+    message has one, and `client_id` on the author's own copy only): someone
+    said something in the room, the author included. `id` orders the room's
+    messages. `text` is `""` for a message with only an attachment.
   - `chat_error` (`message`, and the `client_id` of the refused message if it
     had one): a chat message the server did not accept. Only its sender gets it.
   - `ice`, `error` (`message`).
@@ -370,7 +376,7 @@ JSON messages of the form `{channel, payload}`:
     (reconnect).
 - Client to server: `sdp_offer` (the first offer, and later one for each track
   the client adds or removes), `sdp_answer`, `ice` (an
-  `RTCIceCandidateInit`), `echo`, `chat_send` (`text`, optional `client_id`),
+  `RTCIceCandidateInit`), `echo`, `chat_send` (`text`, optional `client_id` and `attachment`),
   `voice_state` (`muted`, `camera`, `screen`, `speaking`, all booleans), and:
   - `route_live` (`peer`, `epoch`): I now play `peer`'s media over the path of
     route `epoch`, or I already did when the route arrived.
@@ -440,6 +446,39 @@ Messages are stored in the `chat_messages` table, and
 instance (see [Several server instances](#several-server-instances)), so its
 messages are delivered from that instance's memory; the store only orders and
 keeps them.
+
+A message may carry one attachment besides its text, and its text may then be
+empty. A client sends it as `attachment`, and saved messages carry it the same
+way, in the room, the history and the feed:
+
+| `attachment` | Sent | Saved |
+| --- | --- | --- |
+| Image | `{ "kind": "image", "id": <id> }`, the id from `POST /api/channels/{channel_id}/attachments` | `{ "kind": "image", "id", "content_type" }`; the client loads `GET /api/attachments/{id}` |
+| GIF | `{ "kind": "gif", "url", "width", "height" }` | the same |
+
+Only the uploader may attach an image, and only in the channel it was uploaded
+to; any other id is refused as "the image was not found, upload it again". A
+GIF's `url` must be `https` on `static.klipy.com`, `static1.klipy.com` or
+`static2.klipy.com`, and each side 1 to 4096; otherwise the refusal is "a GIF
+must come from KLIPY". The image bytes live in S3-compatible storage (RustFS in
+the compose stacks) under `chat-images/<id>`, and their record in the
+`chat_images` table. The server creates the bucket on the first upload. Deleting
+a channel deletes its image records, but the objects stay in the bucket.
+
+An uploaded image starts out not attached; the message that carries it attaches
+it. Every server instance sweeps images that stay unattached longer than
+`UNATTACHED_IMAGE_TTL_SECONDS`, record first, then the object, up to 200 per
+sweep. Instances take different images, and an image a message attaches during
+a sweep is kept. Once swept, sending the image is refused as "the image was not
+found, upload it again".
+
+GIFs come from [KLIPY](https://docs.klipy.com/); Tenor's API was shut down on
+30 June 2026. KLIPY requires searches to come from the browser and its media to
+be loaded from its own servers, so signed-in browsers get the app key from
+`GET /api/gifs/config` and search KLIPY directly. The key is an app key for a
+public API, not a credential of the user. It is the one key besides the e2ee
+token that reaches the browser. The search box says "Search KLIPY", as KLIPY's
+attribution rules require.
 
 The client makes the first offer. Once its media connection is established, the
 server offers it the other participants' tracks, and renegotiates whenever
@@ -662,6 +701,12 @@ What this does not protect against, and the plan to close it, is in
 | `MELIOR_MESH_MAX_PARTICIPANTS` | `4` | The largest room that sends media browser to browser, and the largest `peer_to_peer` channel. `0` turns mesh off; otherwise `2` to `8`, anything else fails startup. Effectively `0` when `MELIOR_TURN_URLS` is unset: mesh needs TURN as its fallback, and the server logs that once at startup |
 | `MELIOR_TURN_TTL_SECONDS` | `3600` | Lifetime of a TURN credential |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP gRPC endpoint for traces, e.g. `http://127.0.0.1:4317` |
+| `S3_ENDPOINT` | unset | S3-compatible storage for chat images, `http(s)://host[:port]` (path-style requests). With `S3_ACCESS_KEY` and `S3_SECRET_KEY`: all three or none, anything else fails startup. Unset: uploads answer 503 |
+| `S3_ACCESS_KEY`, `S3_SECRET_KEY` | unset | The key pair requests are signed with (AWS Signature Version 4) |
+| `S3_BUCKET` | `melior-images` | 3 to 63 characters of `a-z`, `0-9`, `-`, `.`; created on the first upload |
+| `S3_REGION` | `us-east-1` | The region requests are signed for |
+| `UNATTACHED_IMAGE_TTL_SECONDS` | `86400` | How long an uploaded image may wait for a message to carry it before it is removed; at least `60`. The sweep runs every 10 minutes, or as often as this when it is shorter |
+| `KLIPY_APP_KEY` | unset | KLIPY app key handed to signed-in browsers for GIF search. Unset: GIFs are off |
 | `RUST_LOG` | warnings, plus info for Melior's crates | Log filter (tracing) |
 
 The server starts without Keycloak, Redis or Postgres being up; requests that
@@ -689,9 +734,13 @@ TURN reachable from that device (below).
 
 Run `docker/init-env.sh` once. It creates `docker/.env` (mode 600) from
 `.env.example` with random values for `POSTGRES_PASSWORD`,
-`KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD` and `TURN_SECRET`, and refuses
-to overwrite an existing file unless you pass `--force`. Compose has no
-defaults for these four and will not start without them. Postgres reads its
+`KEYCLOAK_DB_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `TURN_SECRET` and
+`RUSTFS_SECRET_KEY`, and refuses to overwrite an existing file unless you pass
+`--force`. Compose has no defaults for these five and will not start without
+them. An older `docker/.env` lacks `RUSTFS_SECRET_KEY`: append one, for example
+`echo "RUSTFS_SECRET_KEY=$(openssl rand -hex 24)" >> docker/.env`. RustFS serves
+the S3 API on `127.0.0.1:9000` and its console on `127.0.0.1:9001`
+(`RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY`). Postgres reads its
 passwords only when its volume is first created; after changing them on an
 existing stack run `docker compose down -v`, which deletes the databases and
 the Keycloak realm. All other variables have development defaults;
@@ -841,8 +890,8 @@ Melior runs on the VM `melior`. The work is split between two repositories:
 
 | This repository | `Jonohas/infra` |
 |---|---|
-| `deploy/compose.yaml`: the server, the frontend, Postgres and Redis, from the release images | The VM with Docker, on the tailnet as `tag:melior-host` with Tailscale SSH, and the user `deploy` |
-| `deploy/deploy.sh`: pulls one release and starts it | `/opt/melior/.env`: `FRONTEND_URL`, the issuer and client, the TURN URLs and secret, `POSTGRES_PASSWORD` |
+| `deploy/compose.yaml`: the server, the frontend, Postgres, Redis and RustFS, from the release images | The VM with Docker, on the tailnet as `tag:melior-host` with Tailscale SSH, and the user `deploy` |
+| `deploy/deploy.sh`: pulls one release and starts it | `/opt/melior/.env`: `FRONTEND_URL`, the issuer and client, the TURN URLs and secret, `POSTGRES_PASSWORD`, `RUSTFS_SECRET_KEY`, and optionally `KLIPY_APP_KEY` |
 | `.github/workflows/deploy.yml`: runs the two on the VM | The realm `melior` on the central Keycloak at `https://auth.faber.zip`, coturn at `turn.faber.zip`, and Traefik serving `https://meet.faber.zip` |
 
 The infrastructure repository rewrites `/opt/melior/.env` on every run, so the
@@ -911,6 +960,9 @@ MELIOR_TEST_DATABASE_URL=postgres://user:password@127.0.0.1:5432/db \
     cargo test -p melior-infrastructure --test postgres_chat --test postgres_communities -- --ignored
 MELIOR_TEST_REDIS_URL=redis://127.0.0.1:6379/9 \
     cargo test -p melior-infrastructure --test redis_communities -- --ignored
+MELIOR_TEST_S3_ENDPOINT=http://127.0.0.1:9000 MELIOR_TEST_S3_ACCESS_KEY=melior \
+MELIOR_TEST_S3_SECRET_KEY="$RUSTFS_SECRET_KEY" \
+    cargo test -p melior-infrastructure --test s3_images -- --ignored
 ```
 
 ## Limitations

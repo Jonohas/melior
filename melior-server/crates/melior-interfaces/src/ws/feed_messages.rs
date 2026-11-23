@@ -163,7 +163,7 @@ mod tests {
             id: MessageId::new(4),
             channel_id: ChannelId::parse("text").unwrap(),
             author: "bob".into(),
-            text: ChatText::parse("hi").unwrap(),
+            content: ChatText::parse("hi").unwrap().into(),
             sent_at_ms: 9,
         };
         let event = CommunityEvent::Message { channel_id: message.channel_id.clone(), message };

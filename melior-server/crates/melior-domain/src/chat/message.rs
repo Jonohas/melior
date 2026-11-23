@@ -1,4 +1,4 @@
-use super::ChatError;
+use super::{Attachment, ChatError};
 use crate::ChannelId;
 use std::fmt;
 
@@ -49,6 +49,16 @@ impl ChatText {
         Ok(Self(text.to_owned()))
     }
 
+    /// Like [`Self::parse`], except that blank text is no text rather than an
+    /// error: a message with an attachment needs none.
+    pub fn parse_optional(raw: &str) -> Result<Option<Self>, ChatError> {
+        match Self::parse(raw) {
+            Ok(text) => Ok(Some(text)),
+            Err(ChatError::Empty) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -61,6 +71,45 @@ impl fmt::Display for ChatText {
     }
 }
 
+/// What a message says: text, an attachment, or both, never neither.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatContent {
+    text: Option<ChatText>,
+    attachment: Option<Attachment>,
+}
+
+impl ChatContent {
+    /// Content of checked text and an attachment; refused as empty when both are missing.
+    pub fn new(text: Option<ChatText>, attachment: Option<Attachment>) -> Result<Self, ChatError> {
+        if text.is_none() && attachment.is_none() {
+            return Err(ChatError::Empty);
+        }
+        Ok(Self { text, attachment })
+    }
+
+    #[must_use]
+    pub fn text(&self) -> Option<&ChatText> {
+        self.text.as_ref()
+    }
+
+    /// The text, or `""` for a message that has only an attachment.
+    #[must_use]
+    pub fn text_str(&self) -> &str {
+        self.text.as_ref().map_or("", ChatText::as_str)
+    }
+
+    #[must_use]
+    pub fn attachment(&self) -> Option<&Attachment> {
+        self.attachment.as_ref()
+    }
+}
+
+impl From<ChatText> for ChatContent {
+    fn from(text: ChatText) -> Self {
+        Self { text: Some(text), attachment: None }
+    }
+}
+
 /// A message that was said in a room and saved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatMessage {
@@ -68,7 +117,7 @@ pub struct ChatMessage {
     pub channel_id: ChannelId,
     /// Username of the author.
     pub author: String,
-    pub text: ChatText,
+    pub content: ChatContent,
     /// When the store saved it, in milliseconds since the Unix epoch.
     pub sent_at_ms: i64,
 }
@@ -100,6 +149,27 @@ mod tests {
         assert!(ChatText::parse("one\ntwo\tthree").is_ok());
         assert_eq!(ChatText::parse("bell\u{7}"), Err(ChatError::InvalidCharacter));
         assert_eq!(ChatText::parse("nul\0"), Err(ChatError::InvalidCharacter));
+    }
+
+    #[test]
+    fn blank_text_is_no_text_when_it_may_be_missing() {
+        assert_eq!(ChatText::parse_optional(" \n "), Ok(None));
+        assert_eq!(
+            ChatText::parse_optional(" hi ").map(|t| t.map(|t| t.to_string())),
+            Ok(Some("hi".into()))
+        );
+        assert_eq!(ChatText::parse_optional("bell\u{7}"), Err(ChatError::InvalidCharacter));
+    }
+
+    #[test]
+    fn content_needs_text_or_an_attachment() {
+        assert_eq!(ChatContent::new(None, None), Err(ChatError::Empty));
+        let gif = crate::GifLink::parse("https://static.klipy.com/a.gif", 1, 1).unwrap();
+        let only_gif = ChatContent::new(None, Some(Attachment::Gif(gif))).unwrap();
+        assert_eq!(only_gif.text_str(), "");
+        assert!(only_gif.attachment().is_some());
+        let only_text = ChatContent::from(ChatText::parse("hi").unwrap());
+        assert_eq!((only_text.text_str(), only_text.attachment()), ("hi", None));
     }
 
     #[test]

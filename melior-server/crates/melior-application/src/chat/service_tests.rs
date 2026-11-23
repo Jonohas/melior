@@ -1,7 +1,8 @@
 //! The chat use cases against fake ports.
 
 use super::*;
-use crate::chat::InMemoryChatRepository;
+use crate::chat::ImageStoreError;
+use crate::chat::{InMemoryChatRepository, InMemoryImageStore, UnconfiguredImageStore};
 use crate::communities::{
     InMemoryCommunityEvents, InMemoryCommunityRepository, InMemoryVoiceRoster,
 };
@@ -10,11 +11,13 @@ use crate::conference::{
     SignalSink, SingleInstance, StaticIceServers,
 };
 use async_trait::async_trait;
+use melior_domain::{Attachment, AttachmentRequest};
 use melior_domain::{
     ChannelKind, CommunityId, IceCandidate, InviteSettings, MeshPolicy, RoomPlan, Sdp, SyncGroup,
     TrackId,
 };
-use std::sync::Weak;
+use std::sync::{Mutex, PoisonError, Weak};
+use std::time::Duration;
 
 /// A media plane that does nothing: chat does not touch it.
 struct NoMedia;
@@ -64,9 +67,11 @@ impl Inbox {
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
             .filter_map(|signal| match signal {
-                Signal::Chat { message, client_id } => {
-                    Some((message.author.clone(), message.text.to_string(), client_id.clone()))
-                }
+                Signal::Chat { message, client_id } => Some((
+                    message.author.clone(),
+                    message.content.text_str().to_owned(),
+                    client_id.clone(),
+                )),
                 _ => None,
             })
             .collect()
@@ -88,6 +93,7 @@ struct Harness {
     conference: Arc<ConferenceService>,
     chat: ChatService,
     store: Arc<InMemoryChatRepository>,
+    images: Arc<InMemoryImageStore>,
     communities: Arc<CommunityService>,
 }
 
@@ -123,8 +129,14 @@ impl Harness {
             Arc::new(InMemoryVoiceRoster::default()),
             MeshPolicy::OFF,
         ));
-        let chat = ChatService::new(conference.clone(), store.clone(), communities.clone());
-        Self { conference, chat, store, communities }
+        let images = Arc::new(InMemoryImageStore::default());
+        let chat = ChatService::new(
+            conference.clone(),
+            store.clone(),
+            images.clone(),
+            communities.clone(),
+        );
+        Self { conference, chat, store, images, communities }
     }
 
     async fn join(&self, channel: &str, username: &str) -> Guest {
@@ -160,7 +172,7 @@ async fn a_message_reaches_the_room_and_only_the_author_gets_its_client_id() {
     let alice = h.join("general", "alice").await;
     let bob = h.join("general", "bob").await;
 
-    h.chat.send(&alice.id, Some("c1".into()), "  hello  ", Permissions::ALL).await.unwrap();
+    h.chat.send(&alice.id, Some("c1".into()), "  hello  ".into(), Permissions::ALL).await.unwrap();
 
     assert_eq!(alice.inbox.chats(), vec![("alice".into(), "hello".into(), Some("c1".into()))]);
     assert_eq!(bob.inbox.chats(), vec![("alice".into(), "hello".into(), None)]);
@@ -171,11 +183,11 @@ async fn a_message_is_saved_with_its_author_and_room() {
     let h = Harness::new();
     let alice = h.join("general", "alice").await;
 
-    h.chat.send(&alice.id, None, "hello", Permissions::ALL).await.unwrap();
+    h.chat.send(&alice.id, None, "hello".into(), Permissions::ALL).await.unwrap();
 
     let saved = h.store.page(&channel_id("general"), None, 10).await.unwrap();
     assert_eq!(saved.len(), 1);
-    assert_eq!((saved[0].author.as_str(), saved[0].text.as_str()), ("alice", "hello"));
+    assert_eq!((saved[0].author.as_str(), saved[0].content.text_str()), ("alice", "hello"));
 }
 
 #[tokio::test]
@@ -184,7 +196,7 @@ async fn another_room_does_not_hear_it() {
     let alice = h.join("general", "alice").await;
     let carol = h.join("other", "carol").await;
 
-    h.chat.send(&alice.id, None, "hello", Permissions::ALL).await.unwrap();
+    h.chat.send(&alice.id, None, "hello".into(), Permissions::ALL).await.unwrap();
 
     assert!(carol.inbox.chats().is_empty());
     assert!(h.store.page(&channel_id("other"), None, 10).await.unwrap().is_empty());
@@ -196,7 +208,7 @@ async fn a_message_that_breaks_a_rule_is_neither_saved_nor_sent() {
     let alice = h.join("general", "alice").await;
     let bob = h.join("general", "bob").await;
 
-    let result = h.chat.send(&alice.id, None, "   ", Permissions::ALL).await;
+    let result = h.chat.send(&alice.id, None, "   ".into(), Permissions::ALL).await;
 
     assert!(matches!(result, Err(ChatFailure::Rejected(ChatError::Empty))));
     assert!(bob.inbox.chats().is_empty());
@@ -210,14 +222,14 @@ async fn a_participant_cannot_flood_the_room() {
     let bob = h.join("general", "bob").await;
 
     for _ in 0..5 {
-        h.chat.send(&alice.id, None, "spam", Permissions::ALL).await.unwrap();
+        h.chat.send(&alice.id, None, "spam".into(), Permissions::ALL).await.unwrap();
     }
-    let sixth = h.chat.send(&alice.id, None, "spam", Permissions::ALL).await;
+    let sixth = h.chat.send(&alice.id, None, "spam".into(), Permissions::ALL).await;
 
     assert!(matches!(sixth, Err(ChatFailure::Rejected(ChatError::RateLimited))));
     assert_eq!(bob.inbox.chats().len(), 5);
     // Another participant has a limit of its own.
-    h.chat.send(&bob.id, None, "hi", Permissions::ALL).await.unwrap();
+    h.chat.send(&bob.id, None, "hi".into(), Permissions::ALL).await.unwrap();
 }
 
 #[tokio::test]
@@ -225,19 +237,19 @@ async fn forgetting_a_participant_clears_its_send_limit() {
     let h = Harness::new();
     let alice = h.join("general", "alice").await;
     for _ in 0..5 {
-        h.chat.send(&alice.id, None, "spam", Permissions::ALL).await.unwrap();
+        h.chat.send(&alice.id, None, "spam".into(), Permissions::ALL).await.unwrap();
     }
 
     h.chat.forget(&alice.id);
 
-    assert!(h.chat.send(&alice.id, None, "again", Permissions::ALL).await.is_ok());
+    assert!(h.chat.send(&alice.id, None, "again".into(), Permissions::ALL).await.is_ok());
 }
 
 #[tokio::test]
 async fn an_unknown_session_cannot_chat() {
     let h = Harness::new();
 
-    let result = h.chat.send(&SessionId::generate(), None, "hello", Permissions::ALL).await;
+    let result = h.chat.send(&SessionId::generate(), None, "hello".into(), Permissions::ALL).await;
 
     assert!(matches!(result, Err(ChatFailure::Conference(ConferenceError::UnknownSession))));
 }
@@ -247,12 +259,16 @@ async fn history_pages_back_from_the_newest_message_oldest_first() {
     let h = Harness::new();
     let room = channel_id("general");
     for n in 1..=5 {
-        h.store.append(&room, "alice", &ChatText::parse(&format!("m{n}")).unwrap()).await.unwrap();
+        h.store
+            .append(&room, "alice", &ChatText::parse(&format!("m{n}")).unwrap().into())
+            .await
+            .unwrap();
     }
 
     let newest = h.chat.page(&room, None, Some(2)).await.unwrap();
-    let texts =
-        |page: &ChatPage| page.messages.iter().map(|m| m.text.to_string()).collect::<Vec<_>>();
+    let texts = |page: &ChatPage| {
+        page.messages.iter().map(|m| m.content.text_str().to_owned()).collect::<Vec<_>>()
+    };
     assert_eq!(texts(&newest), ["m4", "m5"]);
     assert!(newest.has_more);
 
@@ -276,7 +292,10 @@ async fn a_page_size_is_kept_within_bounds() {
     let h = Harness::new();
     let room = channel_id("general");
     for n in 0..3 {
-        h.store.append(&room, "alice", &ChatText::parse(&format!("m{n}")).unwrap()).await.unwrap();
+        h.store
+            .append(&room, "alice", &ChatText::parse(&format!("m{n}")).unwrap().into())
+            .await
+            .unwrap();
     }
 
     assert_eq!(h.chat.page(&room, None, Some(0)).await.unwrap().messages.len(), 1);
@@ -288,7 +307,7 @@ async fn a_participant_without_send_messages_is_refused_and_nothing_is_saved() {
     let h = Harness::new();
     let alice = h.join("general", "alice").await;
 
-    let result = h.chat.send(&alice.id, None, "hi", Permissions::VIEW_CHANNEL).await;
+    let result = h.chat.send(&alice.id, None, "hi".into(), Permissions::VIEW_CHANNEL).await;
 
     assert!(matches!(result, Err(ChatFailure::Rejected(ChatError::NotAllowed))));
     assert!(h.store.page(&channel_id("general"), None, 10).await.unwrap().is_empty());
@@ -300,9 +319,9 @@ async fn posting_to_a_text_channel_saves_and_publishes_the_message() {
     let town = h.town().await;
     let mut feed = h.communities.events().subscribe(&town.id);
 
-    let message = h.chat.post(&town.text, &user("bob"), "  hello  ").await.unwrap();
+    let message = h.chat.post(&town.text, &user("bob"), "  hello  ".into()).await.unwrap();
 
-    assert_eq!((message.author.as_str(), message.text.as_str()), ("bob", "hello"));
+    assert_eq!((message.author.as_str(), message.content.text_str()), ("bob", "hello"));
     assert_eq!(
         feed.recv().await.unwrap(),
         CommunityEvent::Message { channel_id: town.text.clone(), message }
@@ -316,7 +335,7 @@ async fn posting_to_a_voice_channel_is_the_wrong_kind() {
     let h = Harness::new();
     let town = h.town().await;
 
-    let result = h.chat.post(&town.voice, &user("bob"), "hello").await;
+    let result = h.chat.post(&town.voice, &user("bob"), "hello".into()).await;
 
     assert!(matches!(result, Err(ChatFailure::Community(CommunitiesError::WrongKind))));
 }
@@ -326,11 +345,11 @@ async fn strangers_and_unknown_channels_get_no_text_channel() {
     let h = Harness::new();
     let town = h.town().await;
 
-    let stranger = h.chat.post(&town.text, &user("carol"), "hi").await;
+    let stranger = h.chat.post(&town.text, &user("carol"), "hi".into()).await;
     assert!(matches!(stranger, Err(ChatFailure::Community(CommunitiesError::Forbidden))));
     let history = h.chat.history(&town.text, &user("carol"), None, None).await;
     assert!(matches!(history, Err(ChatFailure::Community(CommunitiesError::Forbidden))));
-    let unknown = h.chat.post(&channel_id("nowhere"), &user("bob"), "hi").await;
+    let unknown = h.chat.post(&channel_id("nowhere"), &user("bob"), "hi".into()).await;
     assert!(matches!(unknown, Err(ChatFailure::Community(CommunitiesError::NotFound))));
 }
 
@@ -339,11 +358,164 @@ async fn posts_are_rate_limited_per_user() {
     let h = Harness::new();
     let town = h.town().await;
     for _ in 0..5 {
-        h.chat.post(&town.text, &user("bob"), "spam").await.unwrap();
+        h.chat.post(&town.text, &user("bob"), "spam".into()).await.unwrap();
     }
 
-    let sixth = h.chat.post(&town.text, &user("bob"), "spam").await;
+    let sixth = h.chat.post(&town.text, &user("bob"), "spam".into()).await;
 
     assert!(matches!(sixth, Err(ChatFailure::Rejected(ChatError::RateLimited))));
-    assert!(h.chat.post(&town.text, &user("alice"), "hi").await.is_ok());
+    assert!(h.chat.post(&town.text, &user("alice"), "hi".into()).await.is_ok());
+}
+
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n-png-body";
+
+fn with_image(text: &str, id: &melior_domain::AttachmentId) -> ChatDraft {
+    ChatDraft { text: text.into(), attachment: Some(AttachmentRequest::Image(id.clone())) }
+}
+
+#[tokio::test]
+async fn an_uploaded_image_is_sent_with_a_message_and_shown_to_readers() {
+    let h = Harness::new();
+    let town = h.town().await;
+
+    let image = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+    let message = h.chat.post(&town.text, &user("bob"), with_image("", &image.id)).await.unwrap();
+
+    assert_eq!(message.content.text(), None);
+    assert_eq!(
+        message.content.attachment(),
+        Some(&Attachment::Image { id: image.id.clone(), format: melior_domain::ImageFormat::Png })
+    );
+    let file = h.chat.image(&image.id, &user("alice")).await.unwrap();
+    assert_eq!((file.image, file.bytes.as_slice()), (image, PNG));
+}
+
+#[tokio::test]
+async fn an_image_can_be_uploaded_for_a_voice_channel_and_sent_in_its_room() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let image = h.chat.upload_image(&town.voice, &user("alice"), PNG.to_vec()).await.unwrap();
+    let alice = h.join(town.voice.as_str(), "alice").await;
+
+    h.chat.send(&alice.id, None, with_image("look", &image.id), Permissions::ALL).await.unwrap();
+
+    assert_eq!(alice.inbox.chats(), vec![("alice".into(), "look".into(), None)]);
+}
+
+#[tokio::test]
+async fn anything_but_an_image_is_refused_and_not_stored() {
+    let h = Harness::new();
+    let town = h.town().await;
+
+    let svg = h.chat.upload_image(&town.text, &user("bob"), b"<svg/>".to_vec()).await;
+
+    assert!(matches!(svg, Err(ChatFailure::Rejected(ChatError::UnsupportedImage))));
+}
+
+#[tokio::test]
+async fn strangers_cannot_upload_or_see_images() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let image = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+
+    let upload = h.chat.upload_image(&town.text, &user("carol"), PNG.to_vec()).await;
+    assert!(matches!(upload, Err(ChatFailure::Community(CommunitiesError::Forbidden))));
+    let view = h.chat.image(&image.id, &user("carol")).await;
+    assert!(matches!(view, Err(ChatFailure::Community(CommunitiesError::Forbidden))));
+    let unknown = h.chat.image(&melior_domain::AttachmentId::generate(), &user("bob")).await;
+    assert!(matches!(unknown, Err(ChatFailure::Community(CommunitiesError::NotFound))));
+}
+
+#[tokio::test]
+async fn an_image_of_someone_else_cannot_be_attached() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let image = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+
+    let theft = h.chat.post(&town.text, &user("alice"), with_image("mine", &image.id)).await;
+
+    assert!(matches!(theft, Err(ChatFailure::Rejected(ChatError::UnknownImage))));
+}
+
+#[tokio::test]
+async fn uploads_are_rate_limited_per_user() {
+    let h = Harness::new();
+    let town = h.town().await;
+    for _ in 0..10 {
+        h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+    }
+
+    let eleventh = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await;
+
+    assert!(matches!(eleventh, Err(ChatFailure::Rejected(ChatError::RateLimited))));
+}
+
+#[tokio::test]
+async fn without_image_storage_uploads_fail_as_unconfigured() {
+    let mut h = Harness::new();
+    h.chat = ChatService::new(
+        h.conference.clone(),
+        h.store.clone(),
+        Arc::new(UnconfiguredImageStore),
+        h.communities.clone(),
+    );
+    let town = h.town().await;
+
+    let upload = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await;
+
+    assert!(matches!(upload, Err(ChatFailure::Images(ImageStoreError::Unconfigured))));
+}
+
+#[tokio::test]
+async fn a_gif_is_a_message_of_its_own() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let gif = melior_domain::GifLink::parse("https://static.klipy.com/a.gif", 200, 100).unwrap();
+    let draft =
+        ChatDraft { text: " ".into(), attachment: Some(AttachmentRequest::Gif(gif.clone())) };
+
+    let message = h.chat.post(&town.text, &user("bob"), draft).await.unwrap();
+
+    assert_eq!(message.content.attachment(), Some(&Attachment::Gif(gif)));
+}
+
+#[tokio::test]
+async fn a_sweep_removes_unattached_images_and_keeps_attached_ones() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let sent = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+    let unsent = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+    h.chat.post(&town.text, &user("bob"), with_image("", &sent.id)).await.unwrap();
+
+    let removed = h.chat.sweep_unattached_images(Duration::ZERO).await.unwrap();
+
+    assert_eq!(removed, 1);
+    assert!(h.chat.image(&sent.id, &user("alice")).await.is_ok());
+    let gone = h.chat.image(&unsent.id, &user("alice")).await;
+    assert!(matches!(gone, Err(ChatFailure::Community(CommunitiesError::NotFound))));
+    assert_eq!(h.images.get(&unsent.id).await.unwrap(), None, "the bytes go too");
+}
+
+#[tokio::test]
+async fn a_sweep_leaves_images_that_are_younger_than_the_limit() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let image = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+
+    let removed = h.chat.sweep_unattached_images(Duration::from_secs(3600)).await.unwrap();
+
+    assert_eq!(removed, 0);
+    assert!(h.chat.image(&image.id, &user("bob")).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_swept_image_can_no_longer_be_attached() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let image = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+    h.chat.sweep_unattached_images(Duration::ZERO).await.unwrap();
+
+    let late = h.chat.post(&town.text, &user("bob"), with_image("", &image.id)).await;
+
+    assert!(matches!(late, Err(ChatFailure::Rejected(ChatError::UnknownImage))));
 }

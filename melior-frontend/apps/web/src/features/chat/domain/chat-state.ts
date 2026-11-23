@@ -1,3 +1,4 @@
+import type { OutgoingAttachment } from './chat-attachment';
 import { type ChatMessage, mergeMessages } from './chat-message';
 
 /** A message this client sent that the server has not saved and echoed back yet. */
@@ -6,6 +7,8 @@ export type PendingMessage = {
     clientId: string;
     username: string;
     text: string;
+    /** What it carries besides the text; an image is uploaded already, so a retry sends the same id. */
+    attachment: OutgoingAttachment | null;
     status: 'sending' | 'failed';
     /** Why it failed, in words fit for the person who sent it. */
     error: string | null;
@@ -36,7 +39,13 @@ export type ChatAction =
     | { type: 'earlier_failed' }
     | { type: 'earlier_loaded'; messages: ChatMessage[]; hasMore: boolean }
     | { type: 'received'; message: ChatMessage; clientId: string | null; countUnread: boolean }
-    | { type: 'send_started'; clientId: string; username: string; text: string }
+    | {
+          type: 'send_started';
+          clientId: string;
+          username: string;
+          text: string;
+          attachment: OutgoingAttachment | null;
+      }
     | { type: 'send_retried'; clientId: string }
     | { type: 'send_failed'; clientId: string; error: string }
     | { type: 'refused'; clientId: string | null; message: string }
@@ -103,6 +112,7 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
                         clientId: action.clientId,
                         username: action.username,
                         text: action.text,
+                        attachment: action.attachment,
                         status: 'sending',
                         error: null,
                     },

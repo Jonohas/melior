@@ -107,7 +107,7 @@ mod tests {
                 id: MessageId::new(1),
                 channel_id: channel(channel_id),
                 author: "alice".into(),
-                text: ChatText::parse("hi").unwrap(),
+                content: ChatText::parse("hi").unwrap().into(),
                 sent_at_ms: 0,
             },
         }

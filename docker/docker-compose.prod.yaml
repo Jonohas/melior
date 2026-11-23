@@ -7,7 +7,8 @@
 #     (KEYCLOAK_PUBLIC_URL -> 127.0.0.1:${KEYCLOAK_PORT}) and the frontend
 #     (FRONTEND_URL -> 127.0.0.1:${FRONTEND_PORT}) that terminates TLS and sets
 #     X-Forwarded-* headers. Browsers need HTTPS for camera access.
-#   - Backups of the postgres volume (Keycloak data and room registry) or Redis.
+#   - Backups of the postgres volume (Keycloak data and room registry), the
+#     rustfs volume (chat images) or Redis.
 #   - Keycloak clustering or high availability: one Keycloak, one Postgres, one
 #     Redis, one coturn.
 #   - A hardened realm: keycloak/melior-realm.json is a development realm
@@ -15,7 +16,7 @@
 #     URIs and review its settings, or manage the realm in the admin console.
 #   - TURN over TLS, firewall rules, or monitoring. Publish only what you need.
 #
-# Required variables: the four secrets (init-env.sh), KEYCLOAK_PUBLIC_URL,
+# Required variables: the five secrets (init-env.sh), KEYCLOAK_PUBLIC_URL,
 # FRONTEND_URL, IDP_ISSUER, COTURN_BIND, TURN_EXTERNAL_IP.
 
 x-prod-server-env: &prod-server-env
@@ -73,6 +74,13 @@ services:
 
   postgres:
     restart: always
+  rustfs:
+    restart: always
+    # No web console in production.
+    environment:
+      RUSTFS_CONSOLE_ENABLE: "false"
+    ports: !override
+      - "127.0.0.1:${RUSTFS_PORT:-9000}:9000"
   redis:
     restart: always
   jaeger:
