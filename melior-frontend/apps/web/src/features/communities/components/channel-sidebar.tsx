@@ -1,8 +1,10 @@
 import { useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
+import { navDrawerColumn, useNavDrawer } from '@/components';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui';
 import { abilitiesOf, buildChannelTree, type CommunityView } from '@/features/communities/domain';
 import { useCommunityFeed, useCreateCategory, useLeaveCommunity, useVoiceSession } from '@/features/communities/hooks';
+import { cn } from '@/lib/utils';
 import { CategorySettingsDialog } from './category-settings-dialog';
 import { ChannelSettingsDialog } from './channel-settings-dialog';
 import { ChannelTree } from './channel-tree';
@@ -91,16 +93,23 @@ const SidebarDialogs = ({ view, dialog, onClose }: DialogProps & { dialog: Sideb
     }
 };
 
-/** The server's column: its menu, the channel list with who is in each voice channel, the call panel, and the dialogs. */
+/**
+ * The server's column: its menu, the channel list with who is in each voice channel, the call panel, and the dialogs.
+ * On a narrow screen it is the drawer's second column, beside the rail.
+ */
 export const ChannelSidebar = ({ view, activeChannelId }: ChannelSidebarProps) => {
     const { roster } = useCommunityFeed();
+    const drawer = useNavDrawer();
     const [dialog, setDialog] = useState<SidebarDialog>({ kind: 'none' });
     const abilities = abilitiesOf(view.me);
 
     return (
         <aside
             aria-label={`${view.name} channels`}
-            className="flex w-60 shrink-0 flex-col border-r border-border bg-card"
+            className={cn(
+                'flex w-60 shrink-0 flex-col border-r border-border bg-card',
+                navDrawerColumn(drawer?.open === true, 'beside-rail'),
+            )}
         >
             <ServerMenu name={view.name} abilities={abilities} onOpen={setDialog} />
             <nav className="min-h-0 flex-1 overflow-y-auto pt-2">

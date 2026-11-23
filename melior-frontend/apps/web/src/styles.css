@@ -51,6 +51,14 @@
     --radius-lg: var(--radius);
     --radius-xl: calc(var(--radius) + 4px);
     --font-sans: "FiraSans", system-ui, sans-serif;
+
+    /* The server rail's width: `w-rail`, and `left-rail` for the channel column that sits beside it in the drawer. */
+    --spacing-rail: 4.5rem;
+    /*
+     * From this width on, the member list has room beside the channel; below it the list lies over the channel
+     * (`max-wide:`). `member-list-preference.ts` asks the same question with a media query.
+     */
+    --breakpoint-wide: 1100px;
 }
 
 @font-face {

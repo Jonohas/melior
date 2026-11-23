@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { type UseChatReturn, useChat } from '@/features/chat/hooks';
-import { probeVoiceChannel } from '@/features/communities/api';
+import { initialCallChatOpen, probeVoiceChannel } from '@/features/communities/api';
 import type { ChannelId } from '@/features/conference/domain';
 import { type ChatEvent, useConference } from '@/features/conference/hooks';
 import { recheckSession } from '@/lib/auth';
@@ -28,7 +28,7 @@ export const useVoiceCall = (channelId: ChannelId | null, forceRelay: boolean): 
     const router = useRouter();
     const queryClient = useQueryClient();
     const [authNotice, setAuthNotice] = useState<string | null>(null);
-    const [chatOpen, setChatOpen] = useState(true);
+    const [chatOpen, setChatOpen] = useState(initialCallChatOpen);
     // The chat needs the connection's status and the connection needs the chat's inbox: this ref joins them.
     const chatInbox = useRef<(event: ChatEvent) => void>(() => undefined);
     const conference = useConference(channelId, {

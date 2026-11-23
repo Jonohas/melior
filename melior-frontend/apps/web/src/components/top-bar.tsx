@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { NavDrawerButton } from './nav-drawer';
 
 type TopBarProps = {
     /** What the page is, with an optional icon before it. */
@@ -11,7 +12,8 @@ type TopBarProps = {
 
 /** The bar above every page: where you are, and what is going on there. */
 export const TopBar = ({ title, subtitle, children }: TopBarProps) => (
-    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-card px-4 py-2">
+    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-card px-3 py-2 sm:px-4">
+        <NavDrawerButton className="-ml-1" />
         <div className="flex min-w-0 items-center gap-2">
             <h1 className="flex items-center gap-1.5 text-sm font-semibold break-all">{title}</h1>
             {subtitle && (

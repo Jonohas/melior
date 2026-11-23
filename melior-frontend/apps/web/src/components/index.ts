@@ -1,5 +1,6 @@
 export { AppShell } from './app-shell';
 export { MeliorLogo } from './melior-logo';
+export { NavDrawerButton, navDrawerColumn, useNavDrawer } from './nav-drawer';
 export { NoAccessPage } from './no-access-page';
 export { RouterErrorPage } from './router-error-page';
 export { RouterNotFoundPage } from './router-not-found-page';

@@ -96,7 +96,7 @@ export const ConferenceStatusBadges = ({
         <MediaPathBadge participants={participants} shownPaths={shownPaths} />
         <EncryptionBadge sessionId={sessionId} participants={participants} trust={trust} />
         {sessionId && (
-            <span className="font-mono text-xs text-muted-foreground" title="Session id">
+            <span className="hidden font-mono text-xs text-muted-foreground sm:inline" title="Session id">
                 session {sessionId.slice(0, 8)}…
             </span>
         )}
