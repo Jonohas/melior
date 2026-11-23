@@ -3,9 +3,10 @@ use super::ports::{ChatRepository, ChatStoreError, ImageStore, ImageStoreError};
 use crate::communities::{CommunitiesError, CommunityEvent, CommunityService};
 use crate::conference::{ConferenceError, ConferenceService, Signal};
 use melior_domain::{
-    Attachment, AttachmentRequest, ChannelId, ChatContent, ChatError, ChatMessage, ChatText,
-    MessageId, Permissions, SendLimit, SessionId, User, UserId,
+    Attachment, AttachmentId, AttachmentRequest, ChannelId, ChatContent, ChatError, ChatMessage,
+    ChatText, MessageId, Permissions, SendLimit, SessionId, StoredImage, User, UserId,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -34,17 +35,17 @@ pub enum ChatFailure {
     Community(#[from] CommunitiesError),
 }
 
-/// What a client asks to say: raw text, checked by the service, and an
-/// attachment already parsed at the edge.
+/// What a client asks to say: raw text, checked by the service, and the
+/// attachments already parsed at the edge, in order.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ChatDraft {
     pub text: String,
-    pub attachment: Option<AttachmentRequest>,
+    pub attachments: Vec<AttachmentRequest>,
 }
 
 impl From<&str> for ChatDraft {
     fn from(text: &str) -> Self {
-        Self { text: text.to_owned(), attachment: None }
+        Self { text: text.to_owned(), attachments: Vec::new() }
     }
 }
 
@@ -136,8 +137,9 @@ impl ChatService {
         Ok(message)
     }
 
-    /// Checks a draft into what a message by `author` in `channel_id` says. An
-    /// image is looked up: only its uploader may attach it, in its own channel.
+    /// Checks a draft into what a message by `author` in `channel_id` says. The
+    /// images are looked up in one go: only their uploader may attach them, in
+    /// their own channel.
     async fn compose(
         &self,
         channel_id: &ChannelId,
@@ -145,15 +147,39 @@ impl ChatService {
         draft: ChatDraft,
     ) -> Result<ChatContent, ChatFailure> {
         let text = ChatText::parse_optional(&draft.text)?;
-        let attachment = match draft.attachment {
-            None => None,
-            Some(AttachmentRequest::Gif(gif)) => Some(Attachment::Gif(gif)),
-            Some(AttachmentRequest::Image(id)) => {
-                let image = self.messages.image(&id).await?.ok_or(ChatError::UnknownImage)?;
-                Some(image.attach(channel_id, author)?)
-            }
-        };
-        Ok(ChatContent::new(text, attachment)?)
+        let stored = self.stored_images(&draft.attachments).await?;
+        let attachments = draft
+            .attachments
+            .into_iter()
+            .map(|request| match request {
+                AttachmentRequest::Gif(gif) => Ok(Attachment::Gif(gif)),
+                AttachmentRequest::Image(id) => stored
+                    .get(&id)
+                    .ok_or(ChatError::UnknownImage)
+                    .and_then(|image| image.attach(channel_id, author)),
+            })
+            .collect::<Result<Vec<_>, ChatError>>()?;
+        Ok(ChatContent::new(text, attachments)?)
+    }
+
+    /// The records of the images among `requests`, by id. At most one store
+    /// call, and none for a draft without images.
+    async fn stored_images(
+        &self,
+        requests: &[AttachmentRequest],
+    ) -> Result<HashMap<AttachmentId, StoredImage>, ChatStoreError> {
+        let ids: Vec<AttachmentId> = requests
+            .iter()
+            .filter_map(|request| match request {
+                AttachmentRequest::Image(id) => Some(id.clone()),
+                AttachmentRequest::Gif(_) => None,
+            })
+            .collect();
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let images = self.messages.images(&ids).await?;
+        Ok(images.into_iter().map(|image| (image.id.clone(), image)).collect())
     }
 
     /// A page of a channel's history for a user who may read it (`view_channel`

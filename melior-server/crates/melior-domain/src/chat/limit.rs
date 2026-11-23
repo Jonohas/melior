@@ -17,10 +17,10 @@ impl SendLimit {
         Self::new(5, 10_000)
     }
 
-    /// Ten image uploads per minute.
+    /// Thirty image uploads per minute: three full messages of images.
     #[must_use]
     pub fn uploads() -> Self {
-        Self::new(10, 60_000)
+        Self::new(30, 60_000)
     }
 
     #[must_use]

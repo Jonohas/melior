@@ -39,15 +39,15 @@ export const fetchHistory = async (channelId: string, before: number | null = nu
     return page;
 };
 
-/** A message to send: its text (empty only with an attachment) and what it carries. */
-export type OutgoingMessage = { text: string; attachment: OutgoingAttachment | null };
+/** A message to send: its text (empty only with attachments) and what it carries, in order. */
+export type OutgoingMessage = { text: string; attachments: OutgoingAttachment[] };
 
-/** The `chat_send` payload and the POST body: the same fields, `attachment` only when there is one. */
+/** The `chat_send` payload and the POST body: the same fields, `attachments` only when there are any. */
 export const chatSendBody = (
-    { text, attachment }: OutgoingMessage,
+    { text, attachments }: OutgoingMessage,
     clientId: string,
-): { text: string; client_id: string; attachment?: OutgoingAttachment } =>
-    attachment === null ? { text, client_id: clientId } : { text, client_id: clientId, attachment };
+): { text: string; client_id: string; attachments?: OutgoingAttachment[] } =>
+    attachments.length === 0 ? { text, client_id: clientId } : { text, client_id: clientId, attachments };
 
 /** Posts a message to a text channel and returns it as saved. Rejects with the server's reason when refused. */
 export const postChatMessage = async (

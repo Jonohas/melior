@@ -29,6 +29,15 @@ pub enum ChatError {
 
     #[error("a GIF must come from KLIPY")]
     InvalidGif,
+
+    #[error("a message carries at most 10 images")]
+    TooManyImages,
+
+    #[error("a GIF is sent on its own")]
+    GifNotAlone,
+
+    #[error("an image is attached twice")]
+    DuplicateImage,
 }
 
 impl ChatError {

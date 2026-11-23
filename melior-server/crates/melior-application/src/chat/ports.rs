@@ -15,8 +15,8 @@ pub struct ChatStoreError(pub String);
 #[async_trait]
 pub trait ChatRepository: Send + Sync {
     /// Saves a message. The store assigns its id and time, so ids order the
-    /// messages of a room however many instances save to it. An image the
-    /// message carries is marked attached in the same step, and a record that
+    /// messages of a room however many instances save to it. The images the
+    /// message carries are marked attached in the same step, and a record that
     /// is gone by then fails the save.
     async fn append(
         &self,
@@ -50,6 +50,9 @@ pub trait ChatRepository: Send + Sync {
 
     /// The record of an uploaded image, if there is one.
     async fn image(&self, id: &AttachmentId) -> Result<Option<StoredImage>, ChatStoreError>;
+
+    /// The records of those of `ids` that exist, in no particular order.
+    async fn images(&self, ids: &[AttachmentId]) -> Result<Vec<StoredImage>, ChatStoreError>;
 }
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]

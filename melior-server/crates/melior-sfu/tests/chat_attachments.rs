@@ -45,15 +45,34 @@ async fn an_uploaded_image_is_sent_in_the_room_and_served_to_readers() {
     assert_eq!(uploaded["size"], PNG.len());
     let id = uploaded["id"].as_str().unwrap().to_owned();
 
+    let (_, second) = upload(&server, "pics", &alice, PNG.to_vec()).await;
+    let second = second["id"].as_str().unwrap().to_owned();
+
     let mut socket = join(&server, "pics", &alice).await;
-    let attachment = json!({ "kind": "image", "id": id });
-    send(&mut socket, "chat_send", json!({ "text": "", "attachment": attachment })).await;
+    let attachments = json!([{ "kind": "image", "id": second }, { "kind": "image", "id": id }]);
+    send(&mut socket, "chat_send", json!({ "text": "", "attachments": attachments })).await;
     let message = next_on(&mut socket, "chat").await;
     assert_eq!(message["text"], "");
     assert_eq!(
-        message["attachment"],
-        json!({ "kind": "image", "id": id, "content_type": "image/png" })
+        message["attachments"],
+        json!([
+            { "kind": "image", "id": second, "content_type": "image/png" },
+            { "kind": "image", "id": id, "content_type": "image/png" }
+        ])
     );
+
+    let gif_and_image = json!([
+        { "kind": "image", "id": id },
+        { "kind": "gif", "url": GIF_URL, "width": 1, "height": 1 }
+    ]);
+    send(
+        &mut socket,
+        "chat_send",
+        json!({ "client_id": "c2", "text": "", "attachments": gif_and_image }),
+    )
+    .await;
+    let refusal = next_on(&mut socket, "chat_error").await;
+    assert_eq!(refusal["message"], "a GIF is sent on its own");
 
     let response = reqwest::Client::new()
         .get(server.url(&format!("/api/attachments/{id}")))
@@ -137,13 +156,18 @@ async fn a_text_channel_takes_gifs_from_klipy_only() {
     let path = format!("/api/channels/{}/messages", text["id"].as_str().unwrap());
 
     let gif = json!({ "kind": "gif", "url": GIF_URL, "width": 498, "height": 280 });
-    let (status, message) =
-        call(&server, Method::POST, &path, &alice, Some(json!({ "text": "", "attachment": gif })))
-            .await;
+    let (status, message) = call(
+        &server,
+        Method::POST,
+        &path,
+        &alice,
+        Some(json!({ "text": "", "attachments": [gif] })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{message}");
-    assert_eq!(message["attachment"], gif);
+    assert_eq!(message["attachments"], json!([gif]));
     let (_, page) = call(&server, Method::GET, &path, &alice, None).await;
-    assert_eq!(page["messages"][0]["attachment"], gif);
+    assert_eq!(page["messages"][0]["attachments"], json!([gif]));
 
     let elsewhere =
         json!({ "kind": "gif", "url": "https://evil.example/a.gif", "width": 1, "height": 1 });
@@ -152,7 +176,7 @@ async fn a_text_channel_takes_gifs_from_klipy_only() {
         Method::POST,
         &path,
         &alice,
-        Some(json!({ "text": "", "attachment": elsewhere })),
+        Some(json!({ "text": "", "attachments": [elsewhere] })),
     )
     .await;
     assert_eq!(

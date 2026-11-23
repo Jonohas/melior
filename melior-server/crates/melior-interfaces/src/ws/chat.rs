@@ -2,29 +2,38 @@
 //! saved message is shown, live and in the history.
 
 use melior_application::ChatDraft;
-use melior_domain::{Attachment, AttachmentId, AttachmentRequest, ChatError, ChatMessage, GifLink};
+use melior_domain::{
+    Attachment, AttachmentId, AttachmentRequest, ChatContent, ChatError, ChatMessage, GifLink,
+};
 use serde::{Deserialize, Serialize};
 
 /// What a client says to the room. `client_id` is the client's own name for the
 /// message; the author's copy of it comes back carrying the same one. `text`
-/// may be empty when there is an attachment.
+/// may be empty when there are attachments: 1 to 10 images, or one GIF.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ChatSendDto {
     #[serde(default)]
     pub client_id: Option<String>,
     pub text: String,
     #[serde(default)]
-    pub attachment: Option<AttachmentInputDto>,
+    pub attachments: Vec<AttachmentInputDto>,
 }
 
 impl ChatSendDto {
-    /// The draft for the chat service, with the attachment parsed here at the edge.
+    /// The draft for the chat service, with the attachments parsed here at the
+    /// edge. More than a message may carry is refused before any is parsed.
     pub fn into_draft(
         text: String,
-        attachment: Option<AttachmentInputDto>,
+        attachments: Vec<AttachmentInputDto>,
     ) -> Result<ChatDraft, ChatError> {
-        let attachment = attachment.map(AttachmentInputDto::into_request).transpose()?;
-        Ok(ChatDraft { text, attachment })
+        if attachments.len() > ChatContent::MAX_IMAGES {
+            return Err(ChatError::TooManyImages);
+        }
+        let attachments = attachments
+            .into_iter()
+            .map(AttachmentInputDto::into_request)
+            .collect::<Result<Vec<_>, ChatError>>()?;
+        Ok(ChatDraft { text, attachments })
     }
 }
 
@@ -61,8 +70,9 @@ pub struct ChatMessageDto {
     /// Set only on the author's own copy of a message it just sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub attachment: Option<AttachmentDto>,
+    /// In the order they were sent; left out when there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentDto>,
 }
 
 /// A saved message's attachment. An image is fetched from
@@ -96,7 +106,7 @@ impl ChatMessageDto {
             text: message.content.text_str().to_owned(),
             sent_at_ms: message.sent_at_ms,
             client_id,
-            attachment: message.content.attachment().map(AttachmentDto::from),
+            attachments: message.content.attachments().iter().map(AttachmentDto::from).collect(),
         }
     }
 }
@@ -120,7 +130,7 @@ mod tests {
             ClientMessage::ChatSend(ChatSendDto {
                 client_id: Some("c1".into()),
                 text: "hi".into(),
-                attachment: None,
+                attachments: Vec::new()
             })
         );
 
@@ -132,7 +142,7 @@ mod tests {
             ClientMessage::ChatSend(ChatSendDto {
                 client_id: None,
                 text: "hi".into(),
-                attachment: None
+                attachments: Vec::new()
             })
         );
     }
@@ -190,31 +200,37 @@ mod tests {
 
     #[test]
     fn attachments_are_parsed_at_the_edge() {
-        let send = |attachment: serde_json::Value| {
+        let send = |attachments: serde_json::Value| {
             let message: ClientMessage = serde_json::from_value(json!({
-                "channel": "chat_send", "payload": { "text": "", "attachment": attachment }
+                "channel": "chat_send", "payload": { "text": "", "attachments": attachments }
             }))
             .unwrap();
             let ClientMessage::ChatSend(dto) = message else { panic!("not a chat message") };
-            ChatSendDto::into_draft(dto.text, dto.attachment)
+            ChatSendDto::into_draft(dto.text, dto.attachments)
         };
-        let id = AttachmentId::generate();
+        let (a, b) = (AttachmentId::generate(), AttachmentId::generate());
+        let two = json!([{ "kind": "image", "id": a.to_string() }, { "kind": "image", "id": b.to_string() }]);
         assert_eq!(
-            send(json!({ "kind": "image", "id": id.to_string() })).unwrap().attachment,
-            Some(AttachmentRequest::Image(id))
+            send(two).unwrap().attachments,
+            [AttachmentRequest::Image(a), AttachmentRequest::Image(b)]
         );
         let gif = send(
-            json!({ "kind": "gif", "url": "https://static.klipy.com/a.gif", "width": 2, "height": 3 }),
+            json!([{ "kind": "gif", "url": "https://static.klipy.com/a.gif", "width": 2, "height": 3 }]),
         );
-        assert!(matches!(gif.unwrap().attachment, Some(AttachmentRequest::Gif(_))));
-        assert_eq!(send(json!({ "kind": "image", "id": "../etc" })), Err(ChatError::UnknownImage));
+        assert!(matches!(gif.unwrap().attachments[..], [AttachmentRequest::Gif(_)]));
+        assert_eq!(
+            send(json!([{ "kind": "image", "id": "../etc" }])),
+            Err(ChatError::UnknownImage)
+        );
         assert_eq!(
             send(
-                json!({ "kind": "gif", "url": "https://evil.example/a.gif", "width": 2, "height": 3 })
+                json!([{ "kind": "gif", "url": "https://evil.example/a.gif", "width": 2, "height": 3 }])
             ),
             Err(ChatError::InvalidGif)
         );
-        let unknown = json!({ "channel": "chat_send", "payload": { "text": "", "attachment": { "kind": "file" } } });
+        let eleven: Vec<_> = (0..11).map(|_| json!({ "kind": "image", "id": "x" })).collect();
+        assert_eq!(send(json!(eleven)), Err(ChatError::TooManyImages));
+        let unknown = json!({ "channel": "chat_send", "payload": { "text": "", "attachments": [{ "kind": "file" }] } });
         assert!(serde_json::from_value::<ClientMessage>(unknown).is_err());
     }
 
@@ -226,19 +242,19 @@ mod tests {
             id: melior_domain::MessageId::new(1),
             channel_id: ChannelId::parse("general").unwrap(),
             author: "alice".into(),
-            content: melior_domain::ChatContent::new(None, Some(attachment)).unwrap(),
+            content: ChatContent::new(None, vec![attachment]).unwrap(),
             sent_at_ms: 5,
         };
         let image = Attachment::Image { id: id.clone(), format: melior_domain::ImageFormat::Jpeg };
         assert_eq!(
             serde_json::to_value(ChatMessageDto::new(message(image), None)).unwrap(),
             json!({ "id": 1, "username": "alice", "text": "", "sent_at_ms": 5,
-                    "attachment": { "kind": "image", "id": id.to_string(), "content_type": "image/jpeg" } })
+                    "attachments": [{ "kind": "image", "id": id.to_string(), "content_type": "image/jpeg" }] })
         );
         assert_eq!(
             serde_json::to_value(ChatMessageDto::new(message(Attachment::Gif(gif)), None)).unwrap(),
             json!({ "id": 1, "username": "alice", "text": "", "sent_at_ms": 5,
-                    "attachment": { "kind": "gif", "url": "https://static.klipy.com/a.gif", "width": 20, "height": 10 } })
+                    "attachments": [{ "kind": "gif", "url": "https://static.klipy.com/a.gif", "width": 20, "height": 10 }] })
         );
     }
 }

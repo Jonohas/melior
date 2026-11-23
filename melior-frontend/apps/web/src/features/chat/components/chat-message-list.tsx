@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef } from 'react';
 import { Avatar, AvatarFallback, Button, Skeleton } from '@/components/ui';
 import { buildTimeline, type ChatState, type TimelineItem } from '@/features/chat/domain';
 import { cn, initialsOf } from '@/lib/utils';
-import { MessageAttachment } from './message-attachment';
+import { MessageAttachments } from './message-attachments';
 
 type ChatMessageListProps = {
     state: ChatState;
@@ -71,9 +71,9 @@ const MessageRow = ({
                         {item.text}
                     </p>
                 )}
-                {item.attachment && (
-                    <MessageAttachment
-                        attachment={item.attachment}
+                {item.attachments.length > 0 && (
+                    <MessageAttachments
+                        attachments={item.attachments}
                         username={item.username}
                         pending={item.status !== 'saved'}
                     />

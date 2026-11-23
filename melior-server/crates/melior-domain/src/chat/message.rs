@@ -1,5 +1,6 @@
-use super::{Attachment, ChatError};
+use super::{Attachment, AttachmentId, ChatError};
 use crate::ChannelId;
+use std::collections::HashSet;
 use std::fmt;
 
 /// Orders the messages of a room. Assigned by the store when a message is
@@ -71,20 +72,26 @@ impl fmt::Display for ChatText {
     }
 }
 
-/// What a message says: text, an attachment, or both, never neither.
+/// What a message says: text, attachments, or both, never neither. The
+/// attachments are 1 to [`Self::MAX_IMAGES`] different images, or one GIF.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatContent {
     text: Option<ChatText>,
-    attachment: Option<Attachment>,
+    attachments: Vec<Attachment>,
 }
 
 impl ChatContent {
-    /// Content of checked text and an attachment; refused as empty when both are missing.
-    pub fn new(text: Option<ChatText>, attachment: Option<Attachment>) -> Result<Self, ChatError> {
-        if text.is_none() && attachment.is_none() {
+    /// The most images one message carries.
+    pub const MAX_IMAGES: usize = 10;
+
+    /// Content of checked text and attachments, in their order. Refused as empty
+    /// with neither, and refused when the attachments break a rule.
+    pub fn new(text: Option<ChatText>, attachments: Vec<Attachment>) -> Result<Self, ChatError> {
+        if text.is_none() && attachments.is_empty() {
             return Err(ChatError::Empty);
         }
-        Ok(Self { text, attachment })
+        check_attachments(&attachments)?;
+        Ok(Self { text, attachments })
     }
 
     #[must_use]
@@ -98,15 +105,48 @@ impl ChatContent {
         self.text.as_ref().map_or("", ChatText::as_str)
     }
 
+    /// The attachments, in the order they were sent.
     #[must_use]
-    pub fn attachment(&self) -> Option<&Attachment> {
-        self.attachment.as_ref()
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
     }
+
+    /// The ids of the images among the attachments, in order.
+    #[must_use]
+    pub fn image_ids(&self) -> Vec<&AttachmentId> {
+        self.attachments
+            .iter()
+            .filter_map(|attachment| match attachment {
+                Attachment::Image { id, .. } => Some(id),
+                Attachment::Gif(_) => None,
+            })
+            .collect()
+    }
+}
+
+/// A GIF goes alone; images go up to [`ChatContent::MAX_IMAGES`], each once.
+fn check_attachments(attachments: &[Attachment]) -> Result<(), ChatError> {
+    let has_gif = attachments.iter().any(|attachment| matches!(attachment, Attachment::Gif(_)));
+    if has_gif && attachments.len() > 1 {
+        return Err(ChatError::GifNotAlone);
+    }
+    if attachments.len() > ChatContent::MAX_IMAGES {
+        return Err(ChatError::TooManyImages);
+    }
+    let mut seen = HashSet::new();
+    let unique = attachments.iter().all(|attachment| match attachment {
+        Attachment::Image { id, .. } => seen.insert(id),
+        Attachment::Gif(_) => true,
+    });
+    if !unique {
+        return Err(ChatError::DuplicateImage);
+    }
+    Ok(())
 }
 
 impl From<ChatText> for ChatContent {
     fn from(text: ChatText) -> Self {
-        Self { text: Some(text), attachment: None }
+        Self { text: Some(text), attachments: Vec::new() }
     }
 }
 
@@ -161,15 +201,44 @@ mod tests {
         assert_eq!(ChatText::parse_optional("bell\u{7}"), Err(ChatError::InvalidCharacter));
     }
 
+    fn gif() -> Attachment {
+        Attachment::Gif(crate::GifLink::parse("https://static.klipy.com/a.gif", 1, 1).unwrap())
+    }
+
+    fn image() -> Attachment {
+        Attachment::Image { id: AttachmentId::generate(), format: crate::ImageFormat::Png }
+    }
+
     #[test]
     fn content_needs_text_or_an_attachment() {
-        assert_eq!(ChatContent::new(None, None), Err(ChatError::Empty));
-        let gif = crate::GifLink::parse("https://static.klipy.com/a.gif", 1, 1).unwrap();
-        let only_gif = ChatContent::new(None, Some(Attachment::Gif(gif))).unwrap();
+        assert_eq!(ChatContent::new(None, Vec::new()), Err(ChatError::Empty));
+        let only_gif = ChatContent::new(None, vec![gif()]).unwrap();
         assert_eq!(only_gif.text_str(), "");
-        assert!(only_gif.attachment().is_some());
+        assert_eq!(only_gif.attachments().len(), 1);
         let only_text = ChatContent::from(ChatText::parse("hi").unwrap());
-        assert_eq!((only_text.text_str(), only_text.attachment()), ("hi", None));
+        assert_eq!((only_text.text_str(), only_text.attachments()), ("hi", &[][..]));
+    }
+
+    #[test]
+    fn a_message_carries_up_to_ten_different_images_in_order() {
+        let ten: Vec<Attachment> = (0..10).map(|_| image()).collect();
+        let content = ChatContent::new(None, ten.clone()).unwrap();
+        assert_eq!(content.attachments(), ten.as_slice());
+        assert_eq!(content.image_ids().len(), 10);
+
+        let mut eleven = ten.clone();
+        eleven.push(image());
+        assert_eq!(ChatContent::new(None, eleven), Err(ChatError::TooManyImages));
+
+        let twice = vec![ten[0].clone(), ten[0].clone()];
+        assert_eq!(ChatContent::new(None, twice), Err(ChatError::DuplicateImage));
+    }
+
+    #[test]
+    fn a_gif_goes_alone() {
+        assert_eq!(ChatContent::new(None, vec![gif(), image()]), Err(ChatError::GifNotAlone));
+        assert_eq!(ChatContent::new(None, vec![gif(), gif()]), Err(ChatError::GifNotAlone));
+        assert!(ChatContent::new(None, vec![gif()]).unwrap().image_ids().is_empty());
     }
 
     #[test]

@@ -116,32 +116,40 @@ async fn images_and_gifs_are_saved_with_their_messages() {
     let channel = fresh_channel();
     register(&database, &channel).await;
     let chat = PostgresChatRepository::new(database);
-    let image = StoredImage {
+    let image = |format| StoredImage {
         id: AttachmentId::generate(),
         channel_id: channel.clone(),
         uploader: "alice".into(),
-        format: ImageFormat::Webp,
+        format,
         size: 42,
     };
-    chat.save_image(&image).await.unwrap();
-    assert_eq!(chat.image(&image.id).await.unwrap(), Some(image.clone()));
+    let images = [image(ImageFormat::Webp), image(ImageFormat::Png), image(ImageFormat::Jpeg)];
+    for stored in &images {
+        chat.save_image(stored).await.unwrap();
+    }
+    assert_eq!(chat.image(&images[0].id).await.unwrap(), Some(images[0].clone()));
     assert_eq!(chat.image(&AttachmentId::generate()).await.unwrap(), None);
+    let mut found = chat.images(&[images[1].id.clone(), AttachmentId::generate()]).await.unwrap();
+    found.sort_by(|a, b| a.id.cmp(&b.id));
+    assert_eq!(found, [images[1].clone()]);
 
-    let with_image = ChatContent::new(
-        None,
-        Some(Attachment::Image { id: image.id.clone(), format: ImageFormat::Webp }),
-    )
-    .unwrap();
+    // Not in upload order: the message keeps the order it was sent with.
+    let attachments: Vec<Attachment> = [2, 0, 1]
+        .iter()
+        .map(|&i| Attachment::Image { id: images[i].id.clone(), format: images[i].format })
+        .collect();
+    let with_images = ChatContent::new(ChatText::parse("three").ok(), attachments).unwrap();
     let gif = GifLink::parse("https://static.klipy.com/a.gif", 20, 10).unwrap();
-    let with_gif =
-        ChatContent::new(ChatText::parse("ha").ok(), Some(Attachment::Gif(gif))).unwrap();
-    let saved_image = chat.append(&channel, "alice", &with_image).await.unwrap();
+    let with_gif = ChatContent::new(None, vec![Attachment::Gif(gif)]).unwrap();
+    let saved_images = chat.append(&channel, "alice", &with_images).await.unwrap();
     let saved_gif = chat.append(&channel, "alice", &with_gif).await.unwrap();
 
-    assert_eq!(saved_image.content, with_image);
+    assert_eq!(saved_images.content, with_images);
     assert_eq!(saved_gif.content, with_gif);
     let page = chat.page(&channel, None, 10).await.unwrap();
-    assert_eq!(page.iter().map(|m| m.content.clone()).collect::<Vec<_>>(), [with_gif, with_image]);
+    assert_eq!(page.iter().map(|m| m.content.clone()).collect::<Vec<_>>(), [with_gif, with_images]);
+    let swept = chat.delete_unattached_images(Duration::ZERO, 1000).await.unwrap();
+    assert!(images.iter().all(|image| !swept.contains(&image.id)), "all three are attached");
 }
 
 #[tokio::test]
@@ -162,7 +170,7 @@ async fn only_images_no_message_carries_are_deleted_once_old_enough() {
     chat.save_image(&sent).await.unwrap();
     chat.save_image(&unsent).await.unwrap();
     let attachment = Attachment::Image { id: sent.id.clone(), format: ImageFormat::Png };
-    chat.append(&channel, "alice", &ChatContent::new(None, Some(attachment)).unwrap())
+    chat.append(&channel, "alice", &ChatContent::new(None, vec![attachment]).unwrap())
         .await
         .unwrap();
 
@@ -176,6 +184,6 @@ async fn only_images_no_message_carries_are_deleted_once_old_enough() {
     assert_eq!(chat.image(&unsent.id).await.unwrap(), None);
     assert_eq!(chat.image(&sent.id).await.unwrap(), Some(sent.clone()));
     let gone = Attachment::Image { id: unsent.id.clone(), format: ImageFormat::Gif };
-    let late = chat.append(&channel, "alice", &ChatContent::new(None, Some(gone)).unwrap()).await;
+    let late = chat.append(&channel, "alice", &ChatContent::new(None, vec![gone]).unwrap()).await;
     assert!(late.is_err(), "a swept image cannot be attached");
 }

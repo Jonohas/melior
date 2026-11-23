@@ -53,8 +53,8 @@ export type ChatPayload = {
     sent_at_ms: number;
     /** Set only on the author's own copy of a message it just sent. */
     client_id?: string;
-    /** An image or GIF, checked by the chat domain's parser. */
-    attachment?: ChatAttachmentWire;
+    /** Images or a GIF, in order, checked by the chat domain's parser. */
+    attachments?: ChatAttachmentWire[];
 };
 
 /** Why the server closed the socket, sent in a `closed` message right before it does. */
@@ -107,5 +107,5 @@ export type ClientMessage =
     | { channel: 'peer_answer'; payload: { to: SessionId; sdp: string } }
     | { channel: 'peer_ice'; payload: { to: SessionId; candidate: IceCandidate } }
     | { channel: 'e2ee'; payload: { to: SessionId; payload: string } }
-    | { channel: 'chat_send'; payload: { text: string; client_id?: string; attachment?: OutgoingAttachment } }
+    | { channel: 'chat_send'; payload: { text: string; client_id?: string; attachments?: OutgoingAttachment[] } }
     | { channel: 'voice_state'; payload: VoiceState };

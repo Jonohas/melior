@@ -334,8 +334,8 @@ async fn say(
     outbox: &Outbox,
     message: ChatSendDto,
 ) {
-    let ChatSendDto { client_id, text, attachment } = message;
-    let draft = match ChatSendDto::into_draft(text, attachment) {
+    let ChatSendDto { client_id, text, attachments } = message;
+    let draft = match ChatSendDto::into_draft(text, attachments) {
         Ok(draft) => draft,
         Err(rule) => {
             outbox.push(ServerMessage::ChatError { client_id, message: rule.to_string() });

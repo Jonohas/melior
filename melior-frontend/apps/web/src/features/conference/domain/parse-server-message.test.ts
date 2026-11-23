@@ -201,17 +201,23 @@ describe('parseServerMessage chat', () => {
         expect(parseServerMessage(msg('chat', 'hello'))).toBeNull();
     });
 
-    test('keeps an image or GIF attachment and rejects a message whose attachment does not fit', () => {
+    test('keeps images or a GIF and rejects a message whose attachments do not fit', () => {
         const image = { kind: 'image', id: 'a1', content_type: 'image/png' };
+        const image2 = { kind: 'image', id: 'a2', content_type: 'image/jpeg' };
         const gif = { kind: 'gif', url: 'https://static.klipy.com/x.gif', width: 200, height: 150 };
-        for (const attachment of [image, gif]) {
-            expect<unknown>(parseServerMessage(msg('chat', { ...chat, text: '', attachment }))).toEqual({
+        for (const attachments of [[image, image2], [gif], []]) {
+            expect<unknown>(parseServerMessage(msg('chat', { ...chat, text: '', attachments }))).toEqual({
                 channel: 'chat',
-                payload: { ...chat, text: '', attachment },
+                payload: { ...chat, text: '', attachments },
             });
         }
-        for (const attachment of [null, { kind: 'video', id: 'a1' }, { ...gif, url: 'https://evil.example/x.gif' }]) {
-            expect(parseServerMessage(msg('chat', { ...chat, attachment }))).toBeNull();
+        for (const attachments of [
+            null,
+            image,
+            [image, { kind: 'video', id: 'a1' }],
+            [{ ...gif, url: 'https://evil.example/x.gif' }],
+        ]) {
+            expect(parseServerMessage(msg('chat', { ...chat, attachments }))).toBeNull();
         }
     });
 
