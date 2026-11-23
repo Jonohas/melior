@@ -62,8 +62,8 @@ pub(super) struct MessageRecord {
     author: String,
     text: String,
     sent_at_ms: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    attachment: Option<AttachmentRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<AttachmentRecord>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,7 +75,7 @@ pub(super) enum AttachmentRecord {
 
 impl From<&ChatMessage> for MessageRecord {
     fn from(message: &ChatMessage) -> Self {
-        let attachment = message.content.attachment().map(|attachment| match attachment {
+        let attachments = message.content.attachments().iter().map(|attachment| match attachment {
             Attachment::Image { id, format } => AttachmentRecord::Image {
                 id: id.to_string(),
                 content_type: format.content_type().to_owned(),
@@ -86,29 +86,31 @@ impl From<&ChatMessage> for MessageRecord {
                 height: u32::from(gif.height()),
             },
         });
+        let attachments = attachments.collect();
         Self {
             id: message.id.value(),
             channel_id: message.channel_id.to_string(),
             author: message.author.clone(),
             text: message.content.text_str().to_owned(),
             sent_at_ms: message.sent_at_ms,
-            attachment,
+            attachments,
         }
     }
 }
 
 impl MessageRecord {
     fn into_message(self) -> Option<ChatMessage> {
-        let attachment = match self.attachment {
-            None => None,
-            Some(record) => Some(record.into_attachment()?),
-        };
+        let attachments = self
+            .attachments
+            .into_iter()
+            .map(AttachmentRecord::into_attachment)
+            .collect::<Option<Vec<_>>>()?;
         let text = ChatText::parse_optional(&self.text).ok()?;
         Some(ChatMessage {
             id: MessageId::new(self.id),
             channel_id: ChannelId::parse(&self.channel_id).ok()?,
             author: self.author,
-            content: ChatContent::new(text, attachment).ok()?,
+            content: ChatContent::new(text, attachments).ok()?,
             sent_at_ms: self.sent_at_ms,
         })
     }
@@ -225,12 +227,14 @@ mod tests {
         };
         let gif = GifLink::parse("https://static.klipy.com/a.gif", 20, 10).unwrap();
         let with_gif = ChatMessage {
-            content: ChatContent::new(None, Some(Attachment::Gif(gif))).unwrap(),
+            content: ChatContent::new(None, vec![Attachment::Gif(gif)]).unwrap(),
             ..message.clone()
         };
-        let image = Attachment::Image { id: AttachmentId::generate(), format: ImageFormat::Webp };
+        let image =
+            || Attachment::Image { id: AttachmentId::generate(), format: ImageFormat::Webp };
         let with_image = ChatMessage {
-            content: ChatContent::new(ChatText::parse("look").ok(), Some(image)).unwrap(),
+            content: ChatContent::new(ChatText::parse("look").ok(), vec![image(), image()])
+                .unwrap(),
             ..message.clone()
         };
         for event in [
@@ -270,7 +274,7 @@ mod tests {
             r#"{"type":"nope"}"#,
             r#"{"type":"voice_left","channel_id":"bad id","session_id":"x"}"#,
             r#"{"type":"message","message":{"id":1,"channel_id":"c","author":"a","text":"  ","sent_at_ms":0}}"#,
-            r#"{"type":"message","message":{"id":1,"channel_id":"c","author":"a","text":"","sent_at_ms":0,"attachment":{"kind":"gif","url":"https://evil.example/a.gif","width":1,"height":1}}}"#,
+            r#"{"type":"message","message":{"id":1,"channel_id":"c","author":"a","text":"","sent_at_ms":0,"attachments":[{"kind":"gif","url":"https://evil.example/a.gif","width":1,"height":1}]}}"#,
         ] {
             assert_eq!(decode(bad), None, "{bad:?}");
         }

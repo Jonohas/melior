@@ -45,7 +45,7 @@ type UseConferenceReturn = ConferenceState<MediaStream> &
         | 'setVideoQuality'
     > & {
         /** Says something to the room. Returns false when there is no open connection, so nothing was sent. */
-        sendChat: (message: { text: string; attachment: OutgoingAttachment | null }, clientId: string) => boolean;
+        sendChat: (message: { text: string; attachments: OutgoingAttachment[] }, clientId: string) => boolean;
         screenShareSupported: ScreenShare['supported'];
         screenSharing: ScreenShare['sharing'];
         screenSharingAudio: ScreenShare['withAudio'];
@@ -264,11 +264,13 @@ export const useConference = (channelId: ChannelId | null, options: UseConferenc
     );
 
     const sendChat = useCallback(
-        ({ text, attachment }: { text: string; attachment: OutgoingAttachment | null }, clientId: string) =>
+        ({ text, attachments }: { text: string; attachments: OutgoingAttachment[] }, clientId: string) =>
             connectionRef.current.signalling?.send({
                 channel: 'chat_send',
                 payload:
-                    attachment === null ? { text, client_id: clientId } : { text, client_id: clientId, attachment },
+                    attachments.length === 0
+                        ? { text, client_id: clientId }
+                        : { text, client_id: clientId, attachments },
             }) ?? false,
         [],
     );

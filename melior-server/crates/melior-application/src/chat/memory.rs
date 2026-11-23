@@ -1,8 +1,7 @@
 use super::ports::{ChatRepository, ChatStoreError, ImageStore, ImageStoreError};
 use async_trait::async_trait;
 use melior_domain::{
-    Attachment, AttachmentId, ChannelId, ChatContent, ChatMessage, ImageFormat, MessageId,
-    StoredImage,
+    AttachmentId, ChannelId, ChatContent, ChatMessage, ImageFormat, MessageId, StoredImage,
 };
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -41,12 +40,13 @@ impl ChatRepository for InMemoryChatRepository {
         author: &str,
         content: &ChatContent,
     ) -> Result<ChatMessage, ChatStoreError> {
-        if let Some(Attachment::Image { id, .. }) = content.attachment() {
-            let mut images = self.images();
+        let mut images = self.images();
+        for id in content.image_ids() {
             let entry =
                 images.get_mut(id).ok_or_else(|| ChatStoreError(format!("no image {id}")))?;
             entry.attached = true;
         }
+        drop(images);
         let mut messages = self.lock();
         let next = messages.last().map_or(1, |last| last.id.value() + 1);
         let sent_at_ms = SystemTime::now()
@@ -89,6 +89,11 @@ impl ChatRepository for InMemoryChatRepository {
 
     async fn image(&self, id: &AttachmentId) -> Result<Option<StoredImage>, ChatStoreError> {
         Ok(self.images().get(id).map(|entry| entry.image.clone()))
+    }
+
+    async fn images(&self, ids: &[AttachmentId]) -> Result<Vec<StoredImage>, ChatStoreError> {
+        let images = self.images();
+        Ok(ids.iter().filter_map(|id| images.get(id)).map(|entry| entry.image.clone()).collect())
     }
 
     async fn delete_unattached_images(

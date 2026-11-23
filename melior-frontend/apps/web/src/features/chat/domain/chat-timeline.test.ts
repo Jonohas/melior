@@ -12,7 +12,7 @@ const message = (id: number, username: string, sentAtMs: number): ChatMessage =>
     username,
     text: `m${id}`,
     sentAtMs,
-    attachment: null,
+    attachments: [],
 });
 
 const pendingOf = (
@@ -23,7 +23,7 @@ const pendingOf = (
     clientId,
     username,
     text: `p-${clientId}`,
-    attachment: null,
+    attachments: [],
     status,
     error: status === 'failed' ? 'too fast' : null,
 });

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { MAX_IMAGES_PER_MESSAGE } from './chat-attachment';
 import { checkDraft, MAX_CHAT_CHARS } from './chat-text';
 
 describe('checkDraft', () => {
@@ -12,12 +13,22 @@ describe('checkDraft', () => {
     });
 
     test('allows empty text only with an attachment, and still checks text that is there', () => {
-        expect(checkDraft('', true)).toEqual({ ok: true, text: '' });
-        expect(checkDraft('  \n ', true)).toEqual({ ok: true, text: '' });
-        expect(checkDraft(' look ', true)).toEqual({ ok: true, text: 'look' });
-        expect(checkDraft('', false)).toEqual({ ok: false, reason: 'empty' });
-        expect(checkDraft('x'.repeat(MAX_CHAT_CHARS + 1), true)).toEqual({ ok: false, reason: 'too_long' });
-        expect(checkDraft('bell\u0007', true)).toEqual({ ok: false, reason: 'invalid_character' });
+        const image = [{ kind: 'image' as const, id: 'i1' }];
+        expect(checkDraft('', image)).toEqual({ ok: true, text: '' });
+        expect(checkDraft('  \n ', image)).toEqual({ ok: true, text: '' });
+        expect(checkDraft(' look ', image)).toEqual({ ok: true, text: 'look' });
+        expect(checkDraft('', [])).toEqual({ ok: false, reason: 'empty' });
+        expect(checkDraft('x'.repeat(MAX_CHAT_CHARS + 1), image)).toEqual({ ok: false, reason: 'too_long' });
+        expect(checkDraft('bell\u0007', image)).toEqual({ ok: false, reason: 'invalid_character' });
+    });
+
+    test('refuses what the attachment rules refuse, even with text', () => {
+        const images = (n: number) => Array.from({ length: n }, (_, i) => ({ kind: 'image' as const, id: `i${i}` }));
+        const gif = { kind: 'gif' as const, url: 'https://static.klipy.com/a.gif', width: 10, height: 10 };
+        expect(checkDraft('hi', images(MAX_IMAGES_PER_MESSAGE)).ok).toBe(true);
+        expect(checkDraft('hi', images(MAX_IMAGES_PER_MESSAGE + 1))).toEqual({ ok: false, reason: 'too_many_images' });
+        expect(checkDraft('', [gif, ...images(1)])).toEqual({ ok: false, reason: 'gif_not_alone' });
+        expect(checkDraft('', [...images(1), ...images(1)])).toEqual({ ok: false, reason: 'duplicate_image' });
     });
 
     test('counts characters, not UTF-16 units', () => {

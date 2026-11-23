@@ -33,10 +33,10 @@ export type UseChatReturn = {
     /** The server refused a message; with a `clientId` that message is marked failed. */
     refuse: (clientId: string | null, message: string) => void;
     /**
-     * Checks and sends a draft with what it carries (an uploaded image or a GIF; the text may then be empty).
+     * Checks and sends a draft with what it carries (uploaded images or one GIF; the text may then be empty).
      * The result says whether it was accepted, and why not if it was not.
      */
-    submit: (draft: string, attachment: OutgoingAttachment | null, transport: ChatTransport) => DraftCheck;
+    submit: (draft: string, attachments: OutgoingAttachment[], transport: ChatTransport) => DraftCheck;
     retry: (clientId: string, transport: ChatTransport) => void;
     loadEarlier: () => void;
     reloadHistory: () => void;
@@ -123,13 +123,13 @@ export const useChat = (channelId: string, { connected, username, open }: UseCha
     }, []);
 
     const submit = useCallback(
-        (draft: string, attachment: OutgoingAttachment | null, transport: ChatTransport): DraftCheck => {
-            const checked = checkDraft(draft, attachment !== null);
+        (draft: string, attachments: OutgoingAttachment[], transport: ChatTransport): DraftCheck => {
+            const checked = checkDraft(draft, attachments);
             if (!checked.ok) return checked;
             const clientId = newClientId();
             const text = checked.text;
-            dispatch({ type: 'send_started', clientId, username: username ?? '', text, attachment });
-            deliver({ text, attachment }, clientId, transport);
+            dispatch({ type: 'send_started', clientId, username: username ?? '', text, attachments });
+            deliver({ text, attachments }, clientId, transport);
             return checked;
         },
         [username, deliver],
@@ -140,7 +140,7 @@ export const useChat = (channelId: string, { connected, username, open }: UseCha
             const entry = stateRef.current.pending.find((pending) => pending.clientId === clientId);
             if (!entry) return;
             dispatch({ type: 'send_retried', clientId });
-            deliver({ text: entry.text, attachment: entry.attachment }, clientId, transport);
+            deliver({ text: entry.text, attachments: entry.attachments }, clientId, transport);
         },
         [deliver],
     );

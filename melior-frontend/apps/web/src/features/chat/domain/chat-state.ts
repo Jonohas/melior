@@ -7,8 +7,8 @@ export type PendingMessage = {
     clientId: string;
     username: string;
     text: string;
-    /** What it carries besides the text; an image is uploaded already, so a retry sends the same id. */
-    attachment: OutgoingAttachment | null;
+    /** What it carries besides the text; images are uploaded already, so a retry sends the same ids. */
+    attachments: OutgoingAttachment[];
     status: 'sending' | 'failed';
     /** Why it failed, in words fit for the person who sent it. */
     error: string | null;
@@ -44,7 +44,7 @@ export type ChatAction =
           clientId: string;
           username: string;
           text: string;
-          attachment: OutgoingAttachment | null;
+          attachments: OutgoingAttachment[];
       }
     | { type: 'send_retried'; clientId: string }
     | { type: 'send_failed'; clientId: string; error: string }
@@ -112,7 +112,7 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
                         clientId: action.clientId,
                         username: action.username,
                         text: action.text,
-                        attachment: action.attachment,
+                        attachments: action.attachments,
                         status: 'sending',
                         error: null,
                     },

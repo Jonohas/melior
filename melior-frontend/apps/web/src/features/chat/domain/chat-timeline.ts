@@ -11,10 +11,10 @@ export type TimelineItem =
           kind: 'message';
           key: string;
           username: string;
-          /** Empty when the message is only an attachment. */
+          /** Empty when the message is only attachments. */
           text: string;
           /** A saved image's content type is not needed to show it, so a pending image looks the same. */
-          attachment: OutgoingAttachment | null;
+          attachments: OutgoingAttachment[];
           /** Null for a message that is not saved yet. */
           sentAtMs: number | null;
           status: 'saved' | 'sending' | 'failed';
@@ -67,7 +67,7 @@ export const buildTimeline = (
             key: `m-${message.id}`,
             username: message.username,
             text: message.text,
-            attachment: message.attachment,
+            attachments: message.attachments,
             sentAtMs: message.sentAtMs,
             status: 'saved',
             error: null,
@@ -84,7 +84,7 @@ export const buildTimeline = (
             key: `p-${entry.clientId}`,
             username: entry.username,
             text: entry.text,
-            attachment: entry.attachment,
+            attachments: entry.attachments,
             sentAtMs: null,
             status: entry.status,
             error: entry.error,

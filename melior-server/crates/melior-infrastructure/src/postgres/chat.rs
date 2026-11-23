@@ -10,9 +10,18 @@ use sqlx::postgres::PgRow;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// A message's columns, with its image's media type from `chat_images` (`i`).
-const COLUMNS: &str = "m.id, m.channel_id, m.author, m.body, m.sent_at_ms, m.image_id, \
-                       i.content_type AS image_type, m.gif_url, m.gif_width, m.gif_height";
+/// A message's columns, with its images' ids and media types in order (`imgs`,
+/// from [`IMAGES_JOIN`]).
+const COLUMNS: &str = "m.id, m.channel_id, m.author, m.body, m.sent_at_ms, m.gif_url, \
+                       m.gif_width, m.gif_height, imgs.ids AS image_ids, imgs.types AS image_types";
+
+/// The images of message `m`, as two arrays in their order; NULL for none.
+const IMAGES_JOIN: &str = "LEFT JOIN LATERAL (
+    SELECT array_agg(i.id ORDER BY mi.position) AS ids,
+           array_agg(i.content_type ORDER BY mi.position) AS types
+    FROM chat_message_images mi JOIN chat_images i ON i.id = mi.image_id
+    WHERE mi.message_id = m.id
+) imgs ON true";
 
 /// [`ChatRepository`] on Postgres.
 pub struct PostgresChatRepository {
@@ -35,32 +44,48 @@ impl ChatRepository for PostgresChatRepository {
         content: &ChatContent,
     ) -> Result<ChatMessage, ChatStoreError> {
         let pool = self.database.pool().await.map_err(store_error)?;
-        let (image_id, gif) = attachment_columns(content.attachment());
-        // The image's foreign key locks its record until this commits, so a
-        // sweep that runs at the same time sees it attached and leaves it.
-        sqlx::query(&format!(
+        let image_ids: Vec<&str> =
+            content.image_ids().into_iter().map(AttachmentId::as_str).collect();
+        let gif = content.attachments().iter().find_map(|attachment| match attachment {
+            Attachment::Gif(gif) => Some(gif),
+            Attachment::Image { .. } => None,
+        });
+        // One statement: the message, its images in order, and those images
+        // marked attached. The images' foreign keys lock their records until
+        // this commits, so a sweep running at the same time leaves them.
+        let row = sqlx::query(
             "WITH m AS (
-                INSERT INTO chat_messages (channel_id, author, body, image_id, gif_url, gif_width, gif_height)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                RETURNING *
+                INSERT INTO chat_messages (channel_id, author, body, gif_url, gif_width, gif_height)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id, sent_at_ms
+             ), linked AS (
+                INSERT INTO chat_message_images (message_id, position, image_id)
+                SELECT m.id, (x.ord - 1)::smallint, x.id
+                FROM m, unnest($7::text[]) WITH ORDINALITY AS x(id, ord)
              ), attached AS (
                 UPDATE chat_images
                 SET attached_at_ms = (extract(epoch FROM clock_timestamp()) * 1000)::bigint
-                WHERE id = $4 AND attached_at_ms IS NULL
+                WHERE id = ANY($7::text[]) AND attached_at_ms IS NULL
              )
-             SELECT {COLUMNS} FROM m LEFT JOIN chat_images i ON i.id = m.image_id"
-        ))
+             SELECT id, sent_at_ms FROM m",
+        )
         .bind(channel_id.as_str())
         .bind(author)
         .bind(content.text_str())
-        .bind(image_id)
         .bind(gif.map(GifLink::url))
         .bind(gif.map(|gif| i32::from(gif.width())))
         .bind(gif.map(|gif| i32::from(gif.height())))
+        .bind(&image_ids)
         .fetch_one(pool)
         .await
-        .map_err(store_error)
-        .and_then(|row| message_from_row(&row))
+        .map_err(store_error)?;
+        Ok(ChatMessage {
+            id: MessageId::new(row.try_get("id").map_err(store_error)?),
+            channel_id: channel_id.clone(),
+            author: author.to_owned(),
+            content: content.clone(),
+            sent_at_ms: row.try_get("sent_at_ms").map_err(store_error)?,
+        })
     }
 
     async fn page(
@@ -72,7 +97,7 @@ impl ChatRepository for PostgresChatRepository {
         let pool = self.database.pool().await.map_err(store_error)?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         sqlx::query(&format!(
-            "SELECT {COLUMNS} FROM chat_messages m LEFT JOIN chat_images i ON i.id = m.image_id
+            "SELECT {COLUMNS} FROM chat_messages m {IMAGES_JOIN}
              WHERE m.channel_id = $1 AND ($2::bigint IS NULL OR m.id < $2)
              ORDER BY m.id DESC
              LIMIT $3"
@@ -136,6 +161,22 @@ impl ChatRepository for PostgresChatRepository {
         ids.iter().map(|id| attachment_id(id)).collect()
     }
 
+    async fn images(&self, ids: &[AttachmentId]) -> Result<Vec<StoredImage>, ChatStoreError> {
+        let pool = self.database.pool().await.map_err(store_error)?;
+        let ids: Vec<&str> = ids.iter().map(AttachmentId::as_str).collect();
+        sqlx::query(
+            "SELECT id, channel_id, uploader, content_type, size FROM chat_images
+             WHERE id = ANY($1::text[])",
+        )
+        .bind(&ids)
+        .fetch_all(pool)
+        .await
+        .map_err(store_error)?
+        .iter()
+        .map(image_from_row)
+        .collect()
+    }
+
     async fn image(&self, id: &AttachmentId) -> Result<Option<StoredImage>, ChatStoreError> {
         let pool = self.database.pool().await.map_err(store_error)?;
         sqlx::query(
@@ -150,15 +191,6 @@ impl ChatRepository for PostgresChatRepository {
     }
 }
 
-/// The `image_id` and GIF columns of an attachment.
-fn attachment_columns(attachment: Option<&Attachment>) -> (Option<&str>, Option<&GifLink>) {
-    match attachment {
-        Some(Attachment::Image { id, .. }) => (Some(id.as_str()), None),
-        Some(Attachment::Gif(gif)) => (None, Some(gif)),
-        None => (None, None),
-    }
-}
-
 /// Rebuilds a message from a row. Stored values go through the same validation
 /// as user input: a row that does not fit the domain is an error, not a message.
 fn message_from_row(row: &PgRow) -> Result<ChatMessage, ChatStoreError> {
@@ -169,7 +201,7 @@ fn message_from_row(row: &PgRow) -> Result<ChatMessage, ChatStoreError> {
     let sent_at_ms: i64 = row.try_get("sent_at_ms").map_err(store_error)?;
 
     let text = ChatText::parse_optional(&body).map_err(store_error)?;
-    let content = ChatContent::new(text, attachment_from_row(row)?).map_err(store_error)?;
+    let content = ChatContent::new(text, attachments_from_row(row)?).map_err(store_error)?;
     Ok(ChatMessage {
         id: MessageId::new(id),
         channel_id: ChannelId::parse(&channel_id).map_err(store_error)?,
@@ -179,23 +211,28 @@ fn message_from_row(row: &PgRow) -> Result<ChatMessage, ChatStoreError> {
     })
 }
 
-fn attachment_from_row(row: &PgRow) -> Result<Option<Attachment>, ChatStoreError> {
-    let image_id: Option<String> = row.try_get("image_id").map_err(store_error)?;
-    if let Some(image_id) = image_id {
-        let image_type: Option<String> = row.try_get("image_type").map_err(store_error)?;
-        let id = attachment_id(&image_id)?;
-        let format = image_format(image_type.as_deref().unwrap_or_default())?;
-        return Ok(Some(Attachment::Image { id, format }));
-    }
+/// The images of a row in order, then its GIF; [`ChatContent::new`] checks
+/// that they go together.
+fn attachments_from_row(row: &PgRow) -> Result<Vec<Attachment>, ChatStoreError> {
+    let ids: Option<Vec<String>> = row.try_get("image_ids").map_err(store_error)?;
+    let types: Option<Vec<String>> = row.try_get("image_types").map_err(store_error)?;
+    let mut attachments = ids
+        .unwrap_or_default()
+        .iter()
+        .zip(types.unwrap_or_default())
+        .map(|(id, content_type)| {
+            Ok(Attachment::Image { id: attachment_id(id)?, format: image_format(&content_type)? })
+        })
+        .collect::<Result<Vec<_>, ChatStoreError>>()?;
     let gif_url: Option<String> = row.try_get("gif_url").map_err(store_error)?;
-    let Some(gif_url) = gif_url else {
-        return Ok(None);
-    };
-    let width: Option<i32> = row.try_get("gif_width").map_err(store_error)?;
-    let height: Option<i32> = row.try_get("gif_height").map_err(store_error)?;
-    let side = |value: Option<i32>| value.and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
-    let gif = GifLink::parse(&gif_url, side(width), side(height)).map_err(store_error)?;
-    Ok(Some(Attachment::Gif(gif)))
+    if let Some(gif_url) = gif_url {
+        let width: Option<i32> = row.try_get("gif_width").map_err(store_error)?;
+        let height: Option<i32> = row.try_get("gif_height").map_err(store_error)?;
+        let side = |value: Option<i32>| value.and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
+        let gif = GifLink::parse(&gif_url, side(width), side(height)).map_err(store_error)?;
+        attachments.push(Attachment::Gif(gif));
+    }
+    Ok(attachments)
 }
 
 fn image_from_row(row: &PgRow) -> Result<StoredImage, ChatStoreError> {

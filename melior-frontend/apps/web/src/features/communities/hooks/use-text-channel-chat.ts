@@ -5,7 +5,7 @@ import { type ChatTransport, type UseChatReturn, useChat } from '@/features/chat
 import { useCommunityFeed } from './community-feed-context';
 
 export type TextChannelChat = Omit<UseChatReturn, 'submit' | 'retry'> & {
-    submit: (draft: string, attachment: OutgoingAttachment | null) => DraftCheck;
+    submit: (draft: string, attachments: OutgoingAttachment[]) => DraftCheck;
     retry: (clientId: string) => void;
 };
 
@@ -39,7 +39,7 @@ export const useTextChannelChat = (channelId: string, username: string): TextCha
 
     return {
         ...chat,
-        submit: (draft, attachment) => chat.submit(draft, attachment, transport),
+        submit: (draft, attachments) => chat.submit(draft, attachments, transport),
         retry: (clientId) => chat.retry(clientId, transport),
     };
 };

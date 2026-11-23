@@ -44,12 +44,14 @@ describe('parseFeedMessage', () => {
         expect(parseFeedMessage(msg('message', { channel_id: 't1', message }))).toEqual({
             channel: 'message',
             channelId: 't1',
-            message: { id: 3, username: 'bob', text: 'hi', sentAtMs: 10, attachment: null },
+            message: { id: 3, username: 'bob', text: 'hi', sentAtMs: 10, attachments: [] },
         });
-        const attachment = { kind: 'image', id: 'a1', content_type: 'image/jpeg' };
+        const attachments = [{ kind: 'image', id: 'a1', content_type: 'image/jpeg' }];
         expect(
-            parseFeedMessage(msg('message', { channel_id: 't1', message: { ...message, text: '', attachment } })),
-        ).toMatchObject({ message: { text: '', attachment: { kind: 'image', id: 'a1', contentType: 'image/jpeg' } } });
+            parseFeedMessage(msg('message', { channel_id: 't1', message: { ...message, text: '', attachments } })),
+        ).toMatchObject({
+            message: { text: '', attachments: [{ kind: 'image', id: 'a1', contentType: 'image/jpeg' }] },
+        });
         expect(parseFeedMessage(msg('structure_changed', {}))).toEqual({ channel: 'structure_changed' });
         expect(parseFeedMessage(msg('members_changed', {}))).toEqual({ channel: 'members_changed' });
         for (const reason of ['kicked', 'left', 'deleted']) {
@@ -74,7 +76,7 @@ describe('parseFeedMessage', () => {
             parseFeedMessage(
                 msg('message', {
                     channel_id: 't1',
-                    message: { id: 3, username: 'bob', text: '', sent_at_ms: 10, attachment: gifFromElsewhere },
+                    message: { id: 3, username: 'bob', text: '', sent_at_ms: 10, attachments: [gifFromElsewhere] },
                 }),
             ),
         ).toBeNull();

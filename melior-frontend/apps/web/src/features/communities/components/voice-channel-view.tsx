@@ -190,7 +190,7 @@ const CallView = ({ channel, voice, debug, onLeave }: CallViewProps) => {
                         ownName={conference.username}
                         canSend={connected && mayWrite}
                         pausedReason={mayWrite ? undefined : 'You do not have permission to send messages here.'}
-                        onSend={(draft, attachment) => chat.submit(draft, attachment, conference.sendChat)}
+                        onSend={(draft, attachments) => chat.submit(draft, attachments, conference.sendChat)}
                         onRetry={(clientId) => chat.retry(clientId, conference.sendChat)}
                         onLoadEarlier={chat.loadEarlier}
                         onReloadHistory={chat.reloadHistory}

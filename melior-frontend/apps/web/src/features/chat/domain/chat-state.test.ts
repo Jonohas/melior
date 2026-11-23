@@ -7,7 +7,7 @@ const message = (id: number, text = `m${id}`, username = 'alice'): ChatMessage =
     username,
     text,
     sentAtMs: 1_700_000_000_000 + id,
-    attachment: null,
+    attachments: [],
 });
 
 const run = (actions: ChatAction[], from: ChatState = createInitialChatState()) => actions.reduce(chatReducer, from);
@@ -76,8 +76,8 @@ describe('chatReducer live messages', () => {
 
     test('the author copy replaces the pending message with the same client id', () => {
         const state = run([
-            { type: 'send_started', clientId: 'c1', username: 'alice', text: 'hi', attachment: null },
-            { type: 'send_started', clientId: 'c2', username: 'alice', text: 'there', attachment: null },
+            { type: 'send_started', clientId: 'c1', username: 'alice', text: 'hi', attachments: [] },
+            { type: 'send_started', clientId: 'c2', username: 'alice', text: 'there', attachments: [] },
             { type: 'received', message: message(9, 'hi'), clientId: 'c1', countUnread: false },
         ]);
         expect(state.saved).toEqual([message(9, 'hi')]);
@@ -96,11 +96,11 @@ describe('chatReducer live messages', () => {
 });
 
 describe('chatReducer sending', () => {
-    const sending = run([{ type: 'send_started', clientId: 'c1', username: 'alice', text: 'hi', attachment: null }]);
+    const sending = run([{ type: 'send_started', clientId: 'c1', username: 'alice', text: 'hi', attachments: [] }]);
 
     test('a started send is pending', () => {
         expect(sending.pending).toEqual([
-            { clientId: 'c1', username: 'alice', text: 'hi', attachment: null, status: 'sending', error: null },
+            { clientId: 'c1', username: 'alice', text: 'hi', attachments: [], status: 'sending', error: null },
         ]);
     });
 
@@ -128,11 +128,13 @@ describe('chatReducer sending', () => {
 
     test('a message with an attachment and no text is pending with its attachment, and settles like any other', () => {
         const gif = { kind: 'gif' as const, url: 'https://static.klipy.com/a.gif', width: 200, height: 100 };
-        const started = run([{ type: 'send_started', clientId: 'g1', username: 'alice', text: '', attachment: gif }]);
-        expect(started.pending[0]).toMatchObject({ text: '', attachment: gif, status: 'sending' });
+        const started = run([
+            { type: 'send_started', clientId: 'g1', username: 'alice', text: '', attachments: [gif] },
+        ]);
+        expect(started.pending[0]).toMatchObject({ text: '', attachments: [gif], status: 'sending' });
         const failed = chatReducer(started, { type: 'refused', clientId: 'g1', message: 'too fast' });
-        expect(failed.pending[0]).toMatchObject({ attachment: gif, status: 'failed', error: 'too fast' });
-        const savedGif = { ...message(10, ''), attachment: gif };
+        expect(failed.pending[0]).toMatchObject({ attachments: [gif], status: 'failed', error: 'too fast' });
+        const savedGif = { ...message(10, ''), attachments: [gif] };
         const settled = chatReducer(failed, {
             type: 'received',
             message: savedGif,
@@ -141,6 +143,22 @@ describe('chatReducer sending', () => {
         });
         expect(settled.pending).toEqual([]);
         expect(settled.saved).toEqual([savedGif]);
+    });
+
+    test('a message with several images keeps them in order while pending', () => {
+        const images = [
+            { kind: 'image' as const, id: 'i1' },
+            { kind: 'image' as const, id: 'i2' },
+        ];
+        const started = run([
+            { type: 'send_started', clientId: 'm1', username: 'alice', text: 'look', attachments: images },
+        ]);
+        expect(started.pending[0]?.attachments).toEqual(images);
+        const retried = chatReducer(chatReducer(started, { type: 'refused', clientId: 'm1', message: 'x' }), {
+            type: 'send_retried',
+            clientId: 'm1',
+        });
+        expect(retried.pending[0]).toMatchObject({ attachments: images, status: 'sending' });
     });
 
     test('reset forgets everything', () => {

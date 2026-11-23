@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { mergeMessages, parseChatMessage, parseHistoryPage } from './chat-message';
 
 const wire = { id: 3, username: 'alice', text: 'hi', sent_at_ms: 1_700_000_000_000 };
-const saved = { id: 3, username: 'alice', text: 'hi', sentAtMs: 1_700_000_000_000, attachment: null };
+const saved = { id: 3, username: 'alice', text: 'hi', sentAtMs: 1_700_000_000_000, attachments: [] };
 
 describe('parseChatMessage', () => {
     test('maps the wire shape to a ChatMessage', () => {
@@ -20,19 +20,27 @@ describe('parseChatMessage', () => {
 
 describe('parseChatMessage attachments', () => {
     const image = { kind: 'image', id: '0f9e', content_type: 'image/png' };
+    const image2 = { kind: 'image', id: '1a2b', content_type: 'image/webp' };
     const gif = { kind: 'gif', url: 'https://static2.klipy.com/ii/abc/1.gif', width: 498, height: 280 };
 
-    test('maps an image and a GIF, with empty text', () => {
-        expect(parseChatMessage({ ...wire, text: '', attachment: image })).toEqual({
+    test('maps several images in order, and a GIF, with empty text', () => {
+        expect(parseChatMessage({ ...wire, text: '', attachments: [image, image2] })).toEqual({
             ...saved,
             text: '',
-            attachment: { kind: 'image', id: '0f9e', contentType: 'image/png' },
+            attachments: [
+                { kind: 'image', id: '0f9e', contentType: 'image/png' },
+                { kind: 'image', id: '1a2b', contentType: 'image/webp' },
+            ],
         });
-        expect(parseChatMessage({ ...wire, attachment: gif })).toEqual({ ...saved, attachment: gif });
+        expect(parseChatMessage({ ...wire, attachments: [gif] })).toEqual({ ...saved, attachments: [gif] });
+        expect(parseChatMessage({ ...wire, attachments: [] })).toEqual(saved);
     });
 
-    test('an attachment of an unknown kind or the wrong shape makes the message invalid', () => {
-        for (const attachment of [
+    test('a list that is not a list, or one item of an unknown kind or the wrong shape, makes the message invalid', () => {
+        for (const attachments of [null, 'image', image, { 0: image }]) {
+            expect(parseChatMessage({ ...wire, attachments })).toBeNull();
+        }
+        for (const bad of [
             null,
             'image',
             [],
@@ -48,13 +56,13 @@ describe('parseChatMessage attachments', () => {
             { ...gif, width: 1.5 },
             { ...gif, height: '280' },
         ]) {
-            expect(parseChatMessage({ ...wire, attachment })).toBeNull();
+            expect(parseChatMessage({ ...wire, attachments: [image, bad] })).toBeNull();
         }
     });
 
     test('a history page with one bad attachment is rejected', () => {
         expect(
-            parseHistoryPage({ messages: [wire, { ...wire, id: 4, attachment: { kind: 'x' } }], has_more: false }),
+            parseHistoryPage({ messages: [wire, { ...wire, id: 4, attachments: [{ kind: 'x' }] }], has_more: false }),
         ).toBeNull();
     });
 });

@@ -128,14 +128,17 @@ A text channel loads its history with `GET /api/channels/{id}/messages`, posts w
 pending message; a refusal marks it failed with the server's reason) and receives new messages from the feed.
 
 **Images and GIFs** work the same in text channels and in a call's chat (`features/chat`). The composer's image button
-(or pasting an image) checks the file (PNG, JPEG, GIF or WebP, at most 10 MiB; `checkImageFile`) and uploads it at once
-with `POST /api/channels/{id}/attachments`; the chip shows the upload, its refusal with a retry, and a remove button,
-and the message (with or without text) can be sent once the upload is done. The GIF button appears only when
+(several files at once) or pasting images checks each file (PNG, JPEG, GIF or WebP, at most 10 MiB; `checkImageFile`)
+and uploads it at once with `POST /api/channels/{id}/attachments`. A message carries at most 10 images: picking more
+keeps the first ones up to 10 and says how many were left out (`admitImages`). Each image is a tile with its upload
+state, a retry when it failed and a remove button; the message is sent with all of them, in order, and the text (which
+may be empty) once every upload is done, as one `attachments` list. The GIF button appears only when
 `GET /api/gifs/config` returns a KLIPY app key. Its picker searches KLIPY from the browser, as KLIPY requires
 (trending while the box is empty, 300 ms debounce, 24 per page with "Load more"); picking a GIF sends it at once as a
 message of its own and leaves the draft alone. KLIPY's response is parsed in `parseGifPage`, and only GIFs whose URL
 the server accepts (https on `static.klipy.com`, `static1.klipy.com` or `static2.klipy.com`) are offered. Saved images
-load from `GET /api/attachments/{id}` and open in full in a new tab; GIFs load from KLIPY's URL unchanged.
+load from `GET /api/attachments/{id}` (one alone at most 320 px a side, several together in a wrap of smaller ones) and
+open in full in a new tab; GIFs load from KLIPY's URL unchanged.
 
 Every response and feed message is parsed in `features/communities/domain` (`parseCommunityView`, `parseFeedMessage`,
 ...) and rejected when it does not fit; permission names the client does not know are dropped. The rules the UI needs

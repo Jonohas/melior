@@ -18,7 +18,7 @@ type ChatPanelProps = {
     placeholder?: string;
     /** Fills the main pane (a text channel) instead of sitting beside a call. */
     fill?: boolean;
-    onSend: (draft: string, attachment: OutgoingAttachment | null) => DraftCheck;
+    onSend: (draft: string, attachments: OutgoingAttachment[]) => DraftCheck;
     onRetry: (clientId: string) => void;
     onLoadEarlier: () => void;
     onReloadHistory: () => void;

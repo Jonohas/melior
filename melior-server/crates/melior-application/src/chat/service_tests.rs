@@ -370,7 +370,7 @@ async fn posts_are_rate_limited_per_user() {
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n-png-body";
 
 fn with_image(text: &str, id: &melior_domain::AttachmentId) -> ChatDraft {
-    ChatDraft { text: text.into(), attachment: Some(AttachmentRequest::Image(id.clone())) }
+    ChatDraft { text: text.into(), attachments: vec![AttachmentRequest::Image(id.clone())] }
 }
 
 #[tokio::test]
@@ -383,8 +383,8 @@ async fn an_uploaded_image_is_sent_with_a_message_and_shown_to_readers() {
 
     assert_eq!(message.content.text(), None);
     assert_eq!(
-        message.content.attachment(),
-        Some(&Attachment::Image { id: image.id.clone(), format: melior_domain::ImageFormat::Png })
+        message.content.attachments(),
+        [Attachment::Image { id: image.id.clone(), format: melior_domain::ImageFormat::Png }]
     );
     let file = h.chat.image(&image.id, &user("alice")).await.unwrap();
     assert_eq!((file.image, file.bytes.as_slice()), (image, PNG));
@@ -441,13 +441,13 @@ async fn an_image_of_someone_else_cannot_be_attached() {
 async fn uploads_are_rate_limited_per_user() {
     let h = Harness::new();
     let town = h.town().await;
-    for _ in 0..10 {
+    for _ in 0..30 {
         h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
     }
 
-    let eleventh = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await;
+    let over = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await;
 
-    assert!(matches!(eleventh, Err(ChatFailure::Rejected(ChatError::RateLimited))));
+    assert!(matches!(over, Err(ChatFailure::Rejected(ChatError::RateLimited))));
 }
 
 #[tokio::test]
@@ -472,11 +472,11 @@ async fn a_gif_is_a_message_of_its_own() {
     let town = h.town().await;
     let gif = melior_domain::GifLink::parse("https://static.klipy.com/a.gif", 200, 100).unwrap();
     let draft =
-        ChatDraft { text: " ".into(), attachment: Some(AttachmentRequest::Gif(gif.clone())) };
+        ChatDraft { text: " ".into(), attachments: vec![AttachmentRequest::Gif(gif.clone())] };
 
     let message = h.chat.post(&town.text, &user("bob"), draft).await.unwrap();
 
-    assert_eq!(message.content.attachment(), Some(&Attachment::Gif(gif)));
+    assert_eq!(message.content.attachments(), [Attachment::Gif(gif)]);
 }
 
 #[tokio::test]
@@ -518,4 +518,43 @@ async fn a_swept_image_can_no_longer_be_attached() {
     let late = h.chat.post(&town.text, &user("bob"), with_image("", &image.id)).await;
 
     assert!(matches!(late, Err(ChatFailure::Rejected(ChatError::UnknownImage))));
+}
+
+#[tokio::test]
+async fn several_images_go_in_one_message_in_their_order() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        ids.push(h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap().id);
+    }
+    let draft = ChatDraft {
+        text: "three".into(),
+        attachments: ids.iter().rev().cloned().map(AttachmentRequest::Image).collect(),
+    };
+
+    let message = h.chat.post(&town.text, &user("bob"), draft).await.unwrap();
+
+    let sent: Vec<_> = message.content.image_ids().into_iter().cloned().collect();
+    assert_eq!(sent, ids.into_iter().rev().collect::<Vec<_>>());
+    assert_eq!(h.chat.sweep_unattached_images(Duration::ZERO).await.unwrap(), 0, "all attached");
+}
+
+#[tokio::test]
+async fn one_unknown_image_refuses_the_whole_message() {
+    let h = Harness::new();
+    let town = h.town().await;
+    let known = h.chat.upload_image(&town.text, &user("bob"), PNG.to_vec()).await.unwrap();
+    let draft = ChatDraft {
+        text: String::new(),
+        attachments: vec![
+            AttachmentRequest::Image(known.id.clone()),
+            AttachmentRequest::Image(melior_domain::AttachmentId::generate()),
+        ],
+    };
+
+    let result = h.chat.post(&town.text, &user("bob"), draft).await;
+
+    assert!(matches!(result, Err(ChatFailure::Rejected(ChatError::UnknownImage))));
+    assert_eq!(h.chat.sweep_unattached_images(Duration::ZERO).await.unwrap(), 1, "not attached");
 }

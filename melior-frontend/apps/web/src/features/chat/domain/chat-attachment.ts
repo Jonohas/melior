@@ -50,7 +50,7 @@ export const parseGif = (raw: unknown): GifAttachment | null => {
 };
 
 /**
- * Maps a saved message's `attachment` as the server sends it. Null for an unknown kind or a shape that does not
+ * Maps one saved attachment as the server sends it. Null for an unknown kind or a shape that does not
  * fit, which makes the whole message invalid: a GIF whose URL the server would not have accepted is not shown.
  */
 export const parseChatAttachment = (raw: unknown): ChatAttachment | null => {
@@ -69,8 +69,54 @@ export const parseChatAttachment = (raw: unknown): ChatAttachment | null => {
     }
 };
 
-/** Whether a value is a saved attachment in its wire form. */
-export const isChatAttachmentWire = (raw: unknown): raw is ChatAttachmentWire => parseChatAttachment(raw) !== null;
+/**
+ * Maps a saved message's `attachments` list, in order. Absent means none; anything that is not a list, or a list
+ * with one item that does not fit, is null, which makes the whole message invalid.
+ */
+export const parseChatAttachments = (raw: unknown): ChatAttachment[] | null => {
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw)) return null;
+    const attachments = raw.map(parseChatAttachment);
+    return attachments.every((attachment): attachment is ChatAttachment => attachment !== null) ? attachments : null;
+};
+
+/** Whether a value is a saved message's attachment list in its wire form. */
+export const isChatAttachmentsWire = (raw: unknown): raw is ChatAttachmentWire[] =>
+    Array.isArray(raw) && parseChatAttachments(raw) !== null;
+
+/** The most images one message may carry. */
+export const MAX_IMAGES_PER_MESSAGE = 10;
+
+export type AttachmentsCheck =
+    | { ok: true }
+    | { ok: false; reason: 'too_many_images' | 'gif_not_alone' | 'duplicate_image' };
+
+/**
+ * Checks what a message to be sent carries, the way the server does: none, 1 to `MAX_IMAGES_PER_MESSAGE` images
+ * with no id twice, or exactly one GIF on its own.
+ */
+export const checkAttachments = (attachments: readonly OutgoingAttachment[]): AttachmentsCheck => {
+    const gifs = attachments.filter((attachment) => attachment.kind === 'gif').length;
+    if (gifs > 0 && attachments.length > 1) return { ok: false, reason: 'gif_not_alone' };
+    const ids = attachments.flatMap((attachment) => (attachment.kind === 'image' ? [attachment.id] : []));
+    if (ids.length > MAX_IMAGES_PER_MESSAGE) return { ok: false, reason: 'too_many_images' };
+    if (new Set(ids).size !== ids.length) return { ok: false, reason: 'duplicate_image' };
+    return { ok: true };
+};
+
+/**
+ * Admits picked images to a draft that holds `present` already: the first ones up to `MAX_IMAGES_PER_MESSAGE`,
+ * in the order they were picked. `leftOut` counts the rest, to tell the user.
+ */
+export const admitImages = <T>(present: number, picked: readonly T[]): { admitted: T[]; leftOut: number } => {
+    const room = Math.max(0, MAX_IMAGES_PER_MESSAGE - present);
+    const admitted = picked.slice(0, room);
+    return { admitted, leftOut: picked.length - admitted.length };
+};
+
+/** What to tell the user when picked images did not fit in the message. */
+export const describeLeftOut = (leftOut: number): string =>
+    `A message carries at most ${MAX_IMAGES_PER_MESSAGE} images; ${leftOut === 1 ? '1 image was' : `${leftOut} images were`} left out.`;
 
 /** An image the server has stored, ready to be sent by its id. */
 export type UploadedImage = { id: string; contentType: string; size: number };

@@ -269,8 +269,8 @@ application's own origin.
 | `DELETE /api/channels/{channel_id}` | With its history. 204. |
 | `GET /api/channels/{channel_id}/admission` | 204 if the caller may join the voice channel now, else the status the WebSocket upgrade would give (403, 404, 409 full by the community's voice roster). For clients, which cannot see a refused upgrade's status. |
 | `GET /api/channels/{channel_id}/messages?before=<id>&limit=<n>` | `{ "messages": [...], "has_more": bool }`, oldest first; `limit` 1 to 100 (default 50). Needs `view_channel` and `read_history`. |
-| `POST /api/channels/{channel_id}/messages` `{ text, client_id?, attachment? }` | Text channels only (409 for voice). Needs `view_channel` and `send_messages`; 429 over the rate limit. `text` may be `""` with an attachment (see [Chat](#chat)). Returns the message with the `client_id`; the others get it on the feed. |
-| `POST /api/channels/{channel_id}/attachments` (body: the image file) | Uploads an image for a message in a text or voice channel: `{ id, content_type, size }`. Needs `view_channel` and `send_messages`. PNG, JPEG, GIF or WebP by content, at most 10 MiB (413 above); 400 otherwise, 429 over 10 uploads a minute, 503 when the server has no image storage. |
+| `POST /api/channels/{channel_id}/messages` `{ text, client_id?, attachments? }` | Text channels only (409 for voice). Needs `view_channel` and `send_messages`; 429 over the rate limit. `text` may be `""` with attachments (see [Chat](#chat)). Returns the message with the `client_id`; the others get it on the feed. |
+| `POST /api/channels/{channel_id}/attachments` (body: the image file) | Uploads an image for a message in a text or voice channel: `{ id, content_type, size }`. Needs `view_channel` and `send_messages`. PNG, JPEG, GIF or WebP by content, at most 10 MiB (413 above); 400 otherwise, 429 over 30 uploads a minute, 503 when the server has no image storage. |
 | `GET /api/attachments/{id}` | The image, with its media type, `nosniff` and a private cache lifetime of a year. Needs `view_channel` and `read_history` in the channel it was uploaded to; 404 for an unknown id. |
 | `GET /api/gifs/config` | `{ "klipy_app_key": string \| null }` for signed-in users: the key browsers search KLIPY with; `null` turns GIFs off. |
 | `POST /api/communities/{id}/invites` `{ max_age_seconds?, max_uses? }` | `create_invite`. Lifetime 1800, 3600, 21600, 43200, 86400 or 604800 seconds, or none (never expires); uses 1 to 100 or none. |
@@ -351,10 +351,10 @@ JSON messages of the form `{channel, payload}`:
     complete list of `{ mid, session_id, source }`: which media section carries
     whose track from now on, and whether it is that participant's `camera` or
     its `screen`.
-  - `chat` (`id`, `username`, `text`, `sent_at_ms`, `attachment` if the
-    message has one, and `client_id` on the author's own copy only): someone
+  - `chat` (`id`, `username`, `text`, `sent_at_ms`, `attachments` if the
+    message has any, and `client_id` on the author's own copy only): someone
     said something in the room, the author included. `id` orders the room's
-    messages. `text` is `""` for a message with only an attachment.
+    messages. `text` is `""` for a message with only attachments.
   - `chat_error` (`message`, and the `client_id` of the refused message if it
     had one): a chat message the server did not accept. Only its sender gets it.
   - `ice`, `error` (`message`).
@@ -376,7 +376,7 @@ JSON messages of the form `{channel, payload}`:
     (reconnect).
 - Client to server: `sdp_offer` (the first offer, and later one for each track
   the client adds or removes), `sdp_answer`, `ice` (an
-  `RTCIceCandidateInit`), `echo`, `chat_send` (`text`, optional `client_id` and `attachment`),
+  `RTCIceCandidateInit`), `echo`, `chat_send` (`text`, optional `client_id` and `attachments`),
   `voice_state` (`muted`, `camera`, `screen`, `speaking`, all booleans), and:
   - `route_live` (`peer`, `epoch`): I now play `peer`'s media over the path of
     route `epoch`, or I already did when the route arrived.
@@ -447,17 +447,23 @@ instance (see [Several server instances](#several-server-instances)), so its
 messages are delivered from that instance's memory; the store only orders and
 keeps them.
 
-A message may carry one attachment besides its text, and its text may then be
-empty. A client sends it as `attachment`, and saved messages carry it the same
-way, in the room, the history and the feed:
+A message may carry attachments besides its text, and its text may then be
+empty: 1 to 10 images, or one GIF. A client sends them as the list
+`attachments`, and saved messages carry them the same way and in the same order,
+in the room, the history and the feed; a message without any leaves the field
+out. More than 10 images is refused as "a message carries at most 10 images", a
+GIF with anything else as "a GIF is sent on its own", and an image listed twice
+as "an image is attached twice". The images of a message are stored in order in
+`chat_message_images`.
 
-| `attachment` | Sent | Saved |
+| Item of `attachments` | Sent | Saved |
 | --- | --- | --- |
 | Image | `{ "kind": "image", "id": <id> }`, the id from `POST /api/channels/{channel_id}/attachments` | `{ "kind": "image", "id", "content_type" }`; the client loads `GET /api/attachments/{id}` |
 | GIF | `{ "kind": "gif", "url", "width", "height" }` | the same |
 
 Only the uploader may attach an image, and only in the channel it was uploaded
-to; any other id is refused as "the image was not found, upload it again". A
+to; any other id refuses the whole message as "the image was not found, upload
+it again". A
 GIF's `url` must be `https` on `static.klipy.com`, `static1.klipy.com` or
 `static2.klipy.com`, and each side 1 to 4096; otherwise the refusal is "a GIF
 must come from KLIPY". The image bytes live in S3-compatible storage (RustFS in

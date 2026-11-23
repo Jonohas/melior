@@ -130,18 +130,18 @@ async fn history(
     reply(jar, result.await)
 }
 
-/// `{ "text": ..., "client_id"?: ..., "attachment"?: ... }`, as a `chat_send` payload.
+/// `{ "text": ..., "client_id"?: ..., "attachments"?: [...] }`, as a `chat_send` payload.
 #[derive(Deserialize)]
 struct PostDto {
     text: String,
     #[serde(default)]
     client_id: Option<String>,
     #[serde(default)]
-    attachment: Option<AttachmentInputDto>,
+    attachments: Vec<AttachmentInputDto>,
 }
 
 /// `POST /api/channels/{channel_id}/messages`: a message in a text channel (409 for
-/// a voice channel), with text, an attachment or both. Needs `view_channel` and `send_messages`. Returns the saved
+/// a voice channel), with text, attachments or both. Needs `view_channel` and `send_messages`. Returns the saved
 /// message with the caller's `client_id`; everyone else gets it on the feed.
 async fn post(
     State(state): State<AppState>,
@@ -157,7 +157,7 @@ async fn post(
     let result = async {
         let id = channel_id(&id)?;
         let request: PostDto = body(&bytes)?;
-        let draft = ChatSendDto::into_draft(request.text, request.attachment)
+        let draft = ChatSendDto::into_draft(request.text, request.attachments)
             .map_err(|rule| Failure::Chat(rule.into()))?;
         let message = state.chat.post(&id, &user, draft).await?;
         Ok::<_, Failure>(ChatMessageDto::new(message, request.client_id))
