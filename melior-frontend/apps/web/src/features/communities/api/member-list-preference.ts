@@ -1,8 +1,9 @@
 import { initialMemberListOpen, parseMemberListOpen } from '@/features/communities/domain';
+import { screenAtLeast } from './screen';
 
 const MEMBER_LIST_KEY = 'melior.member-list';
-/** Below this width the member list would squeeze the channel, so it starts closed. */
-const WIDE_SCREEN_QUERY = '(min-width: 1100px)';
+/** Below this width the member list would squeeze the channel, so it starts closed: `--breakpoint-wide` in `styles.css`. */
+const WIDE_SCREEN_MIN_WIDTH = '1100px';
 
 const storedMemberListOpen = (): boolean | null => {
     try {
@@ -12,10 +13,9 @@ const storedMemberListOpen = (): boolean | null => {
     }
 };
 
-const isWideScreen = (): boolean => typeof window !== 'undefined' && window.matchMedia(WIDE_SCREEN_QUERY).matches;
-
 /** Whether the member list starts open: as the person left it, else on a wide screen only. */
-export const loadMemberListOpen = (): boolean => initialMemberListOpen(storedMemberListOpen(), isWideScreen());
+export const loadMemberListOpen = (): boolean =>
+    initialMemberListOpen(storedMemberListOpen(), screenAtLeast(WIDE_SCREEN_MIN_WIDTH));
 
 /** Remembers whether the member list is open, like the call's microphone and camera switches. */
 export const saveMemberListOpen = (open: boolean): void => {

@@ -21,6 +21,12 @@ type RoomDockProps = {
     onLeave: () => void;
 };
 
+/**
+ * A control's text: beside the icon while the dock is wide enough for all six, read out only while it is narrower
+ * (a phone, or a desktop with the chat and member list open), where the labels would wrap into rows.
+ */
+const DockLabel = ({ children }: { children: string }) => <span className="@max-3xl:sr-only">{children}</span>;
+
 /** The controls at the bottom of a room. */
 export const RoomDock = ({
     chatOpen,
@@ -37,7 +43,7 @@ export const RoomDock = ({
     onToggleCamera,
     onLeave,
 }: RoomDockProps) => (
-    <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-border bg-card px-4 py-3">
+    <div className="@container flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-border bg-card px-2 py-2 sm:px-4 sm:py-3">
         <Button
             type="button"
             variant={microphoneMuted ? 'destructive' : 'outline'}
@@ -45,7 +51,7 @@ export const RoomDock = ({
             onClick={onToggleMicrophone}
         >
             {microphoneMuted ? <MicOff /> : <Mic />}
-            {microphoneMuted ? 'Unmute' : 'Mute'}
+            <DockLabel>{microphoneMuted ? 'Unmute' : 'Mute'}</DockLabel>
         </Button>
         <Button
             type="button"
@@ -54,10 +60,10 @@ export const RoomDock = ({
             onClick={onToggleCamera}
         >
             {cameraOff ? <VideoOff /> : <Video />}
-            {cameraOff ? 'Camera on' : 'Camera off'}
+            <DockLabel>{cameraOff ? 'Camera on' : 'Camera off'}</DockLabel>
         </Button>
         <Button type="button" variant="outline" onClick={onOpenDevices}>
-            <Settings2 /> Audio and video
+            <Settings2 /> <DockLabel>Audio and video</DockLabel>
         </Button>
         {screenShareSupported && (
             <Button
@@ -68,7 +74,7 @@ export const RoomDock = ({
                 onClick={onToggleScreenShare}
             >
                 {screenSharing ? <MonitorOff /> : <MonitorUp />}
-                {screenSharing ? 'Stop sharing' : 'Share screen'}
+                <DockLabel>{screenSharing ? 'Stop sharing' : 'Share screen'}</DockLabel>
             </Button>
         )}
         <Button
@@ -78,7 +84,7 @@ export const RoomDock = ({
             className="relative"
             onClick={onToggleChat}
         >
-            <MessageSquare /> Chat
+            <MessageSquare /> <DockLabel>Chat</DockLabel>
             {unread > 0 && !chatOpen && (
                 <Badge className="absolute -top-2 -right-2 px-1.5" aria-label={`${unread} new`}>
                     {unread}
@@ -86,7 +92,7 @@ export const RoomDock = ({
             )}
         </Button>
         <Button type="button" variant="destructive" onClick={onLeave}>
-            <LogOut /> Leave
+            <LogOut /> <DockLabel>Leave</DockLabel>
         </Button>
     </div>
 );

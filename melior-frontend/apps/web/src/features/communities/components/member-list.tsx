@@ -1,4 +1,4 @@
-import { Crown, Users, UserX, Volume2 } from 'lucide-react';
+import { Crown, Users, UserX, Volume2, X } from 'lucide-react';
 import { useState } from 'react';
 import {
     Avatar,
@@ -129,11 +129,14 @@ const MemberRow = ({ view, member, inVoice, onSetRoles, onKick }: MemberRowProps
 
 const groupTitle = (group: MemberGroup): string => group.role?.name ?? 'Members';
 
+type MemberListPanelProps = { view: CommunityView; onClose: () => void };
+
 /**
- * The server's members, grouped under their highest role, on the right of every channel page. On a narrow screen it
- * lies over the channel instead of squeezing it.
+ * The server's members, grouped under their highest role, on the right of every channel page. Below the `wide`
+ * breakpoint it lies over the channel instead of squeezing it, covering the header's toggle, so it carries its own
+ * close button there.
  */
-const MemberListPanel = ({ view }: { view: CommunityView }) => {
+const MemberListPanel = ({ view, onClose }: MemberListPanelProps) => {
     const members = useMembersQuery(view.id, true);
     const { roster } = useCommunityFeed();
     const setRoles = useSetMemberRoles(view.id);
@@ -144,8 +147,14 @@ const MemberListPanel = ({ view }: { view: CommunityView }) => {
     return (
         <aside
             aria-label="Members"
-            className="flex w-60 shrink-0 flex-col overflow-y-auto border-l border-border bg-card p-2 max-[1099px]:absolute max-[1099px]:inset-y-0 max-[1099px]:right-0 max-[1099px]:z-30 max-[1099px]:shadow-lg"
+            className="flex w-60 shrink-0 flex-col overflow-y-auto border-l border-border bg-card p-2 max-wide:absolute max-wide:inset-y-0 max-wide:right-0 max-wide:z-30 max-wide:shadow-lg"
         >
+            <header className="flex items-center justify-between pl-2 wide:hidden">
+                <h2 className="text-sm font-semibold">Members</h2>
+                <Button type="button" size="icon-sm" variant="ghost" aria-label="Close member list" onClick={onClose}>
+                    <X />
+                </Button>
+            </header>
             <FormError message={members.error?.message ?? setRoles.error?.message} />
             {members.isPending && <Skeleton className="h-40" />}
             {groups.map((group) => (
@@ -173,8 +182,24 @@ const MemberListPanel = ({ view }: { view: CommunityView }) => {
     );
 };
 
-/** The member list while it is switched on (`MemberListButton`); nothing is loaded while it is off. */
+/**
+ * The member list while it is switched on (`MemberListButton`); nothing is loaded while it is off. Where it lies
+ * over the channel (below the `wide` breakpoint), a tap beside it closes it.
+ */
 export const MemberList = ({ view }: { view: CommunityView }) => {
-    const { open } = useMemberList();
-    return open ? <MemberListPanel view={view} /> : null;
+    const { open, toggle } = useMemberList();
+    if (!open) return null;
+    return (
+        <>
+            {/* The backdrop is for a tap only: the keyboard has the header's toggle and the panel's close button. */}
+            <button
+                type="button"
+                tabIndex={-1}
+                aria-hidden="true"
+                className="absolute inset-0 z-20 bg-black/50 wide:hidden"
+                onClick={toggle}
+            />
+            <MemberListPanel view={view} onClose={toggle} />
+        </>
+    );
 };

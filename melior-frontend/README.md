@@ -96,10 +96,13 @@ In code the concept is a **community** (`features/communities`), because "server
 the UI calls it a **Server**, as Discord does. The layout is Discord's: the server rail on the left (one round button
 per server, plus "create or join"), the server's channel column (its menu, categories that fold, text and voice
 channels, and under each voice channel who is in it: a green ring while speaking, a camera icon, a `LIVE` badge while
-sharing a screen, a crossed-out microphone while muted), and the channel on the right.
+sharing a screen, a crossed-out microphone while muted), and the channel on the right. Below 768 px (Tailwind's `md`)
+the rail and the channel column become a drawer that the header's menu button opens; picking a channel, a tap beside
+it or Escape closes it (`components/nav-drawer.tsx`).
 
 The **member list** on the right of every channel page (toggled by the header's members button; open or closed is
-remembered in `localStorage`, and below 1100 px it starts closed and lies over the channel) groups the members under
+remembered in `localStorage`, and below 1100 px it starts closed and lies over the channel, with its own close button
+and a backdrop that closes it) groups the members under
 their highest role, highest first, with "Members" for those without one and a count per group. Names take the colour of
 their highest coloured role; the owner has a crown, and a speaker icon marks who is in a voice channel. Clicking a member
 shows their roles and, if the hierarchy allows, the same role and kick actions as the settings' members tab. The
@@ -145,7 +148,8 @@ functions there with tests.
 
 As in Discord, the call is not tied to the page. `VoiceSessionProvider` (mounted by the `_authenticated` layout) holds
 at most one call, so it goes on while the user reads a text channel, opens another server or goes home. Opening a voice
-channel joins it, leaving the call in progress first; opening the channel you are in shows its grid and chat. Elsewhere,
+channel joins it, leaving the call in progress first; opening the channel you are in shows its grid and chat (the chat
+starts open only from 1024 px on, where it has room beside the grid; below that the dock's buttons show icons only). Elsewhere,
 the "Voice connected" panel at the bottom of the channel column (in the bottom-left corner on pages without one) shows
 the channel, the server and the connection state, with mute, camera, screen share and leave; the channel name leads
 back to the call. Remote sound plays from `<audio>` elements rendered beside the routes (`VoiceCallAudio`), never from

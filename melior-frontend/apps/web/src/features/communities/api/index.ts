@@ -1,3 +1,4 @@
+export { initialCallChatOpen } from './call-chat-preference';
 export {
     createCategory,
     createChannel,

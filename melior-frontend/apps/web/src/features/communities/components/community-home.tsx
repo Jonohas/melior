@@ -119,7 +119,7 @@ const ServerCards = () => {
 /** Home: the servers you are in, and the ways to get into another one. */
 export const CommunityHome = ({ removed }: { removed?: RemovedReason }) => (
     <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
+        <div className="mx-auto flex max-w-5xl flex-col gap-6 p-4 sm:p-6">
             {removed && (
                 <Alert role="status">
                     <Info />
